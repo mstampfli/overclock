@@ -1,0 +1,7 @@
+# Native build artifacts
+*.exe
+*.pdb
+*.obj
+/overclock
+/out.txt
+/err.txt

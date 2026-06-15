@@ -1,0 +1,287 @@
+// OVERCLOCK - movement feel playground (greybox).
+//
+// A first-person, Titanfall-feel momentum controller written entirely in Aurora.
+// The movement is NOT in the engine: it is registered with the generic netcode
+// framework via `net_sim`, so the exact same step runs for client prediction,
+// rollback replay, and the authoritative server (which is what stops drift).
+// Here we host a solo session and tune the feel; the same code is the online sim.
+//
+// Build (no window): `aurorac build playground.aur -o overclock`
+// Run + tune solo:    `aurorac run playground.aur`  (Esc quits)
+//
+// Modularity: inputs are rebindable ACTIONS (never raw keys), and every movement
+// constant lives in one `cfg` array that the controller reads, so feel is data.
+
+// ----- player state blob (f32, replicated; engine reads [0..3]=xyz, [3]=yaw) ---
+//  0 x   1 y   2 z   3 yaw   4 vx   5 vy   6 vz
+//  7 grounded  8 air_jumps_left  9 dash_cooldown  10 jump_prev  11 dash_prev
+//  12 sliding
+// ----- per-tick input blob (f32) ----------------------------------------------
+//  0 forward(-1..1)  1 strafe-right(-1..1)  2 yaw  3 jump  4 slide  5 dash  6 dt
+// ----- cfg (f64) --------------------------------------------------------------
+//  0 gravity 1 jump_vel 2 ground_speed 3 ground_accel 4 ground_friction
+//  5 air_speed 6 air_accel 7 slide_boost 8 slide_friction 9 slide_min
+//  10 dash_speed 11 dash_cd 12 air_jumps
+
+// Quake-style ground friction: bleed horizontal speed toward zero.
+fn mv_friction(state: i64, friction: f64, dt: f64) {
+    let vx = f32_load(state, 4)
+    let vz = f32_load(state, 6)
+    let speed = sqrt(vx * vx + vz * vz)
+    if speed > 0.0001 {
+        let drop = speed * friction * dt
+        let mut ns = speed - drop
+        if ns < 0.0 { ns = 0.0 }
+        let scale = ns / speed
+        f32_store(state, 4, vx * scale)
+        f32_store(state, 6, vz * scale)
+    }
+}
+
+// Quake-style acceleration: only adds speed up to `cap` along the wish dir, so
+// air-strafing (turning the wish dir mid-air) keeps building speed.
+fn mv_accel(state: i64, wx: f64, wz: f64, cap: f64, accel: f64, dt: f64) {
+    let vx = f32_load(state, 4)
+    let vz = f32_load(state, 6)
+    let current = vx * wx + vz * wz
+    let add = cap - current
+    if add > 0.0 {
+        let mut acc = accel * dt * cap
+        if acc > add { acc = add }
+        f32_store(state, 4, vx + acc * wx)
+        f32_store(state, 6, vz + acc * wz)
+    }
+}
+
+// The single shared simulation step (prediction + server run this identically).
+fn sim_step(state: i64, input: i64, cfg: [f64; 13]) {
+    let dt = f32_load(input, 6)
+    let yaw = f32_load(input, 2)
+    f32_store(state, 3, yaw)
+
+    // Wish direction on the ground plane from yaw (forward = (sin,-cos)).
+    let wf = f32_load(input, 0)
+    let ws = f32_load(input, 1)
+    let hx = sin(yaw)
+    let hz = 0.0 - cos(yaw)
+    let rx = cos(yaw)
+    let rz = sin(yaw)
+    let mut wx = hx * wf + rx * ws
+    let mut wz = hz * wf + rz * ws
+    let wl = sqrt(wx * wx + wz * wz)
+    if wl > 1.0 {
+        wx = wx / wl
+        wz = wz / wl
+    }
+
+    // Edge-detect jump and dash (press, not hold).
+    let jump_in = f32_load(input, 3)
+    let jumped = jump_in > 0.5 and f32_load(state, 10) < 0.5
+    f32_store(state, 10, jump_in)
+    let slide_in = f32_load(input, 4)
+    let dash_in = f32_load(input, 5)
+    let dashed = dash_in > 0.5 and f32_load(state, 11) < 0.5
+    f32_store(state, 11, dash_in)
+    let was_sliding = f32_load(state, 12)
+
+    let y = f32_load(state, 1)
+    let mut vy = f32_load(state, 5)
+    let grounded = y <= 0.001
+
+    if grounded {
+        f32_store(state, 8, cfg[12])
+        if slide_in > 0.5 {
+            // Slide: very low friction; a one-time boost when entering keeps
+            // slide-hop chains accelerating.
+            if was_sliding < 0.5 {
+                let vx = f32_load(state, 4)
+                let vz = f32_load(state, 6)
+                let sp = sqrt(vx * vx + vz * vz)
+                if sp > 0.1 {
+                    let s = (sp + cfg[7]) / sp
+                    f32_store(state, 4, vx * s)
+                    f32_store(state, 6, vz * s)
+                }
+            }
+            mv_friction(state, cfg[8], dt)
+            f32_store(state, 12, 1.0)
+        } else {
+            mv_friction(state, cfg[4], dt)
+            mv_accel(state, wx, wz, cfg[2], cfg[3], dt)
+            f32_store(state, 12, 0.0)
+        }
+        if jumped {
+            // Slide-hop: jumping does not damp horizontal speed, so momentum carries.
+            vy = cfg[1]
+        }
+    } else {
+        // Air control (air-strafe) with a small cap.
+        mv_accel(state, wx, wz, cfg[5], cfg[6], dt)
+        if jumped {
+            let aj = f32_load(state, 8)
+            if aj > 0.5 {
+                vy = cfg[1]
+                f32_store(state, 8, aj - 1.0)
+            }
+        }
+    }
+
+    // Air-dash: a cooldown burst in the wish dir (or facing if no input).
+    let mut dcd = f32_load(state, 9)
+    if dashed {
+        if dcd <= 0.0 {
+            let mut dxx = wx
+            let mut dzz = wz
+            if wl < 0.001 {
+                dxx = hx
+                dzz = hz
+            }
+            f32_store(state, 4, f32_load(state, 4) + cfg[10] * dxx)
+            f32_store(state, 6, f32_load(state, 6) + cfg[10] * dzz)
+            dcd = cfg[11]
+        }
+    }
+    dcd = dcd - dt
+    if dcd < 0.0 { dcd = 0.0 }
+    f32_store(state, 9, dcd)
+
+    // Gravity + integrate, with a flat ground plane at y = 0.
+    vy = vy - cfg[0] * dt
+    let nx = f32_load(state, 0) + f32_load(state, 4) * dt
+    let mut ny = y + vy * dt
+    let nz = f32_load(state, 2) + f32_load(state, 6) * dt
+    let mut land = 0.0
+    if ny < 0.0 {
+        ny = 0.0
+        vy = 0.0
+        land = 1.0
+    }
+    f32_store(state, 0, nx)
+    f32_store(state, 1, ny)
+    f32_store(state, 2, nz)
+    f32_store(state, 5, vy)
+    f32_store(state, 7, land)
+}
+
+fn main() {
+    window_open(960, 540)
+    grab_mouse(1)
+
+    // Environment.
+    r3d_sky(1, 0.30, 0.50, 0.85, 0.70, 0.80, 0.92)
+    r3d_light(0.4, 1.0, 0.3, 1.0, 0.97, 0.9, 0.25)
+    r3d_shadows(1)
+    r3d_ssao(1)
+    r3d_fog(0.70, 0.80, 0.92, 0.006)
+
+    // Greybox geometry (visual only; the controller uses a flat ground for now).
+    let ground = r3d_make_plane(200.0, 200.0, 0.32, 0.46, 0.34)
+    let block = r3d_make_box(2.0, 1.0, 2.0)
+    let pillar = r3d_make_box(1.0, 4.0, 1.0)
+
+    // Rebindable input actions (ACTION -> input code; change freely at runtime).
+    let act_fwd = 0
+    let act_back = 1
+    let act_left = 2
+    let act_right = 3
+    let act_jump = 4
+    let act_slide = 5
+    let act_dash = 6
+    input_bind(act_fwd, 5)     // W
+    input_bind(act_back, 7)    // S
+    input_bind(act_left, 6)    // A
+    input_bind(act_right, 8)   // D
+    input_bind(act_jump, 4)    // Space
+    input_bind(act_slide, 10)  // LeftShift
+    input_bind(act_dash, 11)   // LeftCtrl
+
+    // Movement tuning (data-driven; tweak and re-run to change the feel).
+    let cfg = [
+        30.0,   // gravity
+        10.0,   // jump_vel
+        11.0,   // ground_speed
+        120.0,  // ground_accel
+        8.0,    // ground_friction
+        1.6,    // air_speed
+        110.0,  // air_accel
+        6.0,    // slide_boost
+        1.2,    // slide_friction
+        5.0,    // slide_min
+        18.0,   // dash_speed
+        1.1,    // dash_cd
+        1.0     // air_jumps
+    ]
+
+    // Host a session and register the Aurora movement step as the net sim.
+    net_host(45123)
+    net_sim(|state, input| {
+        sim_step(state, input, cfg)
+        0
+    }, 13, 7)
+    net_spawn_at(0.0, 0.0, 8.0)
+
+    let mut yaw = 0.0
+    let mut pitch = 0.0
+    let dt = 0.016
+    let cx = 480
+    let cy = 270
+
+    while r3d_present() {
+        r3d_begin()
+
+        // Mouse look.
+        yaw = yaw + mouse_dx() * 0.0025
+        pitch = pitch - mouse_dy() * 0.0025
+        if pitch > 1.4 { pitch = 1.4 }
+        if pitch < 0.0 - 1.4 { pitch = 0.0 - 1.4 }
+
+        // Gather rebindable input into this tick's blob and run the sim.
+        let fwd = input_axis(act_back, act_fwd)
+        let strafe = input_axis(act_left, act_right)
+        let jump = input_down(act_jump)
+        let slide = input_down(act_slide)
+        let dash = input_down(act_dash)
+        let blob = [fwd, strafe, yaw, jump as f64, slide as f64, dash as f64, dt]
+        net_send_input(blob)
+        net_update(dt)
+
+        // Camera from the locally-predicted state.
+        let px = net_local_x()
+        let py = net_local_y()
+        let pz = net_local_z()
+        let eye = py + 1.6
+        let cp = cos(pitch)
+        let fx = cp * sin(yaw)
+        let fy = sin(pitch)
+        let fz = 0.0 - cp * cos(yaw)
+        r3d_camera(px, eye, pz, px + fx, eye + fy, pz + fz, 95.0)
+
+        // World.
+        r3d_draw(ground, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(block, 8.0, 1.0, -6.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(block, -7.0, 1.0, 2.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(block, 3.0, 1.0, -16.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(pillar, -2.0, 4.0, -10.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(pillar, 12.0, 4.0, -2.0, 0.0, 0.0, 0.0, 1.0)
+
+        // HUD: crosshair + a horizontal speed bar (length scales with speed).
+        clear(0, 0, 0)
+        let i = 0 - 6
+        while i <= 6 {
+            pixel(cx + i, cy, 230, 230, 230)
+            pixel(cx, cy + i, 230, 230, 230)
+            i = i + 1
+        }
+        let vx = net_local_state(4)
+        let vz = net_local_state(6)
+        let spd = sqrt(vx * vx + vz * vz)
+        let bar = (spd * 18.0) as i64
+        let mut b = 0
+        while b < bar {
+            pixel(40 + b, 500, 90, 220, 255)
+            pixel(40 + b, 501, 90, 220, 255)
+            pixel(40 + b, 502, 90, 220, 255)
+            b = b + 1
+        }
+    }
+}
