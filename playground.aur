@@ -436,12 +436,13 @@ fn main() {
     let mut hyp = 0.0
     let mut hzp = 0.0
     let mut hitmark = 0.0
-    let dt = 0.016
     let cx = 480
     let cy = 270
 
     while r3d_present() {
         r3d_begin()
+        // Real frame time (clamped) so movement is frame-rate independent.
+        let dt = frame_dt()
 
         // Mouse look.
         yaw = yaw + mouse_dx() * 0.0025
