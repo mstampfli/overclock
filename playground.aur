@@ -174,22 +174,26 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
         let sliding_now = f32_load(state, 12) > 0.5
         let mut do_slide = false
         if sliding_now {
-            if slide_in > 0.5 and hspeed > 1.5 { do_slide = true }
+            // Stay sliding while held until you crawl to a near-stop.
+            if slide_in > 0.5 and hspeed > 0.8 { do_slide = true }
         } else {
             if slide_edge and hspeed > 2.0 { do_slide = true }
         }
         if do_slide {
-            if sliding_now == false {
-                // One-time entry boost, capped so re-sliding can't stack momentum.
-                if hspeed > 0.1 {
-                    let cap = cfg[2] + cfg[7]
-                    let mut newsp = hspeed + cfg[7]
-                    if newsp > cap { newsp = cap }
-                    if newsp > hspeed {
-                        let s = newsp / hspeed
-                        f32_store(state, 4, vx * s)
-                        f32_store(state, 6, vz * s)
-                    }
+            // Accelerate smoothly toward the slide cap along travel (no instant
+            // jolt) with very low friction - a slide builds speed and holds it,
+            // and slide -> jump carries that momentum (slide-hop), capped so
+            // re-sliding can't stack into infinity.
+            let cvx = f32_load(state, 4)
+            let cvz = f32_load(state, 6)
+            let cs = sqrt(cvx * cvx + cvz * cvz)
+            if cs > 0.1 {
+                let cap = cfg[2] + cfg[7]
+                if cs < cap {
+                    let newsp = cs + (cap - cs) * 0.05
+                    let s = newsp / cs
+                    f32_store(state, 4, cvx * s)
+                    f32_store(state, 6, cvz * s)
                 }
             }
             mv_friction(state, cfg[8], dt)
@@ -210,7 +214,10 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
                 let horiz = cos(pitch) * cfg[14]
                 f32_store(state, 4, tx * horiz - wnx * cfg[19])
                 f32_store(state, 6, tz * horiz - wnz * cfg[19])
-                vy = sin(pitch) * cfg[14]
+                // Ease vertical toward the aim target instead of hard-setting it,
+                // so jumping into a wall keeps your upward momentum (you rise) and
+                // looking up/down climbs/descends smoothly.
+                vy = vy + (sin(pitch) * cfg[14] - vy) * 0.08
                 wall_time = wall_time - dt
             } else {
                 f32_store(state, 4, 0.0 - wnx * cfg[19])
