@@ -24,6 +24,7 @@
 //  7 grounded  8 air_jumps_left  9 dash_cooldown  10 jump_prev  11 dash_prev
 //  12 sliding  13 wall_contact  14 wall_normal_x  15 wall_normal_z  16 wall_time
 //  17 wall_jump_lockout  18 slide_prev  19 coyote_timer  20 jump_buffer_timer
+//  [21 = this player's physics character handle+1, NOT replicated (>= state_len)]
 // ----- per-tick input blob (f32) ----------------------------------------------
 //  0 forward(-1..1)  1 strafe-right(-1..1)  2 yaw  3 jump  4 slide  5 dash  6 dt
 // ----- cfg (f64) --------------------------------------------------------------
@@ -64,11 +65,21 @@ fn mv_accel(state: i64, wx: f64, wz: f64, cap: f64, accel: f64, dt: f64) {
 }
 
 // The single shared simulation step (prediction + server run this identically).
-fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
+// Each player owns its OWN physics character so collision doesn't share one
+// capsule across players. The handle lives in blob slot 21, which is BEYOND the
+// replicated state_len (21 floats = indices 0..20), so it's per-machine and not
+// sent over the wire. Created lazily at the player's current position.
+fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     let dt = f32_load(input, 6)
     let yaw = f32_load(input, 2)
     let pitch = f32_load(input, 7)
     f32_store(state, 3, yaw)
+
+    let mut player = (f32_load(state, 21) as i64) - 1
+    if player < 0 {
+        player = phys3d_add_character(f32_load(state, 0), f32_load(state, 1), f32_load(state, 2), 0.6, 0.3)
+        f32_store(state, 21, (player + 1) as f64)
+    }
 
     // Wish direction on the ground plane from yaw (forward = (sin,-cos)).
     let wf = f32_load(input, 0)
@@ -428,6 +439,9 @@ fn main() {
     let dome_vis = r3d_make_sphere(32, 0.72, 0.5, 0.55)
     let target_vis = r3d_make_box_sized(0.4, 0.4, 0.4, 0.92, 0.34, 0.22)
     let spark = r3d_make_sprite(1.0, 0.85, 0.35)
+    // Other players (capsule-ish box: radius 0.3, half-height 0.9).
+    let body_vis = r3d_make_box_sized(0.3, 0.9, 0.3, 0.35, 0.7, 0.95)
+    let head_vis = r3d_make_box_sized(0.18, 0.18, 0.18, 0.9, 0.8, 0.4)
 
     // Physics world. World gravity pulls DYNAMIC bodies (the shootable targets)
     // down; the player capsule is kinematic and unaffected (it runs its own
@@ -443,7 +457,7 @@ fn main() {
     let t1 = phys3d_add_box(2.0, 0.5, 0.0 - 8.0, 0.4, 0.4, 0.4, 1)
     let t2 = phys3d_add_box(0.0 - 2.0, 0.5, 0.0 - 9.0, 0.4, 0.4, 0.4, 1)
     let t3 = phys3d_add_box(0.0, 0.5, 0.0 - 16.0, 0.4, 0.4, 0.4, 1)
-    let player = phys3d_add_character(0.0, 0.9, 8.0, 0.6, 0.3)
+    // Per-player characters are created lazily by the sim (see sim_step); none here.
 
     // Rebindable input actions (ACTION -> input code; change freely at runtime).
     let act_fwd = 0
@@ -488,10 +502,16 @@ fn main() {
         3.0     // wall_min_speed (must move this fast to attach to a wall)
     ]
 
-    // Host a session and register the Aurora movement step as the net sim.
-    net_host(45123)
+    // Auto host-or-join: the first instance hosts; a second instance on the same
+    // machine finds the port taken (net_host returns 0) and JOINS instead. Run two
+    // copies for a 2-player game on one box (loopback).
+    if net_host(45123) == 0 {
+        net_join("127.0.0.1", 45123)
+    }
+    // Register the shared Aurora movement step (21 replicated state floats, 8 input
+    // floats). The sim creates each player's own physics character on demand.
     net_sim(|state, input| {
-        sim_step(state, input, cfg, player)
+        sim_step(state, input, cfg)
         0
     }, 21, 8)
     net_spawn_at(0.0, 0.9, 8.0)
@@ -604,6 +624,24 @@ fn main() {
         r3d_draw(target_vis, phys3d_x(t1), phys3d_y(t1), phys3d_z(t1), 0.0, 0.0, 0.0, 1.0)
         r3d_draw(target_vis, phys3d_x(t2), phys3d_y(t2), phys3d_z(t2), 0.0, 0.0, 0.0, 1.0)
         r3d_draw(target_vis, phys3d_x(t3), phys3d_y(t3), phys3d_z(t3), 0.0, 0.0, 0.0, 1.0)
+
+        // Other players: draw a body + head at each remote's interpolated pos
+        // (skip ourselves - first person). Positions come from the netcode.
+        let me = net_my_id()
+        let pcount = net_player_count()
+        let mut pi = 0
+        while pi < pcount {
+            let pid = net_player_id_at(pi)
+            if pid != me {
+                let ex = net_player_x(pid)
+                let ey = net_player_y(pid)
+                let ez = net_player_z(pid)
+                let eyaw = net_player_yaw(pid)
+                r3d_draw(body_vis, ex, ey, ez, eyaw, 0.0, 0.0, 1.0)
+                r3d_draw(head_vis, ex, ey + 0.85, ez, eyaw, 0.0, 0.0, 1.0)
+            }
+            pi = pi + 1
+        }
 
         // Tracer + impact spark for a few frames after a shot.
         if hit_t > 0.0 {
