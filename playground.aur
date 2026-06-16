@@ -359,7 +359,7 @@ fn main() {
     let cfg = [
         6.0,    // gravity        (low -> longer airtime / floaty fall)
         5.0,    // jump_vel       (~2m but more hang time)
-        5.5,    // ground_speed   (dialled down again)
+        4.5,    // ground_speed   (slower base run)
         80.0,   // ground_accel
         8.0,    // ground_friction
         2.5,    // air_speed      (more aerial control)
@@ -371,7 +371,7 @@ fn main() {
         1.1,    // dash_cd
         1.0,    // air_jumps
         4.0,    // wall_gravity   (idle slide-down rate)
-        6.0,    // wall_speed     (run-along speed)
+        5.0,    // wall_speed     (run-along speed)
         70.0,   // wall_accel     (unused)
         1.6,    // wall_time      (stick budget, seconds)
         7.0,    // wall_jump_up
@@ -391,6 +391,8 @@ fn main() {
     let mut yaw = 0.0
     let mut pitch = 0.0
     let mut crouch = 0.0
+    let mut roll = 0.0
+    let mut lean = 0.0
     let mut fire_cd = 0.0
     let mut hit_t = 0.0
     let mut hxp = 0.0
@@ -428,10 +430,26 @@ fn main() {
         if net_local_state(12) > 0.5 { crouch_target = 0.45 }
         crouch = crouch + (crouch_target - crouch) * 0.2
         let eye = py + 0.7 - crouch
-        let cp = cos(pitch)
+
+        // Camera juice (visual only - aim/shoot use the same eff_pitch so the
+        // crosshair stays true). Bank hard toward the wall while wallrunning, tilt
+        // a little when strafing, and lean forward/back a touch with run input.
+        let onwall = net_local_state(13) > 0.5
+        let airborne = net_local_state(7) < 0.5
+        let mut roll_target = strafe * 0.05
+        if onwall and airborne {
+            let side = net_local_state(14) * cos(yaw) + net_local_state(15) * sin(yaw)
+            roll_target = 0.0 - side * 0.28
+        }
+        roll = roll + (roll_target - roll) * 0.15
+        lean = lean + ((0.0 - fwd * 0.03) - lean) * 0.12
+        let eff_pitch = pitch + lean
+
+        let cp = cos(eff_pitch)
         let fx = cp * sin(yaw)
-        let fy = sin(pitch)
+        let fy = sin(eff_pitch)
         let fz = 0.0 - cp * cos(yaw)
+        r3d_camera_roll(roll)
         r3d_camera(px, eye, pz, px + fx, eye + fy, pz + fz, 95.0)
 
         // Hitscan gun: fire on click (rate-limited). Cast from the eye (offset
