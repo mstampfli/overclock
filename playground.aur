@@ -23,7 +23,7 @@
 //  0 x   1 y   2 z   3 yaw   4 vx   5 vy   6 vz
 //  7 grounded  8 air_jumps_left  9 dash_cooldown  10 jump_prev  11 dash_prev
 //  12 sliding  13 wall_contact  14 wall_normal_x  15 wall_normal_z  16 wall_time
-//  17 wall_jump_lockout  18 slide_prev
+//  17 wall_jump_lockout  18 slide_prev  19 coyote_timer  20 jump_buffer_timer
 // ----- per-tick input blob (f32) ----------------------------------------------
 //  0 forward(-1..1)  1 strafe-right(-1..1)  2 yaw  3 jump  4 slide  5 dash  6 dt
 // ----- cfg (f64) --------------------------------------------------------------
@@ -102,7 +102,10 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     let py = f32_load(state, 1)
     let pz = f32_load(state, 2)
     phys3d_set_pos(player, px, py, pz)
-    let grounded = phys3d_grounded(player) == 1
+    // Grounded for THIS tick via a short down-ray from the capsule centre (the
+    // capsule bottom is ~0.9 below). phys3d_grounded only reflects last tick's
+    // move, which lagged jump-on-landing (and broke slide-hop); this is current.
+    let grounded = phys3d_raycast_ex(player, px, py, pz, 0.0, 0.0 - 1.0, 0.0, 1.0) >= 0
 
     let mut vx = f32_load(state, 4)
     let mut vy = f32_load(state, 5)
@@ -212,16 +215,19 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
             // stop running. Jump to launch off.
             if wf > 0.1 {
                 let horiz = cos(pitch) * cfg[14]
-                f32_store(state, 4, tx * horiz - wnx * cfg[19])
-                f32_store(state, 6, tz * horiz - wnz * cfg[19])
+                // Store PURE tangential velocity; the inward wall-stick is applied
+                // to the move delta only (below), so momentum stays clean and you
+                // leave the wall ALONG it, never launched into it.
+                f32_store(state, 4, tx * horiz)
+                f32_store(state, 6, tz * horiz)
                 // Ease vertical toward the aim target instead of hard-setting it,
                 // so jumping into a wall keeps your upward momentum (you rise) and
                 // looking up/down climbs/descends smoothly.
                 vy = vy + (sin(pitch) * cfg[14] - vy) * 0.08
                 wall_time = wall_time - dt
             } else {
-                f32_store(state, 4, 0.0 - wnx * cfg[19])
-                f32_store(state, 6, 0.0 - wnz * cfg[19])
+                f32_store(state, 4, 0.0)
+                f32_store(state, 6, 0.0)
                 vy = vy - cfg[13] * dt
                 wall_time = wall_time - dt * 2.5
             }
@@ -231,10 +237,18 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
         }
     }
 
-    // Jumps: ground, wall-jump (off the wall normal), then double-jump.
-    if jumped {
-        if grounded {
+    // Jumps with coyote time (a grace window after leaving the ground) and input
+    // buffering (a press just before landing still fires). [19]=coyote, [20]=buffer.
+    let mut coyote = f32_load(state, 19)
+    if grounded { coyote = 0.1 }
+    let mut jbuf = f32_load(state, 20)
+    if jumped { jbuf = 0.12 }
+    if jbuf > 0.0 {
+        if coyote > 0.0 {
+            // Ground jump (incl. coyote and buffered-on-landing).
             vy = cfg[1]
+            coyote = 0.0
+            jbuf = 0.0
         } else if wc > 0.5 {
             // Wall-jump: launch off the surface normal + up, detach, and lock out
             // re-grabbing this wall briefly so the push actually carries you.
@@ -243,14 +257,22 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
             f32_store(state, 6, f32_load(state, 6) + wnz * cfg[18])
             wr = false
             f32_store(state, 17, 0.3)
+            jbuf = 0.0
         } else {
             let aj = f32_load(state, 8)
             if aj > 0.5 {
                 vy = cfg[1]
                 f32_store(state, 8, aj - 1.0)
+                jbuf = 0.0
             }
         }
     }
+    coyote = coyote - dt
+    if coyote < 0.0 { coyote = 0.0 }
+    jbuf = jbuf - dt
+    if jbuf < 0.0 { jbuf = 0.0 }
+    f32_store(state, 19, coyote)
+    f32_store(state, 20, jbuf)
 
     // Air-dash: a cooldown burst in the wish dir (or facing if no input).
     let mut dcd = f32_load(state, 9)
@@ -286,8 +308,14 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
 
     // Collide-and-slide via the physics character, then read the resolved
     // position back into the blob (the engine reads [0..3] for the transform).
-    let mvx = f32_load(state, 4)
-    let mvz = f32_load(state, 6)
+    // The wall-stick is added to the move only (kept out of stored velocity) so
+    // it holds curved walls without polluting momentum.
+    let mut mvx = f32_load(state, 4)
+    let mut mvz = f32_load(state, 6)
+    if wr {
+        mvx = mvx - wnx * cfg[19]
+        mvz = mvz - wnz * cfg[19]
+    }
     phys3d_move_character(player, mvx * dt, vy * dt, mvz * dt, dt)
     phys3d_step(dt)
     f32_store(state, 0, phys3d_x(player))
@@ -297,6 +325,15 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     f32_store(state, 7, landed as f64)
     if landed {
         if vy < 0.0 { f32_store(state, 5, 0.0) }
+    }
+    // Kill-plane: if you fall off the world, respawn at the start.
+    if f32_load(state, 1) < 0.0 - 25.0 {
+        f32_store(state, 0, 0.0)
+        f32_store(state, 1, 0.9)
+        f32_store(state, 2, 8.0)
+        f32_store(state, 4, 0.0)
+        f32_store(state, 5, 0.0)
+        f32_store(state, 6, 0.0)
     }
 }
 
@@ -385,7 +422,7 @@ fn main() {
     net_sim(|state, input| {
         sim_step(state, input, cfg, player)
         0
-    }, 19, 8)
+    }, 21, 8)
     net_spawn_at(0.0, 0.9, 8.0)
 
     let mut yaw = 0.0
@@ -398,6 +435,7 @@ fn main() {
     let mut hxp = 0.0
     let mut hyp = 0.0
     let mut hzp = 0.0
+    let mut hitmark = 0.0
     let dt = 0.016
     let cx = 480
     let cy = 270
@@ -468,6 +506,10 @@ fn main() {
                     hyp = phys3d_hit_y()
                     hzp = phys3d_hit_z()
                     phys3d_apply_impulse(body, fx * 5.0, 4.0, fz * 5.0)
+                    // Hitmarker when a shot lands on a (dynamic) target.
+                    if body == t1 or body == t2 or body == t3 {
+                        hitmark = 0.12
+                    }
                 } else {
                     hxp = ox + fx * 120.0
                     hyp = oy + fy * 120.0
@@ -525,6 +567,19 @@ fn main() {
             pixel(40 + b, 501, cr, cg, cb)
             pixel(40 + b, 502, cr, cg, cb)
             b = b + 1
+        }
+
+        // Hitmarker: a brief red X over the crosshair when a target is hit.
+        if hitmark > 0.0 {
+            let mut k = 3
+            while k <= 8 {
+                pixel(cx + k, cy + k, 255, 70, 70)
+                pixel(cx + k, cy - k, 255, 70, 70)
+                pixel(cx - k, cy + k, 255, 70, 70)
+                pixel(cx - k, cy - k, 255, 70, 70)
+                k = k + 1
+            }
+            hitmark = hitmark - dt
         }
     }
 }
