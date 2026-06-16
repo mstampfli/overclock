@@ -428,7 +428,7 @@ fn main() {
     r3d_light(0.4, 1.0, 0.3, 1.0, 0.97, 0.9, 0.25)
     r3d_shadows(1)
     r3d_ssao(1)
-    r3d_fog(0.70, 0.80, 0.92, 0.006)
+    r3d_fog(0.70, 0.80, 0.92, 0.0025)
 
     // Visuals (sized by half-extents to match the physics colliders below; the
     // box mesh is built at the collider's size, so draw scale stays 1).
@@ -479,9 +479,9 @@ fn main() {
 
     // Movement tuning (data-driven; tweak and re-run to change the feel).
     let cfg = [
-        6.0,    // gravity        (low -> longer airtime / floaty fall)
-        5.0,    // jump_vel       (~2m but more hang time)
-        4.5,    // ground_speed   (slower base run)
+        16.0,   // gravity        (snappy, not floaty)
+        8.0,    // jump_vel       (~2m, crisp arc)
+        7.5,    // ground_speed   (fast base run - the default IS the sprint)
         80.0,   // ground_accel
         8.0,    // ground_friction
         2.5,    // air_speed      (more aerial control)
@@ -566,10 +566,10 @@ fn main() {
         // a little when strafing, and lean forward/back a touch with run input.
         let onwall = net_local_state(13) > 0.5
         let airborne = net_local_state(7) < 0.5
-        let mut roll_target = strafe * 0.05
+        let mut roll_target = 0.0 - strafe * 0.05
         if onwall and airborne {
             let side = net_local_state(14) * cos(yaw) + net_local_state(15) * sin(yaw)
-            roll_target = 0.0 - side * 0.28
+            roll_target = side * 0.28
         }
         roll = roll + (roll_target - roll) * 0.15
         lean = lean + ((0.0 - fwd * 0.03) - lean) * 0.12
