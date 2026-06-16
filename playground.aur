@@ -268,11 +268,12 @@ fn main() {
     r3d_ssao(1)
     r3d_fog(0.70, 0.80, 0.92, 0.006)
 
-    // Visuals (kept in lock-step with the physics colliders below).
+    // Visuals (sized by half-extents to match the physics colliders below; the
+    // box mesh is built at the collider's size, so draw scale stays 1).
     let ground_vis = r3d_make_plane(200.0, 200.0, 0.32, 0.46, 0.34)
-    let side_vis = r3d_make_box(1.0, 6.0, 16.0)
-    let back_vis = r3d_make_box(16.0, 6.0, 1.0)
-    let box_vis = r3d_make_box(2.0, 2.0, 2.0)
+    let side_vis = r3d_make_box_sized(0.5, 3.0, 8.0, 0.55, 0.58, 0.64)
+    let back_vis = r3d_make_box_sized(8.0, 3.0, 0.5, 0.5, 0.53, 0.6)
+    let box_vis = r3d_make_box_sized(1.0, 1.0, 1.0, 0.62, 0.5, 0.42)
     let dome_vis = r3d_make_sphere(32, 0.72, 0.5, 0.55)
 
     // Physics world (we do our own gravity, so the world gravity is zero; the
@@ -304,27 +305,27 @@ fn main() {
 
     // Movement tuning (data-driven; tweak and re-run to change the feel).
     let cfg = [
-        30.0,   // gravity
-        10.0,   // jump_vel
-        11.0,   // ground_speed
-        120.0,  // ground_accel
+        18.0,   // gravity        (softer fall)
+        8.5,    // jump_vel       (~2.0m jump)
+        6.5,    // ground_speed   (was way too fast)
+        80.0,   // ground_accel
         8.0,    // ground_friction
-        1.6,    // air_speed
-        110.0,  // air_accel
-        6.0,    // slide_boost
+        1.4,    // air_speed
+        90.0,   // air_accel
+        4.0,    // slide_boost
         1.2,    // slide_friction
         5.0,    // slide_min
-        18.0,   // dash_speed
+        11.0,   // dash_speed
         1.1,    // dash_cd
         1.0,    // air_jumps
-        9.0,    // wall_gravity
-        13.0,   // wall_speed
-        90.0,   // wall_accel
+        6.0,    // wall_gravity
+        8.0,    // wall_speed
+        70.0,   // wall_accel
         1.4,    // wall_time
-        9.0,    // wall_jump_up
-        9.5,    // wall_jump_push
+        8.0,    // wall_jump_up
+        7.0,    // wall_jump_push
         3.0,    // wall_stick
-        4.0     // wall_min_speed
+        3.0     // wall_min_speed
     ]
 
     // Host a session and register the Aurora movement step as the net sim.
