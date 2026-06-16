@@ -4,7 +4,14 @@
 // The movement is NOT in the engine: it is registered with the generic netcode
 // framework via `net_sim`, so the exact same step runs for client prediction,
 // rollback replay, and the authoritative server (which is what stops drift).
-// Here we host a solo session and tune the feel; the same code is the online sim.
+//
+// Collision uses the engine's real 3D physics (rapier3d): a kinematic character
+// capsule collide-and-slides against arbitrary geometry, including CURVED walls
+// (spheres/capsules/trimeshes), and a raycast reads the true surface normal at
+// the contact point, so wallrunning works on curved surfaces too. To stay
+// rollback-safe, the state blob is the authority: each tick we write the blob's
+// position into the body, slide, then read the resolved position back out, so
+// the physics world is just a stateless collision solver fed by the blob.
 //
 // Build (no window): `aurorac build playground.aur -o overclock`
 // Run + tune solo:    `aurorac run playground.aur`  (Esc quits)
@@ -12,16 +19,18 @@
 // Modularity: inputs are rebindable ACTIONS (never raw keys), and every movement
 // constant lives in one `cfg` array that the controller reads, so feel is data.
 
-// ----- player state blob (f32, replicated; engine reads [0..3]=xyz, [3]=yaw) ---
+// ----- player state blob (f32; engine reads [0..3]=xyz, [3]=yaw) --------------
 //  0 x   1 y   2 z   3 yaw   4 vx   5 vy   6 vz
 //  7 grounded  8 air_jumps_left  9 dash_cooldown  10 jump_prev  11 dash_prev
-//  12 sliding
+//  12 sliding  13 wall_contact  14 wall_normal_x  15 wall_normal_z  16 wall_time
 // ----- per-tick input blob (f32) ----------------------------------------------
 //  0 forward(-1..1)  1 strafe-right(-1..1)  2 yaw  3 jump  4 slide  5 dash  6 dt
 // ----- cfg (f64) --------------------------------------------------------------
 //  0 gravity 1 jump_vel 2 ground_speed 3 ground_accel 4 ground_friction
 //  5 air_speed 6 air_accel 7 slide_boost 8 slide_friction 9 slide_min
 //  10 dash_speed 11 dash_cd 12 air_jumps
+//  13 wall_gravity 14 wall_speed 15 wall_accel 16 wall_time 17 wall_jump_up
+//  18 wall_jump_push 19 wall_stick 20 wall_min_speed
 
 // Quake-style ground friction: bleed horizontal speed toward zero.
 fn mv_friction(state: i64, friction: f64, dt: f64) {
@@ -54,7 +63,7 @@ fn mv_accel(state: i64, wx: f64, wz: f64, cap: f64, accel: f64, dt: f64) {
 }
 
 // The single shared simulation step (prediction + server run this identically).
-fn sim_step(state: i64, input: i64, cfg: [f64; 13]) {
+fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     let dt = f32_load(input, 6)
     let yaw = f32_load(input, 2)
     f32_store(state, 3, yaw)
@@ -84,21 +93,69 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 13]) {
     f32_store(state, 11, dash_in)
     let was_sliding = f32_load(state, 12)
 
-    let y = f32_load(state, 1)
+    // Blob is the authority: push our position into the physics body so the
+    // slide query starts from it (rollback-safe).
+    let px = f32_load(state, 0)
+    let py = f32_load(state, 1)
+    let pz = f32_load(state, 2)
+    phys3d_set_pos(player, px, py, pz)
+    let grounded = phys3d_grounded(player) == 1
+
+    let mut vx = f32_load(state, 4)
     let mut vy = f32_load(state, 5)
-    let grounded = y <= 0.001
+    let mut vz = f32_load(state, 6)
+    let hspeed = sqrt(vx * vx + vz * vz)
+
+    // Wall detection: from the player centre, cast perpendicular to travel on
+    // both sides (excluding our own collider so a touching wall still registers).
+    // The hit gives the real surface normal, so this works on curved walls too.
+    let mut dirx = hx
+    let mut dirz = hz
+    if hspeed > 0.5 {
+        dirx = vx / hspeed
+        dirz = vz / hspeed
+    }
+    let lx = 0.0 - dirz
+    let lz = dirx
+    let probe = 0.65
+    let mut wc = 0.0
+    let mut wnx = 0.0
+    let mut wnz = 0.0
+    let lb = phys3d_raycast_ex(player, px, py, pz, lx, 0.0, lz, probe)
+    if lb >= 0 {
+        wc = 1.0
+        wnx = phys3d_hit_nx()
+        wnz = phys3d_hit_nz()
+    } else {
+        let rb = phys3d_raycast_ex(player, px, py, pz, 0.0 - lx, 0.0, 0.0 - lz, probe)
+        if rb >= 0 {
+            wc = 1.0
+            wnx = phys3d_hit_nx()
+            wnz = phys3d_hit_nz()
+        }
+    }
+    let nl = sqrt(wnx * wnx + wnz * wnz)
+    if nl > 0.0001 {
+        wnx = wnx / nl
+        wnz = wnz / nl
+    } else {
+        wc = 0.0
+    }
+    f32_store(state, 13, wc)
+    f32_store(state, 14, wnx)
+    f32_store(state, 15, wnz)
+
+    let mut wall_time = f32_load(state, 16)
+    let wallrunning = grounded == false and wc > 0.5 and wall_time > 0.0 and hspeed > cfg[20]
 
     if grounded {
         f32_store(state, 8, cfg[12])
+        f32_store(state, 16, cfg[16])
+        wall_time = cfg[16]
         if slide_in > 0.5 {
-            // Slide: very low friction; a one-time boost when entering keeps
-            // slide-hop chains accelerating.
             if was_sliding < 0.5 {
-                let vx = f32_load(state, 4)
-                let vz = f32_load(state, 6)
-                let sp = sqrt(vx * vx + vz * vz)
-                if sp > 0.1 {
-                    let s = (sp + cfg[7]) / sp
+                if hspeed > 0.1 {
+                    let s = (hspeed + cfg[7]) / hspeed
                     f32_store(state, 4, vx * s)
                     f32_store(state, 6, vz * s)
                 }
@@ -110,14 +167,43 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 13]) {
             mv_accel(state, wx, wz, cfg[2], cfg[3], dt)
             f32_store(state, 12, 0.0)
         }
-        if jumped {
-            // Slide-hop: jumping does not damp horizontal speed, so momentum carries.
-            vy = cfg[1]
-        }
     } else {
-        // Air control (air-strafe) with a small cap.
-        mv_accel(state, wx, wz, cfg[5], cfg[6], dt)
-        if jumped {
+        f32_store(state, 12, 0.0)
+        if wallrunning {
+            // Cancel the into-wall velocity, accelerate along the wall in the
+            // direction of travel, and add a little inward stick to hold contact.
+            let into = vx * wnx + vz * wnz
+            if into < 0.0 {
+                f32_store(state, 4, vx - into * wnx)
+                f32_store(state, 6, vz - into * wnz)
+            }
+            let cvx = f32_load(state, 4)
+            let cvz = f32_load(state, 6)
+            let mut tx = 0.0 - wnz
+            let mut tz = wnx
+            if cvx * tx + cvz * tz < 0.0 {
+                tx = 0.0 - tx
+                tz = 0.0 - tz
+            }
+            mv_accel(state, tx, tz, cfg[14], cfg[15], dt)
+            f32_store(state, 4, f32_load(state, 4) - wnx * cfg[19] * dt)
+            f32_store(state, 6, f32_load(state, 6) - wnz * cfg[19] * dt)
+        } else {
+            mv_accel(state, wx, wz, cfg[5], cfg[6], dt)
+        }
+    }
+
+    // Jumps: ground, wall-jump (off the wall normal), then double-jump.
+    if jumped {
+        if grounded {
+            vy = cfg[1]
+        } else if wc > 0.5 {
+            vy = cfg[17]
+            f32_store(state, 4, f32_load(state, 4) + wnx * cfg[18])
+            f32_store(state, 6, f32_load(state, 6) + wnz * cfg[18])
+            wall_time = 0.0
+            f32_store(state, 16, 0.0)
+        } else {
             let aj = f32_load(state, 8)
             if aj > 0.5 {
                 vy = cfg[1]
@@ -145,22 +231,30 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 13]) {
     if dcd < 0.0 { dcd = 0.0 }
     f32_store(state, 9, dcd)
 
-    // Gravity + integrate, with a flat ground plane at y = 0.
-    vy = vy - cfg[0] * dt
-    let nx = f32_load(state, 0) + f32_load(state, 4) * dt
-    let mut ny = y + vy * dt
-    let nz = f32_load(state, 2) + f32_load(state, 6) * dt
-    let mut land = 0.0
-    if ny < 0.0 {
-        ny = 0.0
-        vy = 0.0
-        land = 1.0
+    // Gravity (reduced while wallrunning) + wall-time burn.
+    if wallrunning {
+        vy = vy - cfg[13] * dt
+        wall_time = wall_time - dt
+        f32_store(state, 16, wall_time)
+    } else {
+        vy = vy - cfg[0] * dt
     }
-    f32_store(state, 0, nx)
-    f32_store(state, 1, ny)
-    f32_store(state, 2, nz)
     f32_store(state, 5, vy)
-    f32_store(state, 7, land)
+
+    // Collide-and-slide via the physics character, then read the resolved
+    // position back into the blob (the engine reads [0..3] for the transform).
+    let mvx = f32_load(state, 4)
+    let mvz = f32_load(state, 6)
+    phys3d_move_character(player, mvx * dt, vy * dt, mvz * dt, dt)
+    phys3d_step(dt)
+    f32_store(state, 0, phys3d_x(player))
+    f32_store(state, 1, phys3d_y(player))
+    f32_store(state, 2, phys3d_z(player))
+    let landed = phys3d_grounded(player) == 1
+    f32_store(state, 7, landed as f64)
+    if landed {
+        if vy < 0.0 { f32_store(state, 5, 0.0) }
+    }
 }
 
 fn main() {
@@ -174,10 +268,23 @@ fn main() {
     r3d_ssao(1)
     r3d_fog(0.70, 0.80, 0.92, 0.006)
 
-    // Greybox geometry (visual only; the controller uses a flat ground for now).
-    let ground = r3d_make_plane(200.0, 200.0, 0.32, 0.46, 0.34)
-    let block = r3d_make_box(2.0, 1.0, 2.0)
-    let pillar = r3d_make_box(1.0, 4.0, 1.0)
+    // Visuals (kept in lock-step with the physics colliders below).
+    let ground_vis = r3d_make_plane(200.0, 200.0, 0.32, 0.46, 0.34)
+    let side_vis = r3d_make_box(1.0, 6.0, 16.0)
+    let back_vis = r3d_make_box(16.0, 6.0, 1.0)
+    let box_vis = r3d_make_box(2.0, 2.0, 2.0)
+    let dome_vis = r3d_make_sphere(32, 0.72, 0.5, 0.55)
+
+    // Physics world (we do our own gravity, so the world gravity is zero; the
+    // character is kinematic and collide-and-slides against these statics).
+    phys3d_init(0.0, 0.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 100.0, 0.5, 100.0, 0)        // ground
+    phys3d_add_box(0.0 - 6.0, 3.0, 0.0 - 10.0, 0.5, 3.0, 8.0, 0)     // left wall
+    phys3d_add_box(6.0, 3.0, 0.0 - 10.0, 0.5, 3.0, 8.0, 0)           // right wall
+    phys3d_add_box(0.0, 3.0, 0.0 - 19.0, 8.0, 3.0, 0.5, 0)           // back wall
+    phys3d_add_box(3.0, 1.0, 0.0 - 4.0, 1.0, 1.0, 1.0, 0)            // step box
+    phys3d_add_sphere(0.0, 3.0, 0.0 - 13.0, 4.0, 0)                  // curved dome
+    let player = phys3d_add_character(0.0, 0.9, 8.0, 0.6, 0.3)
 
     // Rebindable input actions (ACTION -> input code; change freely at runtime).
     let act_fwd = 0
@@ -209,16 +316,24 @@ fn main() {
         5.0,    // slide_min
         18.0,   // dash_speed
         1.1,    // dash_cd
-        1.0     // air_jumps
+        1.0,    // air_jumps
+        9.0,    // wall_gravity
+        13.0,   // wall_speed
+        90.0,   // wall_accel
+        1.4,    // wall_time
+        9.0,    // wall_jump_up
+        9.5,    // wall_jump_push
+        3.0,    // wall_stick
+        4.0     // wall_min_speed
     ]
 
     // Host a session and register the Aurora movement step as the net sim.
     net_host(45123)
     net_sim(|state, input| {
-        sim_step(state, input, cfg)
+        sim_step(state, input, cfg, player)
         0
-    }, 13, 7)
-    net_spawn_at(0.0, 0.0, 8.0)
+    }, 17, 7)
+    net_spawn_at(0.0, 0.9, 8.0)
 
     let mut yaw = 0.0
     let mut pitch = 0.0
@@ -245,26 +360,26 @@ fn main() {
         net_send_input(blob)
         net_update(dt)
 
-        // Camera from the locally-predicted state.
+        // Camera from the locally-predicted state (capsule centre -> eye).
         let px = net_local_x()
         let py = net_local_y()
         let pz = net_local_z()
-        let eye = py + 1.6
+        let eye = py + 0.7
         let cp = cos(pitch)
         let fx = cp * sin(yaw)
         let fy = sin(pitch)
         let fz = 0.0 - cp * cos(yaw)
         r3d_camera(px, eye, pz, px + fx, eye + fy, pz + fz, 95.0)
 
-        // World.
-        r3d_draw(ground, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(block, 8.0, 1.0, -6.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(block, -7.0, 1.0, 2.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(block, 3.0, 1.0, -16.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(pillar, -2.0, 4.0, -10.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(pillar, 12.0, 4.0, -2.0, 0.0, 0.0, 0.0, 1.0)
+        // World (visuals aligned with the physics colliders).
+        r3d_draw(ground_vis, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(side_vis, 0.0 - 6.0, 3.0, 0.0 - 10.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(side_vis, 6.0, 3.0, 0.0 - 10.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(back_vis, 0.0, 3.0, 0.0 - 19.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(box_vis, 3.0, 1.0, 0.0 - 4.0, 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(dome_vis, 0.0, 3.0, 0.0 - 13.0, 0.0, 0.0, 0.0, 4.0)
 
-        // HUD: crosshair + a horizontal speed bar (length scales with speed).
+        // HUD: crosshair + a horizontal speed bar; turns gold while wallrunning.
         clear(0, 0, 0)
         let i = 0 - 6
         while i <= 6 {
@@ -276,11 +391,20 @@ fn main() {
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
         let bar = (spd * 18.0) as i64
+        let onwall = net_local_state(13)
+        let mut cr = 90
+        let mut cg = 220
+        let mut cb = 255
+        if onwall > 0.5 {
+            cr = 255
+            cg = 200
+            cb = 60
+        }
         let mut b = 0
         while b < bar {
-            pixel(40 + b, 500, 90, 220, 255)
-            pixel(40 + b, 501, 90, 220, 255)
-            pixel(40 + b, 502, 90, 220, 255)
+            pixel(40 + b, 500, cr, cg, cb)
+            pixel(40 + b, 501, cr, cg, cb)
+            pixel(40 + b, 502, cr, cg, cb)
             b = b + 1
         }
     }
