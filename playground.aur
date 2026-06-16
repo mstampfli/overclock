@@ -146,19 +146,41 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     f32_store(state, 14, wnx)
     f32_store(state, 15, wnz)
 
-    // Wallrun engages on contact while airborne with enough speed, and stays
-    // until you jump off (no time limit) - so it is a mutable we can clear.
-    let mut wr = grounded == false and wc > 0.5 and hspeed > cfg[20]
+    // Tangent along the wall, oriented by current travel.
+    let mut tx = 0.0 - wnz
+    let mut tz = wnx
+    if vx * tx + vz * tz < 0.0 {
+        tx = 0.0 - tx
+        tz = 0.0 - tz
+    }
+    // Detach if something blocks the path ahead along the wall (a corner, a box,
+    // the end of the wall) - cast forward along the tangent.
+    let mut blocked = false
+    if wc > 0.5 {
+        if phys3d_raycast_ex(player, px, py, pz, tx, 0.0, tz, 0.7) >= 0 {
+            blocked = true
+        }
+    }
+    // Wallrun engages on contact while airborne with enough speed, stays until
+    // you jump off, and is locked out briefly after a wall-jump (cooldown in 16).
+    let wall_cd = f32_load(state, 16)
+    let mut wr = grounded == false and wc > 0.5 and hspeed > cfg[20] and wall_cd <= 0.0 and blocked == false
 
     if grounded {
         f32_store(state, 8, cfg[12])
         // Slide only while actually moving; drop below a crawl and we stand up.
         if slide_in > 0.5 and hspeed > 1.5 {
+            // One-time entry boost, capped so re-sliding can't stack momentum.
             if was_sliding < 0.5 {
                 if hspeed > 0.1 {
-                    let s = (hspeed + cfg[7]) / hspeed
-                    f32_store(state, 4, vx * s)
-                    f32_store(state, 6, vz * s)
+                    let cap = cfg[2] + cfg[7]
+                    let mut newsp = hspeed + cfg[7]
+                    if newsp > cap { newsp = cap }
+                    if newsp > hspeed {
+                        let s = newsp / hspeed
+                        f32_store(state, 4, vx * s)
+                        f32_store(state, 6, vz * s)
+                    }
                 }
             }
             mv_friction(state, cfg[8], dt)
@@ -171,16 +193,10 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     } else {
         f32_store(state, 12, 0.0)
         if wr {
-            // Auto-run along the wall: WASD is ignored. The horizontal speed runs
-            // you across the wall in your current travel direction; look up/down
-            // (pitch) climbs or descends. A small inward stick holds contact
-            // (curved walls included); the collision pass cancels penetration.
-            let mut tx = 0.0 - wnz
-            let mut tz = wnx
-            if vx * tx + vz * tz < 0.0 {
-                tx = 0.0 - tx
-                tz = 0.0 - tz
-            }
+            // Auto-run along the wall: WASD is ignored. Horizontal speed runs you
+            // across the wall in your travel direction; look up/down (pitch)
+            // climbs or descends. A small inward stick holds contact (curved walls
+            // included); the collision pass cancels penetration.
             let horiz = cos(pitch) * cfg[14]
             f32_store(state, 4, tx * horiz - wnx * cfg[19])
             f32_store(state, 6, tz * horiz - wnz * cfg[19])
@@ -195,11 +211,13 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
         if grounded {
             vy = cfg[1]
         } else if wc > 0.5 {
-            // Wall-jump: launch off the surface normal + up, and detach.
+            // Wall-jump: launch off the surface normal + up, detach, and lock out
+            // re-grabbing this wall for a moment so the push actually carries you.
             vy = cfg[17]
             f32_store(state, 4, f32_load(state, 4) + wnx * cfg[18])
             f32_store(state, 6, f32_load(state, 6) + wnz * cfg[18])
             wr = false
+            f32_store(state, 16, 0.3)
         } else {
             let aj = f32_load(state, 8)
             if aj > 0.5 {
@@ -227,6 +245,12 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     dcd = dcd - dt
     if dcd < 0.0 { dcd = 0.0 }
     f32_store(state, 9, dcd)
+
+    // Burn down the post-wall-jump lockout.
+    let mut wcd = f32_load(state, 16)
+    wcd = wcd - dt
+    if wcd < 0.0 { wcd = 0.0 }
+    f32_store(state, 16, wcd)
 
     // Gravity. While wallrunning, vertical motion is set by aim (above), so we
     // skip gravity entirely - you only leave the wall by jumping.
@@ -319,7 +343,7 @@ fn main() {
         70.0,   // wall_accel
         1.4,    // wall_time
         8.0,    // wall_jump_up
-        7.0,    // wall_jump_push
+        10.0,   // wall_jump_push (net push after the inward stick)
         3.0,    // wall_stick
         3.0     // wall_min_speed
     ]
