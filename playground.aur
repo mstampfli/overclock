@@ -85,9 +85,11 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
         wz = wz / wl
     }
 
-    // Edge-detect jump and dash (press, not hold).
+    // Edge-detect jump and dash (press, not hold). Also detect the RELEASE edge
+    // for variable jump height (releasing early cuts the rise -> short hop).
     let jump_in = f32_load(input, 3)
     let jumped = jump_in > 0.5 and f32_load(state, 10) < 0.5
+    let jump_released = jump_in < 0.5 and f32_load(state, 10) > 0.5
     f32_store(state, 10, jump_in)
     let slide_in = f32_load(input, 4)
     let slide_edge = slide_in > 0.5 and f32_load(state, 18) < 0.5
@@ -351,6 +353,11 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     // when running, slow slide when idle), so world gravity is skipped.
     if wr == false {
         vy = vy - cfg[0] * dt
+    }
+    // Variable jump height: releasing jump while still rising cuts the upward
+    // velocity, so a tap is a short hop and a hold is a full jump.
+    if jump_released {
+        if vy > 0.0 { vy = vy * 0.45 }
     }
     f32_store(state, 5, vy)
 
@@ -616,7 +623,8 @@ fn main() {
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
-        let bar = (spd * 18.0) as i64
+        let mut bar = (spd * 18.0) as i64
+        if bar > 880 { bar = 880 }
         let onwall = net_local_state(13)
         let mut cr = 90
         let mut cg = 220
