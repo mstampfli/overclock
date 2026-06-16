@@ -318,16 +318,23 @@ fn main() {
     let back_vis = r3d_make_box_sized(8.0, 3.0, 0.5, 0.5, 0.53, 0.6)
     let box_vis = r3d_make_box_sized(1.0, 1.0, 1.0, 0.62, 0.5, 0.42)
     let dome_vis = r3d_make_sphere(32, 0.72, 0.5, 0.55)
+    let target_vis = r3d_make_box_sized(0.4, 0.4, 0.4, 0.92, 0.34, 0.22)
+    let spark = r3d_make_sprite(1.0, 0.85, 0.35)
 
-    // Physics world (we do our own gravity, so the world gravity is zero; the
-    // character is kinematic and collide-and-slides against these statics).
-    phys3d_init(0.0, 0.0, 0.0)
+    // Physics world. World gravity pulls DYNAMIC bodies (the shootable targets)
+    // down; the player capsule is kinematic and unaffected (it runs its own
+    // gravity in the sim), so this does not change movement feel.
+    phys3d_init(0.0, 0.0 - 15.0, 0.0)
     phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 100.0, 0.5, 100.0, 0)        // ground
     phys3d_add_box(0.0 - 6.0, 3.0, 0.0 - 10.0, 0.5, 3.0, 8.0, 0)     // left wall
     phys3d_add_box(6.0, 3.0, 0.0 - 10.0, 0.5, 3.0, 8.0, 0)           // right wall
     phys3d_add_box(0.0, 3.0, 0.0 - 19.0, 8.0, 3.0, 0.5, 0)           // back wall
     phys3d_add_box(3.0, 1.0, 0.0 - 4.0, 1.0, 1.0, 1.0, 0)            // step box
     phys3d_add_sphere(0.0, 3.0, 0.0 - 13.0, 4.0, 0)                  // curved dome
+    // Dynamic shootable targets (knock them around with the gun).
+    let t1 = phys3d_add_box(2.0, 0.5, 0.0 - 8.0, 0.4, 0.4, 0.4, 1)
+    let t2 = phys3d_add_box(0.0 - 2.0, 0.5, 0.0 - 9.0, 0.4, 0.4, 0.4, 1)
+    let t3 = phys3d_add_box(0.0, 0.5, 0.0 - 16.0, 0.4, 0.4, 0.4, 1)
     let player = phys3d_add_character(0.0, 0.9, 8.0, 0.6, 0.3)
 
     // Rebindable input actions (ACTION -> input code; change freely at runtime).
@@ -338,6 +345,7 @@ fn main() {
     let act_jump = 4
     let act_slide = 5
     let act_dash = 6
+    let act_fire = 7
     input_bind(act_fwd, 5)     // W
     input_bind(act_back, 7)    // S
     input_bind(act_left, 6)    // A
@@ -345,6 +353,7 @@ fn main() {
     input_bind(act_jump, 4)    // Space
     input_bind(act_slide, 10)  // LeftShift
     input_bind(act_dash, 11)   // LeftCtrl
+    input_bind(act_fire, 100)  // Left mouse
 
     // Movement tuning (data-driven; tweak and re-run to change the feel).
     let cfg = [
@@ -382,6 +391,11 @@ fn main() {
     let mut yaw = 0.0
     let mut pitch = 0.0
     let mut crouch = 0.0
+    let mut fire_cd = 0.0
+    let mut hit_t = 0.0
+    let mut hxp = 0.0
+    let mut hyp = 0.0
+    let mut hzp = 0.0
     let dt = 0.016
     let cx = 480
     let cy = 270
@@ -420,6 +434,32 @@ fn main() {
         let fz = 0.0 - cp * cos(yaw)
         r3d_camera(px, eye, pz, px + fx, eye + fy, pz + fz, 95.0)
 
+        // Hitscan gun: fire on click (rate-limited). Cast from the eye (offset
+        // forward to clear our own capsule); a hit knocks dynamic targets and
+        // leaves a tracer + spark for a few frames.
+        fire_cd = fire_cd - dt
+        if fire_cd < 0.0 { fire_cd = 0.0 }
+        if input_down(act_fire) > 0 {
+            if fire_cd <= 0.0 {
+                let ox = px + fx * 0.6
+                let oy = eye + fy * 0.6
+                let oz = pz + fz * 0.6
+                let body = phys3d_raycast_full(ox, oy, oz, fx, fy, fz, 120.0)
+                if body >= 0 {
+                    hxp = phys3d_hit_x()
+                    hyp = phys3d_hit_y()
+                    hzp = phys3d_hit_z()
+                    phys3d_apply_impulse(body, fx * 5.0, 4.0, fz * 5.0)
+                } else {
+                    hxp = ox + fx * 120.0
+                    hyp = oy + fy * 120.0
+                    hzp = oz + fz * 120.0
+                }
+                hit_t = 0.05
+                fire_cd = 0.11
+            }
+        }
+
         // World (visuals aligned with the physics colliders).
         r3d_draw(ground_vis, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
         r3d_draw(side_vis, 0.0 - 6.0, 3.0, 0.0 - 10.0, 0.0, 0.0, 0.0, 1.0)
@@ -427,6 +467,18 @@ fn main() {
         r3d_draw(back_vis, 0.0, 3.0, 0.0 - 19.0, 0.0, 0.0, 0.0, 1.0)
         r3d_draw(box_vis, 3.0, 1.0, 0.0 - 4.0, 0.0, 0.0, 0.0, 1.0)
         r3d_draw(dome_vis, 0.0, 3.0, 0.0 - 13.0, 0.0, 0.0, 0.0, 4.0)
+
+        // Dynamic targets at their live physics positions.
+        r3d_draw(target_vis, phys3d_x(t1), phys3d_y(t1), phys3d_z(t1), 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(target_vis, phys3d_x(t2), phys3d_y(t2), phys3d_z(t2), 0.0, 0.0, 0.0, 1.0)
+        r3d_draw(target_vis, phys3d_x(t3), phys3d_y(t3), phys3d_z(t3), 0.0, 0.0, 0.0, 1.0)
+
+        // Tracer + impact spark for a few frames after a shot.
+        if hit_t > 0.0 {
+            r3d_debug_line(px + fx * 0.4, eye - 0.08, pz + fz * 0.4, hxp, hyp, hzp, 1.0, 0.9, 0.4)
+            r3d_draw_billboard(spark, hxp, hyp, hzp, 0.3)
+            hit_t = hit_t - dt
+        }
 
         // HUD: crosshair + a horizontal speed bar; turns gold while wallrunning.
         clear(0, 0, 0)
