@@ -102,10 +102,12 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     let py = f32_load(state, 1)
     let pz = f32_load(state, 2)
     phys3d_set_pos(player, px, py, pz)
-    // Grounded for THIS tick via a short down-ray from the capsule centre (the
-    // capsule bottom is ~0.9 below). phys3d_grounded only reflects last tick's
-    // move, which lagged jump-on-landing (and broke slide-hop); this is current.
-    let grounded = phys3d_raycast_ex(player, px, py, pz, 0.0, 0.0 - 1.0, 0.0, 1.0) >= 0
+    // Grounded for THIS tick via a down-ray from the capsule centre (bottom ~0.9
+    // below). Length 1.2 = capsule bottom + the controller's 0.3 ground-snap, so
+    // the sim's notion of grounded matches what move_character will snap to (no
+    // "airborne on a small downslope" mismatch). phys3d_grounded only reflects
+    // last tick's move, which lagged jump-on-landing and broke slide-hop.
+    let grounded = phys3d_raycast_ex(player, px, py, pz, 0.0, 0.0 - 1.0, 0.0, 1.2) >= 0
 
     let mut vx = f32_load(state, 4)
     let mut vy = f32_load(state, 5)
@@ -166,7 +168,9 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     // (17). It engages on contact while airborne, not blocked, with budget left.
     let mut wall_time = f32_load(state, 16)
     let wall_cd = f32_load(state, 17)
-    let mut wr = grounded == false and wc > 0.5 and wall_time > 0.0 and wall_cd <= 0.0 and blocked == false
+    // Must be airborne, on a wall, with budget, not blocked, and actually MOVING
+    // (wires cfg[20] wall_min_speed) - no attaching to a wall from a standstill.
+    let mut wr = grounded == false and wc > 0.5 and wall_time > 0.0 and wall_cd <= 0.0 and blocked == false and hspeed > cfg[20]
 
     if grounded {
         f32_store(state, 8, cfg[12])
@@ -181,11 +185,17 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
             if slide_in > 0.5 and hspeed > 0.8 { do_slide = true }
         } else {
             if slide_edge and hspeed > 2.0 { do_slide = true }
+            // Land-into-slide: touching down fast with crouch HELD auto-slides, so
+            // you carry speed off a wallrun/jump instead of standing + braking.
+            if slide_in > 0.5 and hspeed > cfg[2] { do_slide = true }
         }
+        // Skip ground friction the tick a jump fires (bunnyhop): tapping jump on
+        // landing should preserve momentum, not bleed it for a frame on the floor.
+        let will_hop = jumped or f32_load(state, 20) > 0.0
         if do_slide {
-            // Accelerate smoothly toward the slide cap along travel (no instant
-            // jolt) with very low friction - a slide builds speed and holds it,
-            // and slide -> jump carries that momentum (slide-hop), capped so
+            // Accelerate smoothly toward the slide cap along travel (frame-rate
+            // independent) with very low friction - a slide builds speed and holds
+            // it, and slide -> jump carries that momentum (slide-hop), capped so
             // re-sliding can't stack into infinity.
             let cvx = f32_load(state, 4)
             let cvz = f32_load(state, 6)
@@ -193,7 +203,9 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
             if cs > 0.1 {
                 let cap = cfg[2] + cfg[7]
                 if cs < cap {
-                    let newsp = cs + (cap - cs) * 0.05
+                    let mut k = 3.0 * dt
+                    if k > 1.0 { k = 1.0 }
+                    let newsp = cs + (cap - cs) * k
                     let s = newsp / cs
                     f32_store(state, 4, cvx * s)
                     f32_store(state, 6, cvz * s)
@@ -202,7 +214,9 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
             mv_friction(state, cfg[8], dt)
             f32_store(state, 12, 1.0)
         } else {
-            mv_friction(state, cfg[4], dt)
+            if will_hop == false {
+                mv_friction(state, cfg[4], dt)
+            }
             mv_accel(state, wx, wz, cfg[2], cfg[3], dt)
             f32_store(state, 12, 0.0)
         }
@@ -213,21 +227,37 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
             // With no forward input you just stick (small inward hold) and slide
             // slowly down while the budget drains faster - so you peel off if you
             // stop running. Jump to launch off.
+            // Project current velocity onto the wall tangent. PRESERVE momentum:
+            // if you arrive faster than the run speed (slide-hop chain) you KEEP
+            // it; you only accelerate UP toward the run speed when slower. Store
+            // pure tangential velocity (inward stick is applied to the move delta).
+            let cvx = f32_load(state, 4)
+            let cvz = f32_load(state, 6)
+            let cur_t = cvx * tx + cvz * tz
             if wf > 0.1 {
-                let horiz = cos(pitch) * cfg[14]
-                // Store PURE tangential velocity; the inward wall-stick is applied
-                // to the move delta only (below), so momentum stays clean and you
-                // leave the wall ALONG it, never launched into it.
-                f32_store(state, 4, tx * horiz)
-                f32_store(state, 6, tz * horiz)
-                // Ease vertical toward the aim target instead of hard-setting it,
-                // so jumping into a wall keeps your upward momentum (you rise) and
-                // looking up/down climbs/descends smoothly.
-                vy = vy + (sin(pitch) * cfg[14] - vy) * 0.08
+                let run_target = cos(pitch) * cfg[14]
+                let mut newt = cur_t
+                let mut acc = cfg[15] * dt
+                if acc > 1.0 { acc = 1.0 }
+                if cur_t < run_target {
+                    newt = cur_t + (run_target - cur_t) * acc
+                }
+                f32_store(state, 4, tx * newt)
+                f32_store(state, 6, tz * newt)
+                // Ease vertical toward the aim target (frame-rate independent), so
+                // jumping into a wall keeps upward momentum and aim climbs/descends.
+                let mut ve = 8.0 * dt
+                if ve > 1.0 { ve = 1.0 }
+                vy = vy + (sin(pitch) * cfg[14] - vy) * ve
                 wall_time = wall_time - dt
             } else {
-                f32_store(state, 4, 0.0)
-                f32_store(state, 6, 0.0)
+                // Idle on the wall: coast the along-wall speed down (don't kill it
+                // dead - that was a jarring momentum cliff) and slide slowly down.
+                let mut d = 3.0 * dt
+                if d > 1.0 { d = 1.0 }
+                let newt = cur_t * (1.0 - d)
+                f32_store(state, 4, tx * newt)
+                f32_store(state, 6, tz * newt)
                 vy = vy - cfg[13] * dt
                 wall_time = wall_time - dt * 2.5
             }
@@ -245,16 +275,22 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     if jumped { jbuf = 0.12 }
     if jbuf > 0.0 {
         if coyote > 0.0 {
-            // Ground jump (incl. coyote and buffered-on-landing).
+            // Ground jump (incl. coyote and buffered-on-landing). Leave any wall
+            // so gravity resumes below.
             vy = cfg[1]
+            wr = false
             coyote = 0.0
             jbuf = 0.0
         } else if wc > 0.5 {
             // Wall-jump: launch off the surface normal + up, detach, and lock out
             // re-grabbing this wall briefly so the push actually carries you.
-            vy = cfg[17]
+            // Keep any upward momentum (max, don't hard-set), preserve the
+            // along-wall speed (we only ADD the normal push), and refresh the air
+            // jump so you can still double-jump after a wall-jump (GDD).
+            if vy < cfg[17] { vy = cfg[17] }
             f32_store(state, 4, f32_load(state, 4) + wnx * cfg[18])
             f32_store(state, 6, f32_load(state, 6) + wnz * cfg[18])
+            f32_store(state, 8, cfg[12])
             wr = false
             f32_store(state, 17, 0.3)
             jbuf = 0.0
@@ -274,18 +310,30 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     f32_store(state, 19, coyote)
     f32_store(state, 20, jbuf)
 
-    // Air-dash: a cooldown burst in the wish dir (or facing if no input).
+    // Air-dash: a cooldown burst that REDIRECTS momentum to the dash direction
+    // (snappy, Apex-style) rather than adding unbounded speed. Speed becomes
+    // max(current, dash_speed) so it never slows you and can't stack to infinity.
     let mut dcd = f32_load(state, 9)
     if dashed {
         if dcd <= 0.0 {
-            let mut dxx = wx
-            let mut dzz = wz
-            if wl < 0.001 {
-                dxx = hx
-                dzz = hz
+            // Unit dash direction = wish dir (recomputed raw, so partial input
+            // still gives a full dash), or facing when there's no input.
+            let rawx = hx * wf + rx * ws
+            let rawz = hz * wf + rz * ws
+            let rl = sqrt(rawx * rawx + rawz * rawz)
+            let mut dxx = hx
+            let mut dzz = hz
+            if rl > 0.001 {
+                dxx = rawx / rl
+                dzz = rawz / rl
             }
-            f32_store(state, 4, f32_load(state, 4) + cfg[10] * dxx)
-            f32_store(state, 6, f32_load(state, 6) + cfg[10] * dzz)
+            let cvx = f32_load(state, 4)
+            let cvz = f32_load(state, 6)
+            let cur = sqrt(cvx * cvx + cvz * cvz)
+            let mut newsp = cfg[10]
+            if cur > newsp { newsp = cur }
+            f32_store(state, 4, dxx * newsp)
+            f32_store(state, 6, dzz * newsp)
             dcd = cfg[11]
         }
     }
@@ -316,14 +364,30 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
         mvx = mvx - wnx * cfg[19]
         mvz = mvz - wnz * cfg[19]
     }
-    phys3d_move_character(player, mvx * dt, vy * dt, mvz * dt, dt)
-    phys3d_step(dt)
+    // Sub-step the move when a single tick would travel far (high speed, or a
+    // frame hitch with a big dt), so the swept character can't tunnel through
+    // thin walls. Each sub-move collides from the freshly-stepped position.
+    let travel = sqrt(mvx * mvx + vy * vy + mvz * mvz) * dt
+    let mut steps = 1
+    if travel > 0.25 {
+        steps = (travel / 0.25) as i64 + 1
+        if steps > 8 { steps = 8 }
+    }
+    let sdt = dt / (steps as f64)
+    let mut si = 0
+    while si < steps {
+        phys3d_move_character(player, mvx * sdt, vy * sdt, mvz * sdt, sdt)
+        phys3d_step(sdt)
+        si = si + 1
+    }
     f32_store(state, 0, phys3d_x(player))
     f32_store(state, 1, phys3d_y(player))
     f32_store(state, 2, phys3d_z(player))
     let landed = phys3d_grounded(player) == 1
     f32_store(state, 7, landed as f64)
-    if landed {
+    // Zero downward velocity on landing (use both the post-move grounded and the
+    // start-of-tick down-ray so an edge/step mismatch can't leak a plunge).
+    if landed or grounded {
         if vy < 0.0 { f32_store(state, 5, 0.0) }
     }
     // Kill-plane: if you fall off the world, respawn at the start.
