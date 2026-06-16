@@ -23,6 +23,7 @@
 //  0 x   1 y   2 z   3 yaw   4 vx   5 vy   6 vz
 //  7 grounded  8 air_jumps_left  9 dash_cooldown  10 jump_prev  11 dash_prev
 //  12 sliding  13 wall_contact  14 wall_normal_x  15 wall_normal_z  16 wall_time
+//  17 wall_jump_lockout  18 slide_prev
 // ----- per-tick input blob (f32) ----------------------------------------------
 //  0 forward(-1..1)  1 strafe-right(-1..1)  2 yaw  3 jump  4 slide  5 dash  6 dt
 // ----- cfg (f64) --------------------------------------------------------------
@@ -89,10 +90,11 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     let jumped = jump_in > 0.5 and f32_load(state, 10) < 0.5
     f32_store(state, 10, jump_in)
     let slide_in = f32_load(input, 4)
+    let slide_edge = slide_in > 0.5 and f32_load(state, 18) < 0.5
+    f32_store(state, 18, slide_in)
     let dash_in = f32_load(input, 5)
     let dashed = dash_in > 0.5 and f32_load(state, 11) < 0.5
     f32_store(state, 11, dash_in)
-    let was_sliding = f32_load(state, 12)
 
     // Blob is the authority: push our position into the physics body so the
     // slide query starts from it (rollback-safe).
@@ -107,28 +109,23 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     let mut vz = f32_load(state, 6)
     let hspeed = sqrt(vx * vx + vz * vz)
 
-    // Wall detection: from the player centre, cast perpendicular to travel on
-    // both sides (excluding our own collider so a touching wall still registers).
-    // The hit gives the real surface normal, so this works on curved walls too.
-    let mut dirx = hx
-    let mut dirz = hz
-    if hspeed > 0.5 {
-        dirx = vx / hspeed
-        dirz = vz / hspeed
-    }
-    let lx = 0.0 - dirz
-    let lz = dirx
+    // Wall detection: cast to each side of where we FACE (so you wallrun a wall
+    // you look along, regardless of the angle you approached it). The ray excludes
+    // our own collider and returns the real surface normal, so it works on flat
+    // walls and smooth curves alike.
+    let perpx = 0.0 - hz
+    let perpz = hx
     let probe = 0.65
     let mut wc = 0.0
     let mut wnx = 0.0
     let mut wnz = 0.0
-    let lb = phys3d_raycast_ex(player, px, py, pz, lx, 0.0, lz, probe)
+    let lb = phys3d_raycast_ex(player, px, py, pz, perpx, 0.0, perpz, probe)
     if lb >= 0 {
         wc = 1.0
         wnx = phys3d_hit_nx()
         wnz = phys3d_hit_nz()
     } else {
-        let rb = phys3d_raycast_ex(player, px, py, pz, 0.0 - lx, 0.0, 0.0 - lz, probe)
+        let rb = phys3d_raycast_ex(player, px, py, pz, 0.0 - perpx, 0.0, 0.0 - perpz, probe)
         if rb >= 0 {
             wc = 1.0
             wnx = phys3d_hit_nx()
@@ -146,32 +143,44 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     f32_store(state, 14, wnx)
     f32_store(state, 15, wnz)
 
-    // Tangent along the wall, oriented by current travel.
+    // Tangent along the wall, oriented to the way we look (so forward runs you the
+    // direction you face).
     let mut tx = 0.0 - wnz
     let mut tz = wnx
-    if vx * tx + vz * tz < 0.0 {
+    if hx * tx + hz * tz < 0.0 {
         tx = 0.0 - tx
         tz = 0.0 - tz
     }
-    // Detach if something blocks the path ahead along the wall (a corner, a box,
-    // the end of the wall) - cast forward along the tangent.
+    // Detach if the path ahead along the wall is blocked (a corner, a box, the
+    // wall's end): you can run straight walls and smooth curves, not sharp corners.
     let mut blocked = false
     if wc > 0.5 {
         if phys3d_raycast_ex(player, px, py, pz, tx, 0.0, tz, 0.7) >= 0 {
             blocked = true
         }
     }
-    // Wallrun engages on contact while airborne with enough speed, stays until
-    // you jump off, and is locked out briefly after a wall-jump (cooldown in 16).
-    let wall_cd = f32_load(state, 16)
-    let mut wr = grounded == false and wc > 0.5 and hspeed > cfg[20] and wall_cd <= 0.0 and blocked == false
+    // Wallrun holds a time budget (16) and is locked out briefly after a wall-jump
+    // (17). It engages on contact while airborne, not blocked, with budget left.
+    let mut wall_time = f32_load(state, 16)
+    let wall_cd = f32_load(state, 17)
+    let mut wr = grounded == false and wc > 0.5 and wall_time > 0.0 and wall_cd <= 0.0 and blocked == false
 
     if grounded {
         f32_store(state, 8, cfg[12])
-        // Slide only while actually moving; drop below a crawl and we stand up.
-        if slide_in > 0.5 and hspeed > 1.5 {
-            // One-time entry boost, capped so re-sliding can't stack momentum.
-            if was_sliding < 0.5 {
+        f32_store(state, 16, cfg[16])
+        // Slide: start only on a fresh press while moving; keep going while held
+        // and moving; stop (stand up) when speed dies or you release. Once stopped
+        // it will NOT auto-restart while still held - you must re-press.
+        let sliding_now = f32_load(state, 12) > 0.5
+        let mut do_slide = false
+        if sliding_now {
+            if slide_in > 0.5 and hspeed > 1.5 { do_slide = true }
+        } else {
+            if slide_edge and hspeed > 2.0 { do_slide = true }
+        }
+        if do_slide {
+            if sliding_now == false {
+                // One-time entry boost, capped so re-sliding can't stack momentum.
                 if hspeed > 0.1 {
                     let cap = cfg[2] + cfg[7]
                     let mut newsp = hspeed + cfg[7]
@@ -193,14 +202,23 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     } else {
         f32_store(state, 12, 0.0)
         if wr {
-            // Auto-run along the wall: WASD is ignored. Horizontal speed runs you
-            // across the wall in your travel direction; look up/down (pitch)
-            // climbs or descends. A small inward stick holds contact (curved walls
-            // included); the collision pass cancels penetration.
-            let horiz = cos(pitch) * cfg[14]
-            f32_store(state, 4, tx * horiz - wnx * cfg[19])
-            f32_store(state, 6, tz * horiz - wnz * cfg[19])
-            vy = sin(pitch) * cfg[14]
+            // Press forward to run along the wall; aim up/down to climb/descend.
+            // With no forward input you just stick (small inward hold) and slide
+            // slowly down while the budget drains faster - so you peel off if you
+            // stop running. Jump to launch off.
+            if wf > 0.1 {
+                let horiz = cos(pitch) * cfg[14]
+                f32_store(state, 4, tx * horiz - wnx * cfg[19])
+                f32_store(state, 6, tz * horiz - wnz * cfg[19])
+                vy = sin(pitch) * cfg[14]
+                wall_time = wall_time - dt
+            } else {
+                f32_store(state, 4, 0.0 - wnx * cfg[19])
+                f32_store(state, 6, 0.0 - wnz * cfg[19])
+                vy = vy - cfg[13] * dt
+                wall_time = wall_time - dt * 2.5
+            }
+            f32_store(state, 16, wall_time)
         } else {
             mv_accel(state, wx, wz, cfg[5], cfg[6], dt)
         }
@@ -212,12 +230,12 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
             vy = cfg[1]
         } else if wc > 0.5 {
             // Wall-jump: launch off the surface normal + up, detach, and lock out
-            // re-grabbing this wall for a moment so the push actually carries you.
+            // re-grabbing this wall briefly so the push actually carries you.
             vy = cfg[17]
             f32_store(state, 4, f32_load(state, 4) + wnx * cfg[18])
             f32_store(state, 6, f32_load(state, 6) + wnz * cfg[18])
             wr = false
-            f32_store(state, 16, 0.3)
+            f32_store(state, 17, 0.3)
         } else {
             let aj = f32_load(state, 8)
             if aj > 0.5 {
@@ -247,16 +265,14 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21], player: i64) {
     f32_store(state, 9, dcd)
 
     // Burn down the post-wall-jump lockout.
-    let mut wcd = f32_load(state, 16)
+    let mut wcd = f32_load(state, 17)
     wcd = wcd - dt
     if wcd < 0.0 { wcd = 0.0 }
-    f32_store(state, 16, wcd)
+    f32_store(state, 17, wcd)
 
-    // Gravity. While wallrunning, vertical motion is set by aim (above), so we
-    // skip gravity entirely - you only leave the wall by jumping.
-    if wr {
-        vy = vy - cfg[13] * dt
-    } else {
+    // Gravity. While wallrunning the vertical motion is already set above (aim
+    // when running, slow slide when idle), so world gravity is skipped.
+    if wr == false {
         vy = vy - cfg[0] * dt
     }
     f32_store(state, 5, vy)
@@ -325,27 +341,27 @@ fn main() {
 
     // Movement tuning (data-driven; tweak and re-run to change the feel).
     let cfg = [
-        9.0,    // gravity        (floaty fall)
-        6.0,    // jump_vel       (~2.0m jump at this gravity)
-        6.5,    // ground_speed   (was way too fast)
+        6.0,    // gravity        (low -> longer airtime / floaty fall)
+        5.0,    // jump_vel       (~2m but more hang time)
+        5.5,    // ground_speed   (dialled down again)
         80.0,   // ground_accel
         8.0,    // ground_friction
-        1.4,    // air_speed
-        90.0,   // air_accel
+        2.5,    // air_speed      (more aerial control)
+        120.0,  // air_accel      (steer harder in the air)
         4.0,    // slide_boost
         1.2,    // slide_friction
         5.0,    // slide_min
         11.0,   // dash_speed
         1.1,    // dash_cd
         1.0,    // air_jumps
-        6.0,    // wall_gravity
-        8.0,    // wall_speed
-        70.0,   // wall_accel
-        1.4,    // wall_time
-        8.0,    // wall_jump_up
-        10.0,   // wall_jump_push (net push after the inward stick)
+        4.0,    // wall_gravity   (idle slide-down rate)
+        6.0,    // wall_speed     (run-along speed)
+        70.0,   // wall_accel     (unused)
+        1.6,    // wall_time      (stick budget, seconds)
+        7.0,    // wall_jump_up
+        5.0,    // wall_jump_push (net push after the inward stick)
         3.0,    // wall_stick
-        3.0     // wall_min_speed
+        3.0     // wall_min_speed (unused)
     ]
 
     // Host a session and register the Aurora movement step as the net sim.
@@ -353,7 +369,7 @@ fn main() {
     net_sim(|state, input| {
         sim_step(state, input, cfg, player)
         0
-    }, 17, 8)
+    }, 19, 8)
     net_spawn_at(0.0, 0.9, 8.0)
 
     let mut yaw = 0.0
