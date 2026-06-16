@@ -479,13 +479,13 @@ fn main() {
         1.1,    // dash_cd
         1.0,    // air_jumps
         4.0,    // wall_gravity   (idle slide-down rate)
-        5.0,    // wall_speed     (run-along speed)
-        70.0,   // wall_accel     (unused)
+        5.0,    // wall_speed     (run-along speed; overspeed is preserved)
+        8.0,    // wall_accel     (rate you ramp UP to wall_speed when slower)
         1.6,    // wall_time      (stick budget, seconds)
         7.0,    // wall_jump_up
-        5.0,    // wall_jump_push (net push after the inward stick)
-        3.0,    // wall_stick
-        3.0     // wall_min_speed (unused)
+        5.0,    // wall_jump_push (added to along-wall momentum)
+        3.0,    // wall_stick     (inward hold; applied to the move, not velocity)
+        3.0     // wall_min_speed (must move this fast to attach to a wall)
     ]
 
     // Host a session and register the Aurora movement step as the net sim.
