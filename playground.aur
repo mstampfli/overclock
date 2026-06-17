@@ -25,8 +25,15 @@
 //  12 sliding  13 wall_contact  14 wall_normal_x  15 wall_normal_z  16 wall_time
 //  17 wall_jump_lockout  18 slide_prev  19 coyote_timer  20 jump_buffer_timer
 //  [21 = this player's physics character handle+1, NOT replicated (>= state_len)]
+//  [22 = jump windup timer (standing-jump anticipation), NOT replicated]
+//  [23 = wallrun-active flag for the camera/HUD (sim's real wr), NOT replicated]
+//  [24,25 = outward normal of the last wall-jumped wall (into-wall block), NOT repl.]
+//  [26 = current slide-key (Ctrl) hold already started a slide (clears on release), NOT repl.]
+//  [27 = slide cooldown (anti-spam; cleared when airborne), NOT replicated]
+//  [28 = time grounded (landing-grace friction skip for hop momentum), NOT replicated]
 // ----- per-tick input blob (f32) ----------------------------------------------
 //  0 forward(-1..1)  1 strafe-right(-1..1)  2 yaw  3 jump  4 slide  5 dash  6 dt
+//  7 pitch  8 respawn (combat death -> teleport to spawn)
 // ----- cfg (f64) --------------------------------------------------------------
 //  0 gravity 1 jump_vel 2 ground_speed 3 ground_accel 4 ground_friction
 //  5 air_speed 6 air_accel 7 slide_boost 8 slide_friction 9 slide_min
@@ -73,6 +80,22 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     let dt = f32_load(input, 6)
     let yaw = f32_load(input, 2)
     let pitch = f32_load(input, 7)
+    // Overclock move-speed multiplier from the main loop (1.0 normal, >1 boosted).
+    let mut ocm = f32_load(input, 9)
+    if ocm < 0.5 { ocm = 1.0 }
+    // Grapple: the main loop aims + sets a world anchor (10,11,12) and the active
+    // flag (13); while active the sim pulls the player toward the anchor.
+    let g_active = f32_load(input, 13) > 0.5
+    let gax = f32_load(input, 10)
+    let gay = f32_load(input, 11)
+    let gaz = f32_load(input, 12)
+    // Were we wallrunning last tick (slot 23, written at the end)? Used to fling off
+    // when the wall ends (top or side). Capture LAST tick's wall normal (slots 14/15)
+    // BEFORE this tick's probe overwrites them - the fling re-probes along it to tell a
+    // TOP exit (wall still below you) from a SIDE exit (wall gone, ran off the end).
+    let was_wr = f32_load(state, 23) > 0.5
+    let pwnx = f32_load(state, 14)
+    let pwnz = f32_load(state, 15)
     f32_store(state, 3, yaw)
 
     let mut player = (f32_load(state, 21) as i64) - 1
@@ -108,6 +131,11 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     let dash_in = f32_load(input, 5)
     let dashed = dash_in > 0.5 and f32_load(state, 11) < 0.5
     f32_store(state, 11, dash_in)
+    // One continuous slide-key (Ctrl) hold can START only ONE slide. [26] tracks
+    // whether THIS hold already started a slide; it clears when Ctrl is released, so
+    // you must re-press to slide again (no slide->jump->land-slide on one held key).
+    let mut slide_used = f32_load(state, 26)
+    if slide_in < 0.5 { slide_used = 0.0 }
 
     // Blob is the authority: push our position into the physics body so the
     // slide query starts from it (rollback-safe).
@@ -121,6 +149,24 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     // "airborne on a small downslope" mismatch). phys3d_grounded only reflects
     // last tick's move, which lagged jump-on-landing and broke slide-hop.
     let grounded = phys3d_raycast_ex(player, px, py, pz, 0.0, 0.0 - 1.0, 0.0, 1.2) >= 0
+    // Grab the floor normal from that same down-ray NOW (valid when grounded) - the
+    // wall probe below reuses the hit-normal slots. A slide reads this to accelerate
+    // down a slope. Flat ground = (0, 1, 0).
+    let fnx = phys3d_hit_nx()
+    let fny = phys3d_hit_ny()
+    let fnz = phys3d_hit_nz()
+    // Slide cooldown (slot 27): a short lockout so you can't spam-restart slides on
+    // the ground. CLEARED the instant you leave the ground (jump or fall off a
+    // ledge), so a slide -> jump -> land still slides immediately.
+    let mut slide_cd = f32_load(state, 27)
+    slide_cd = slide_cd - dt
+    if slide_cd < 0.0 { slide_cd = 0.0 }
+    if grounded == false { slide_cd = 0.0 }
+    // Time spent grounded (slot 28; resets in the air). A short grace right after
+    // landing skips ground friction, so hopping around preserves momentum better.
+    let mut gtime = f32_load(state, 28)
+    if grounded { gtime = gtime + dt } else { gtime = 0.0 }
+    if gtime > 1.0 { gtime = 1.0 }
 
     let mut vx = f32_load(state, 4)
     let mut vy = f32_load(state, 5)
@@ -156,6 +202,19 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
         wnz = wnz / nl
     } else {
         wc = 0.0
+    }
+    // Reject END-CAP contacts. A runnable wall face has its normal PERPENDICULAR to the
+    // way you face/run (you run along its length). The short END of a wall - the face
+    // you run off - has its normal pointing ALONG your facing. Grabbing that cap for
+    // even one frame makes the wallrun project your length-wise speed onto the cap's
+    // WIDTH tangent, which is ~perpendicular to your motion -> speed collapses to ~0.
+    // So if the surface normal is too aligned with facing, it is an end cap: drop the
+    // contact so you cleanly detach and fling instead of sticking to the width.
+    if wc > 0.5 {
+        let nf = wnx * hx + wnz * hz
+        if nf > 0.75 or nf < 0.0 - 0.75 {
+            wc = 0.0
+        }
     }
     f32_store(state, 13, wc)
     f32_store(state, 14, wnx)
@@ -197,40 +256,70 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             // Stay sliding while held until you crawl to a near-stop.
             if slide_in > 0.5 and hspeed > 0.8 { do_slide = true }
         } else {
-            if slide_edge and hspeed > 2.0 { do_slide = true }
-            // Land-into-slide: touching down fast with crouch HELD auto-slides, so
-            // you carry speed off a wallrun/jump instead of standing + braking.
-            if slide_in > 0.5 and hspeed > cfg[2] { do_slide = true }
+            // START a slide only from a fresh-enough Ctrl hold AND past the cooldown.
+            if slide_used < 0.5 and slide_cd <= 0.0 {
+                if slide_edge and hspeed > 2.0 { do_slide = true }
+                // Land-into-slide: touching down fast with crouch held carries speed
+                // off a wallrun/jump - but only if THIS Ctrl press is still fresh.
+                if slide_in > 0.5 and hspeed > cfg[2] { do_slide = true }
+            }
         }
         // Skip ground friction the tick a jump fires (bunnyhop): tapping jump on
         // landing should preserve momentum, not bleed it for a frame on the floor.
         let will_hop = jumped or f32_load(state, 20) > 0.0
         if do_slide {
-            // Accelerate smoothly toward the slide cap along travel (frame-rate
-            // independent) with very low friction - a slide builds speed and holds
-            // it, and slide -> jump carries that momentum (slide-hop), capped so
-            // re-sliding can't stack into infinity.
-            let cvx = f32_load(state, 4)
-            let cvz = f32_load(state, 6)
-            let cs = sqrt(cvx * cvx + cvz * cvz)
-            if cs > 0.1 {
-                let cap = cfg[2] + cfg[7]
-                if cs < cap {
-                    let mut k = 3.0 * dt
-                    if k > 1.0 { k = 1.0 }
-                    let newsp = cs + (cap - cs) * k
-                    let s = newsp / cs
+            // A slide is a LAUNCH then a DECAY. On the tick it STARTS, kick a one-time
+            // speed boost (slide_boost) along travel, capped so re-sliding can't stack
+            // to infinity, and mark this Ctrl hold as USED so it can't start/boost
+            // another slide until released. After that there is NO re-accel - friction
+            // bleeds it gradually.
+            if sliding_now == false {
+                slide_used = 1.0
+                slide_cd = 0.5    // lock out re-sliding for a short bit (anti-spam)
+                let cvx = f32_load(state, 4)
+                let cvz = f32_load(state, 6)
+                let cs = sqrt(cvx * cvx + cvz * cvz)
+                if cs > 0.1 {
+                    let mut ns = cs + cfg[7]
+                    let smax = cfg[2] + cfg[7] + 2.0
+                    if ns > smax { ns = smax }
+                    let s = ns / cs
                     f32_store(state, 4, cvx * s)
                     f32_store(state, 6, cvz * s)
                 }
             }
+            // Gravity projected onto the floor plane: ZERO on flat ground, but DOWN a
+            // slope it keeps accelerating you (and brakes you going up). g * ny gives
+            // the slope steepness; (nx, nz) is the downhill direction.
+            f32_store(state, 4, f32_load(state, 4) + cfg[0] * fny * fnx * dt)
+            f32_store(state, 6, f32_load(state, 6) + cfg[0] * fny * fnz * dt)
+            // Low, steady floor friction - the gradual slow-down on the flat.
             mv_friction(state, cfg[8], dt)
             f32_store(state, 12, 1.0)
         } else {
-            if will_hop == false {
+            // Skip ground friction the tick a jump fires AND for a short grace just
+            // after landing, so hopping around keeps its momentum (only steady-state
+            // grounded running brakes via friction -> crisp stops are unaffected).
+            let keep_mo = will_hop or gtime < 0.13
+            if keep_mo == false {
                 mv_friction(state, cfg[4], dt)
             }
-            mv_accel(state, wx, wz, cfg[2], cfg[3], dt)
+            // No sprint: the slide is the ground speed tool now. Run cap (boosted
+            // while overclocked).
+            mv_accel(state, wx, wz, cfg[2] * ocm, cfg[3], dt)
+            // Cap to the run speed (or incoming momentum if higher) so turning /
+            // diagonal input can't build speed ABOVE the cap. Momentum from a
+            // slide-hop landing is preserved here and bled gradually by friction.
+            let gvx = f32_load(state, 4)
+            let gvz = f32_load(state, 6)
+            let gs = sqrt(gvx * gvx + gvz * gvz)
+            let mut glim = cfg[2] * ocm
+            if hspeed > glim { glim = hspeed }
+            if gs > glim {
+                let gsc = glim / gs
+                f32_store(state, 4, gvx * gsc)
+                f32_store(state, 6, gvz * gsc)
+            }
             f32_store(state, 12, 0.0)
         }
     } else {
@@ -248,7 +337,11 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             let cvz = f32_load(state, 6)
             let cur_t = cvx * tx + cvz * tz
             if wf > 0.1 {
-                let run_target = cos(pitch) * cfg[14]
+                // Cap the UPWARD climb angle to 45 degrees - you can aim up to climb,
+                // but can't run straight up a wall (look further up -> still 45).
+                let mut wp = pitch
+                if wp > 0.785 { wp = 0.785 }
+                let run_target = cos(wp) * cfg[14]
                 let mut newt = cur_t
                 let mut acc = cfg[15] * dt
                 if acc > 1.0 { acc = 1.0 }
@@ -257,12 +350,13 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
                 }
                 f32_store(state, 4, tx * newt)
                 f32_store(state, 6, tz * newt)
-                // Ease vertical toward the aim target (frame-rate independent), so
-                // jumping into a wall keeps upward momentum and aim climbs/descends.
+                // Ease vertical toward the (angle-capped) aim target.
                 let mut ve = 8.0 * dt
                 if ve > 1.0 { ve = 1.0 }
-                vy = vy + (sin(pitch) * cfg[14] - vy) * ve
-                wall_time = wall_time - dt
+                vy = vy + (sin(wp) * cfg[14] - vy) * ve
+                // No time drain while ACTIVELY running along the wall - you only peel
+                // off if you stop (idle branch) or run off the end. Keep it topped up.
+                wall_time = cfg[16]
             } else {
                 // Idle on the wall: coast the along-wall speed down (don't kill it
                 // dead - that was a jarring momentum cliff) and slide slowly down.
@@ -276,7 +370,69 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             }
             f32_store(state, 16, wall_time)
         } else {
-            mv_accel(state, wx, wz, cfg[5], cfg[6], dt)
+            // Just after a wall-jump (lockout active), strip any wish-direction
+            // component pointing back INTO the wall we kicked off (slots 24/25 hold
+            // its outward normal). Without this, holding toward the wall instantly
+            // cancels the push-off and you re-stick - letting you climb straight up
+            // by spamming jump. Moving ALONG the wall or AWAY from it is untouched,
+            // so alternating between two facing walls still works.
+            let lck = f32_load(state, 17)
+            if lck > 0.0 {
+                let jnx = f32_load(state, 24)
+                let jnz = f32_load(state, 25)
+                let into = wx * jnx + wz * jnz
+                if into < 0.0 {
+                    wx = wx - into * jnx
+                    wz = wz - into * jnz
+                }
+            }
+            // Responsive air control: STEER existing horizontal momentum toward the
+            // wish direction, keeping its speed. This is what makes pressing A/D
+            // mid-air actually curve you left/right even while holding W - instead of
+            // the strict Quake accel (which only adds speed ALONG the wish dir up to
+            // a cap, so a fast forward run eats the whole cap and a diagonal does
+            // nothing). The Quake accel below still adds a little speed on top.
+            let avx = f32_load(state, 4)
+            let avz = f32_load(state, 6)
+            let asp = sqrt(avx * avx + avz * avz)
+            let wlen = sqrt(wx * wx + wz * wz)
+            // No air-steering while grappling - the pull dominates (you swing, you
+            // don't strafe away from the anchor).
+            if asp > 0.1 and wlen > 0.1 and g_active == false {
+                let wdx = wx / wlen
+                let wdz = wz / wlen
+                let cdx = avx / asp
+                let cdz = avz / asp
+                let mut st = 6.0 * dt
+                if st > 1.0 { st = 1.0 }
+                let ndx = cdx + (wdx - cdx) * st
+                let ndz = cdz + (wdz - cdz) * st
+                let nl = sqrt(ndx * ndx + ndz * ndz)
+                if nl > 0.0001 {
+                    f32_store(state, 4, ndx / nl * asp)
+                    f32_store(state, 6, ndz / nl * asp)
+                }
+            }
+            // No air acceleration while grappling either - input adds NO momentum,
+            // so pressing keys can't feed the pull's away/snap (no S-fling). You just
+            // swing on the pull + gravity.
+            if g_active == false {
+                mv_accel(state, wx, wz, cfg[5] * ocm, cfg[6], dt)
+            }
+            // Cap air speed to the air cap (or incoming momentum if higher). Steering
+            // above REDIRECTS momentum; this stops turning-while-strafing from GROWING
+            // it (no air-strafe runaway). A standstill jump still builds up to the air
+            // cap; a momentum jump keeps its speed but can't gain.
+            let avx2 = f32_load(state, 4)
+            let avz2 = f32_load(state, 6)
+            let as2 = sqrt(avx2 * avx2 + avz2 * avz2)
+            let mut alim = cfg[5] * ocm
+            if hspeed > alim { alim = hspeed }
+            if as2 > alim {
+                let asc = alim / as2
+                f32_store(state, 4, avx2 * asc)
+                f32_store(state, 6, avz2 * asc)
+            }
         }
     }
 
@@ -286,26 +442,40 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     if grounded { coyote = 0.1 }
     let mut jbuf = f32_load(state, 20)
     if jumped { jbuf = 0.12 }
+    let mut windup = f32_load(state, 22)
     if jbuf > 0.0 {
         if coyote > 0.0 {
             // Ground jump (incl. coyote and buffered-on-landing). Leave any wall
             // so gravity resumes below.
-            vy = cfg[1]
             wr = false
             coyote = 0.0
             jbuf = 0.0
+            if hspeed < 3.0 {
+                // Standing jump: load a brief crouch-and-spring anticipation
+                // (the camera dips during this window) so it reads as a human
+                // jump instead of an instant teleport-up. Launch fires when the
+                // windup expires (below).
+                if windup <= 0.0 { windup = 0.06 }
+            } else {
+                // Moving jump stays instant - never bleed bunnyhop / slide-hop.
+                vy = cfg[1]
+            }
         } else if wc > 0.5 {
             // Wall-jump: launch off the surface normal + up, detach, and lock out
             // re-grabbing this wall briefly so the push actually carries you.
-            // Keep any upward momentum (max, don't hard-set), preserve the
-            // along-wall speed (we only ADD the normal push), and refresh the air
-            // jump so you can still double-jump after a wall-jump (GDD).
+            // Keep any upward momentum (max, don't hard-set) and preserve the
+            // along-wall speed (we only ADD the normal push). Does NOT refresh the
+            // air jump - only touching the ground gives your double-jump back, so a
+            // wallrun chain can't also bank free double-jumps.
             if vy < cfg[17] { vy = cfg[17] }
             f32_store(state, 4, f32_load(state, 4) + wnx * cfg[18])
             f32_store(state, 6, f32_load(state, 6) + wnz * cfg[18])
-            f32_store(state, 8, cfg[12])
+            // Remember the wall we kicked off so the air branch can block movement
+            // back INTO it during the lockout (no spam-jump wall climbing).
+            f32_store(state, 24, wnx)
+            f32_store(state, 25, wnz)
             wr = false
-            f32_store(state, 17, 0.3)
+            f32_store(state, 17, 0.35)
             jbuf = 0.0
         } else {
             let aj = f32_load(state, 8)
@@ -323,11 +493,94 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     f32_store(state, 19, coyote)
     f32_store(state, 20, jbuf)
 
+    // Standing-jump windup: count it down and launch when it expires. Clear the
+    // coyote/buffer windows on launch so a still-held jump can't immediately
+    // re-arm another windup the next tick (which would double-pop the jump).
+    if windup > 0.0 {
+        windup = windup - dt
+        if windup <= 0.0 {
+            windup = 0.0
+            vy = cfg[1]
+            wr = false
+            f32_store(state, 19, 0.0)
+            f32_store(state, 20, 0.0)
+        }
+    }
+    f32_store(state, 22, windup)
+
+    // Wall-exit fling: ran off the END of a wall (lost contact while wallrunning,
+    // without jumping) - i.e. reached the TOP or ran off the SIDE -> launch off with
+    // your momentum plus an upward pop, so it feels like flinging off the wall.
+    if was_wr and wc < 0.5 and grounded == false and jumped == false and g_active == false {
+        let evx = f32_load(state, 4)
+        let evz = f32_load(state, 6)
+        let esp = sqrt(evx * evx + evz * evz)
+        // WHICH EDGE did we leave by? Re-probe toward the wall (along last tick's
+        // inward normal) from a point well BELOW us. If it still hits, the wall
+        // continues below -> we crossed the TOP edge (vertical). If it misses, the
+        // wall is simply gone -> we ran off the SIDE edge (horizontal). This is pure
+        // geometry, independent of how we happened to be moving.
+        let pnl = sqrt(pwnx * pwnx + pwnz * pwnz)
+        let mut top_exit = false
+        if pnl > 0.1 {
+            let pdx = pwnx / pnl
+            let pdz = pwnz / pnl
+            if phys3d_raycast_ex(player, px, py - 1.3, pz, 0.0 - pdx, 0.0, 0.0 - pdz, 1.1) >= 0 {
+                top_exit = true
+            }
+        }
+        if top_exit {
+            // Off the TOP: small pop, you are already up high. (Already feels right -
+            // you exit with upward speed and never re-touch the wall.)
+            vy = vy + 2.0
+            if esp > 0.5 {
+                let edx = evx / esp
+                let edz = evz / esp
+                let newsp = esp * 1.05 + 1.0
+                f32_store(state, 4, edx * newsp)
+                f32_store(state, 6, edz * newsp)
+            }
+        } else {
+            // Off the SIDE: KEEP your speed and ADD a forward-dominant boost (along the
+            // way you were running) plus a smaller outward kick off the wall.
+            let mut rfx = hx
+            let mut rfz = hz
+            if esp > 0.5 {
+                rfx = evx / esp
+                rfz = evz / esp
+            }
+            let mut nfx = pwnx
+            let mut nfz = pwnz
+            let pnl2 = sqrt(nfx * nfx + nfz * nfz)
+            if pnl2 > 0.1 {
+                nfx = nfx / pnl2
+                nfz = nfz / pnl2
+            } else {
+                nfx = rfx
+                nfz = rfz
+            }
+            f32_store(state, 4, evx + rfx * 2.0 + nfx * 0.5)
+            f32_store(state, 6, evz + rfz * 2.0 + nfz * 0.5)
+            // A little upward pop so you arc off the edge (a level wallrun leaves vy ~0).
+            if vy < 5.0 { vy = 5.0 }
+        }
+        // THE side-plop fix: right after flinging you are STILL within the wall probe's
+        // reach for a few frames, so without this you instantly RE-ATTACH to the same
+        // wall and the wallrun re-projects your velocity onto the wall tangent - which
+        // strips the outward fling speed to ~0. (Top exits never re-touch the wall,
+        // which is why only the SIDE collapsed.) Lock out re-grabbing the wall briefly,
+        // exactly like a wall-jump does, and remember its normal so the air branch also
+        // won't let held input shove you back into it.
+        f32_store(state, 17, 0.3)
+        f32_store(state, 24, pwnx)
+        f32_store(state, 25, pwnz)
+    }
+
     // Air-dash: a cooldown burst that REDIRECTS momentum to the dash direction
     // (snappy, Apex-style) rather than adding unbounded speed. Speed becomes
     // max(current, dash_speed) so it never slows you and can't stack to infinity.
     let mut dcd = f32_load(state, 9)
-    if dashed {
+    if dashed and grounded == false {
         if dcd <= 0.0 {
             // Unit dash direction = wish dir (recomputed raw, so partial input
             // still gives a full dash), or facing when there's no input.
@@ -343,7 +596,7 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             let cvx = f32_load(state, 4)
             let cvz = f32_load(state, 6)
             let cur = sqrt(cvx * cvx + cvz * cvz)
-            let mut newsp = cfg[10]
+            let mut newsp = cfg[10] * ocm
             if cur > newsp { newsp = cur }
             f32_store(state, 4, dxx * newsp)
             f32_store(state, 6, dzz * newsp)
@@ -353,6 +606,10 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     dcd = dcd - dt
     if dcd < 0.0 { dcd = 0.0 }
     f32_store(state, 9, dcd)
+    // Persist the slide consumed-hold flag (26) + slide cooldown (27) + grounded time (28).
+    f32_store(state, 26, slide_used)
+    f32_store(state, 27, slide_cd)
+    f32_store(state, 28, gtime)
 
     // Burn down the post-wall-jump lockout.
     let mut wcd = f32_load(state, 17)
@@ -363,7 +620,12 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     // Gravity. While wallrunning the vertical motion is already set above (aim
     // when running, slow slide when idle), so world gravity is skipped.
     if wr == false {
-        vy = vy - cfg[0] * dt
+        // Asymmetric gravity: fall noticeably FASTER than you rise, so the arc has
+        // weight - a brief hang at the top then a quick, human drop instead of a
+        // floaty glide. (Rising stays at base gravity for a snappy launch.)
+        let mut g = cfg[0]
+        if vy < 0.0 { g = cfg[0] * 1.6 }
+        vy = vy - g * dt
     }
     // Variable jump height: releasing jump while still rising cuts the upward
     // velocity, so a tap is a short hop and a hold is a full jump.
@@ -371,6 +633,66 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
         if vy > 0.0 { vy = vy * 0.45 }
     }
     f32_store(state, 5, vy)
+    // Publish the REAL wallrun state for the camera/HUD. wr is gated on the stable
+    // straight-down grounded ray, so it is never set on the floor - the camera must
+    // read THIS, not the flickery post-move grounded flag (state[7]), or it snaps
+    // the wall-bank when you merely walk along a wall on the ground.
+    f32_store(state, 23, wr as f64)
+
+    // Grapple pull: a strong acceleration toward the anchor (applied AFTER the per-
+    // branch speed clamps so it can carry you fast), capped at the grapple top speed.
+    // Gravity already applied above, so you SWING. Disengages near the anchor (main
+    // loop). Updates state[4]/[6] (horizontal, read by the move) + vy + state[5].
+    if g_active {
+        let gdx = gax - px
+        let gdy = gay - py
+        let gdz = gaz - pz
+        let gdist = sqrt(gdx * gdx + gdy * gdy + gdz * gdz)
+        if gdist > 1.0 {
+            let gnx = gdx / gdist
+            let gny = gdy / gdist
+            let gnz = gdz / gdist
+            // Decompose velocity into RADIAL (along the hook axis) + TANGENTIAL.
+            let cvx = f32_load(state, 4)
+            let cvz = f32_load(state, 6)
+            let rad = cvx * gnx + vy * gny + cvz * gnz
+            let tvx = cvx - rad * gnx
+            let tvy = vy - rad * gny
+            let tvz = cvz - rad * gnz
+            // The pull SETS the radial speed toward the hook and never lets anything
+            // (input, gravity, dash) reduce it - so the pull is uncounterable. The
+            // tangential part is free (you swing), capped so the total stays bounded.
+            let gpull = 14.0
+            let gcap = 20.0
+            let mut nrad = rad
+            if nrad < gpull { nrad = gpull }
+            if nrad > gcap { nrad = gcap }
+            let mut tbud = gcap * gcap - nrad * nrad
+            if tbud < 0.0 { tbud = 0.0 }
+            let tmax = sqrt(tbud)
+            let tsp = sqrt(tvx * tvx + tvy * tvy + tvz * tvz)
+            let mut tsc = 1.0
+            if tsp > tmax and tsp > 0.001 { tsc = tmax / tsp }
+            f32_store(state, 4, tvx * tsc + nrad * gnx)
+            f32_store(state, 6, tvz * tsc + nrad * gnz)
+            vy = tvy * tsc + nrad * gny
+            f32_store(state, 5, vy)
+        }
+    }
+
+    // Global horizontal speed clamp (anti-exploit). Air-strafing (turning while you
+    // hold a direction) feeds the air accel and can run speed away unbounded. This
+    // caps the TOTAL horizontal speed - set above every intended momentum source
+    // (slide ~16, dash 14, wall-jump chain ~21, grapple 30) so it only bites the
+    // runaway, not real movement.
+    let clx = f32_load(state, 4)
+    let clz = f32_load(state, 6)
+    let cls = sqrt(clx * clx + clz * clz)
+    if cls > 30.0 and g_active == false {
+        let csc = 30.0 / cls
+        f32_store(state, 4, clx * csc)
+        f32_store(state, 6, clz * csc)
+    }
 
     // Collide-and-slide via the physics character, then read the resolved
     // position back into the blob (the engine reads [0..3] for the transform).
@@ -408,8 +730,10 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     if landed or grounded {
         if vy < 0.0 { f32_store(state, 5, 0.0) }
     }
-    // Kill-plane: if you fall off the world, respawn at the start.
-    if f32_load(state, 1) < 0.0 - 25.0 {
+    // Kill-plane OR a combat-death respawn request from the main loop (input[8]):
+    // teleport back to spawn and clear momentum. The sim owns the position, so a
+    // respawn has to flow through here.
+    if f32_load(state, 1) < 0.0 - 25.0 or f32_load(input, 8) > 0.5 {
         f32_store(state, 0, 0.0)
         f32_store(state, 1, 0.9)
         f32_store(state, 2, 8.0)
@@ -420,8 +744,11 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
 }
 
 fn main() {
-    window_open(960, 540)
+    window_open(1280, 720)
     grab_mouse(1)
+    // Load a font for the HUD text/numbers (score, timer). Falls back to no text if
+    // the file isn't found - draw_text/draw_int just no-op then.
+    load_font("C:/Windows/Fonts/consola.ttf")
 
     // Environment.
     r3d_sky(1, 0.30, 0.50, 0.85, 0.70, 0.80, 0.92)
@@ -437,11 +764,17 @@ fn main() {
     let back_vis = r3d_make_box_sized(8.0, 3.0, 0.5, 0.5, 0.53, 0.6)
     let box_vis = r3d_make_box_sized(1.0, 1.0, 1.0, 0.62, 0.5, 0.42)
     let dome_vis = r3d_make_sphere(32, 0.72, 0.5, 0.55)
-    let target_vis = r3d_make_box_sized(0.4, 0.4, 0.4, 0.92, 0.34, 0.22)
     let spark = r3d_make_sprite(1.0, 0.85, 0.35)
     // Other players (capsule-ish box: radius 0.3, half-height 0.9).
     let body_vis = r3d_make_box_sized(0.3, 0.9, 0.3, 0.35, 0.7, 0.95)
     let head_vis = r3d_make_box_sized(0.18, 0.18, 0.18, 0.9, 0.8, 0.4)
+    // Enemy bots (red body so they read as hostile at a glance).
+    let enemy_vis = r3d_make_box_sized(0.3, 0.9, 0.3, 0.9, 0.28, 0.28)
+    let enemy_head = r3d_make_box_sized(0.18, 0.18, 0.18, 1.0, 0.55, 0.2)
+    // Glowing (emissive, self-lit) enemy meshes - drawn while OVERCLOCKED so the bots
+    // themselves light up against the dimmed world.
+    let enemy_glow_body = r3d_make_box_emissive(0.3, 0.9, 0.3, 1.0, 0.12, 0.18)
+    let enemy_glow_head = r3d_make_box_emissive(0.18, 0.18, 0.18, 1.0, 0.45, 0.22)
 
     // Physics world. World gravity pulls DYNAMIC bodies (the shootable targets)
     // down; the player capsule is kinematic and unaffected (it runs its own
@@ -453,11 +786,20 @@ fn main() {
     phys3d_add_box(0.0, 3.0, 0.0 - 19.0, 8.0, 3.0, 0.5, 0)           // back wall
     phys3d_add_box(3.0, 1.0, 0.0 - 4.0, 1.0, 1.0, 1.0, 0)            // step box
     phys3d_add_sphere(0.0, 3.0, 0.0 - 13.0, 4.0, 0)                  // curved dome
-    // Dynamic shootable targets (knock them around with the gun).
-    let t1 = phys3d_add_box(2.0, 0.5, 0.0 - 8.0, 0.4, 0.4, 0.4, 1)
-    let t2 = phys3d_add_box(0.0 - 2.0, 0.5, 0.0 - 9.0, 0.4, 0.4, 0.4, 1)
-    let t3 = phys3d_add_box(0.0, 0.5, 0.0 - 16.0, 0.4, 0.4, 0.4, 1)
-    // Per-player characters are created lazily by the sim (see sim_step); none here.
+    // Enemy bots: kinematic characters (like players) that strafe in place and
+    // shoot the player. Health/respawn/fire-timer live in arrays, indexed in the
+    // main loop. Their physics handles go in `eh`; spawn anchors in esx/esz.
+    let esx = [4.0, 0.0 - 4.0, 0.0]
+    let esz = [0.0 - 8.0, 0.0 - 12.0, 0.0 - 16.0]
+    let eh = [
+        phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3) as f64,
+        phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3) as f64,
+        phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3) as f64
+    ]
+    let mut ehp = [100.0, 100.0, 100.0]      // current health
+    let mut eresp = [0.0, 0.0, 0.0]          // respawn countdown while dead
+    let mut efire = [0.4, 0.9, 1.4]          // staggered shot timers
+    // Per-player characters are created lazily by the sim (see sim_step).
 
     // Rebindable input actions (ACTION -> input code; change freely at runtime).
     let act_fwd = 0
@@ -468,28 +810,34 @@ fn main() {
     let act_slide = 5
     let act_dash = 6
     let act_fire = 7
+    let act_reload = 8
+    let act_overclock = 9
+    let act_grapple = 10
     input_bind(act_fwd, 5)     // W
     input_bind(act_back, 7)    // S
     input_bind(act_left, 6)    // A
     input_bind(act_right, 8)   // D
     input_bind(act_jump, 4)    // Space
-    input_bind(act_slide, 10)  // LeftShift
-    input_bind(act_dash, 11)   // LeftCtrl
+    input_bind(act_slide, 11)  // LeftCtrl (slide)
+    input_bind(act_dash, 10)   // LeftShift (air dash - now its own key)
     input_bind(act_fire, 100)  // Left mouse
+    input_bind(act_reload, 14) // R (reload)
+    input_bind(act_overclock, 17) // F (trigger OVERCLOCK when the meter is full)
+    input_bind(act_grapple, 15)   // E (grappling hook)
 
     // Movement tuning (data-driven; tweak and re-run to change the feel).
     let cfg = [
         16.0,   // gravity        (snappy, not floaty)
         8.0,    // jump_vel       (~2m, crisp arc)
-        7.5,    // ground_speed   (fast base run - the default IS the sprint)
+        8.5,    // ground_speed   (brisk base run; slide/Ctrl is the speed burst)
         80.0,   // ground_accel
         8.0,    // ground_friction
         2.5,    // air_speed      (more aerial control)
         120.0,  // air_accel      (steer harder in the air)
-        4.0,    // slide_boost
+        7.0,    // slide_boost    (big lurch - slide is THE ground speed tool now)
         1.2,    // slide_friction
         5.0,    // slide_min
-        11.0,   // dash_speed
+        14.0,   // dash_speed     (punchy midair boost)
         1.1,    // dash_cd
         1.0,    // air_jumps
         4.0,    // wall_gravity   (idle slide-down rate)
@@ -513,7 +861,7 @@ fn main() {
     net_sim(|state, input| {
         sim_step(state, input, cfg)
         0
-    }, 21, 8)
+    }, 21, 14)
     net_spawn_at(0.0, 0.9, 8.0)
 
     let mut yaw = 0.0
@@ -521,19 +869,100 @@ fn main() {
     let mut crouch = 0.0
     let mut roll = 0.0
     let mut lean = 0.0
+    let mut dip = 0.0        // camera compression spring offset (jump push + land absorb)
+    let mut dipv = 0.0       // its velocity
+    let mut prev_vy = 0.0    // last frame's vy, so we know the speed we hit ground at
+    let mut prev_air = false // were we airborne last frame
     let mut fire_cd = 0.0
     let mut hit_t = 0.0
     let mut hxp = 0.0
     let mut hyp = 0.0
     let mut hzp = 0.0
     let mut hitmark = 0.0
-    let cx = 480
-    let cy = 270
+    let mut killmark = 0.0   // brief kill-confirm marker
+    let mut fbw = 0          // HUD framebuffer size; tracks the window each frame
+    let mut fbh = 0
+    // FFA round state: reach the kill target before the timer runs out.
+    let mut kills = 0
+    let mut deaths = 0
+    let kill_target = 15
+    let mut round_timer = 120.0
+    let mut round_over = false
+    let mut over_t = 0.0
+    let mut won = false
+    // Damage feedback + death + ammo.
+    let mut dmg_dir = 0.0     // screen angle the last hit came from (for the indicator)
+    let mut dead = false      // dead, waiting to respawn
+    let mut respawn_cd = 0.0  // seconds until respawn
+    let mag_size = 24
+    let mut ammo = 24         // rounds left in the magazine
+    let reload_time = 1.6
+    let mut reload_t = 0.0    // reload in progress while > 0
+    // OVERCLOCK signature mechanic: meter fills from kills + movement style; at full,
+    // trigger a powered state (faster fire/move, instant reloads, gold glow). Kills
+    // while overclocked EXTEND it with no cap (chain kills = stay overclocked).
+    let mut oc_meter = 0.0    // 0..100
+    let mut oc_active = false
+    let mut oc_timer = 0.0    // seconds of overclock left
+    let mut oc_gain_t = 3.0   // time since the meter last gained (for decay)
+    // Grappling hook: aim + fire to anchor onto a surface and get yanked toward it.
+    let mut grapple_on = false
+    let mut gx = 0.0          // world anchor point
+    let mut gy = 0.0
+    let mut gz = 0.0
+    let mut g_cd = 0.0        // cooldown after use
+    let mut g_time = 0.0      // how long the current grapple has run
+    let mut g_prev = 0        // grapple key last frame (edge-detect the fire)
+    let mut slidetilt = 0.0  // camera reclines back while sliding
+    let mut dashwind = 0.0   // one-time wind-line burst on a dash (decays)
+    let mut prev_dcd = 0.0   // previous dash cooldown, to detect a fresh dash
+    let mut shake = 0.0      // light camera shake on landing (decays)
+    let mut windlvl = 0.0    // smoothed wind-line intensity (rises fast, lingers down)
+
+    // Combat tuning (data-driven). Player gun is a fast hitscan; bots are slower.
+    let gun_dmg = 34.0           // 3 shots kill a 100hp enemy
+    let enemy_hp_max = 100.0
+    let enemy_respawn = 3.0
+    let bot_dmg = 10.0
+    let bot_fire_cd = 1.0
+    let php_max = 100.0          // player health
+    let psh_max = 50.0           // player shield (sits over health, regens first)
+    let regen_delay = 2.0        // seconds out of damage before regen kicks in
+    // Player survivability state.
+    let mut php = php_max
+    let mut psh = psh_max
+    let mut dmg_timer = regen_delay   // time since last hit (starts "rested")
+    let mut pinvuln = 0.0        // brief invulnerability after a respawn
+    let mut hurt_flash = 0.0     // red screen-edge flash when hit
+    let mut respawn_req = 0.0    // one-shot: tells the sim to teleport us to spawn
+    let mut etime = 0.0          // accumulator that drives bot strafing
+    // Impact spark particles (a small burst per hit): position, velocity, life.
+    let mut ppx = [0.0; 28]
+    let mut ppy = [0.0; 28]
+    let mut ppz = [0.0; 28]
+    let mut pvx = [0.0; 28]
+    let mut pvy = [0.0; 28]
+    let mut pvz = [0.0; 28]
+    let mut plife = [0.0; 28]
+    let mut pcur = 0             // round-robin write cursor
+    let mut epop = [0.0, 0.0, 0.0]   // per-enemy hit flinch (scale pop)
 
     while r3d_present() {
         r3d_begin()
         // Real frame time (clamped) so movement is frame-rate independent.
         let dt = frame_dt()
+
+        // Size the HUD framebuffer to the live window (crisp 1:1; re-creates it
+        // when the window is resized). The crosshair/HUD are laid out from fbw/fbh.
+        let sw = surface_w()
+        let sh = surface_h()
+        if sw > 0 and (sw != fbw or sh != fbh) {
+            framebuffer(sw, sh)
+            fbw = sw
+            fbh = sh
+        }
+        let cx = fbw / 2
+        let cy = fbh / 2
 
         // Mouse look.
         yaw = yaw + mouse_dx() * 0.0025
@@ -541,15 +970,30 @@ fn main() {
         if pitch > 1.4 { pitch = 1.4 }
         if pitch < 0.0 - 1.4 { pitch = 0.0 - 1.4 }
 
-        // Gather rebindable input into this tick's blob and run the sim.
-        let fwd = input_axis(act_back, act_fwd)
-        let strafe = input_axis(act_left, act_right)
-        let jump = input_down(act_jump)
-        let slide = input_down(act_slide)
-        let dash = input_down(act_dash)
-        let blob = [fwd, strafe, yaw, jump as f64, slide as f64, dash as f64, dt, pitch]
+        // Gather rebindable input into this tick's blob and run the sim. While DEAD,
+        // movement is frozen (zeroed) until respawn.
+        let mut fwd = input_axis(act_back, act_fwd)
+        let mut strafe = input_axis(act_left, act_right)
+        let mut jump = input_down(act_jump)
+        let mut slide = input_down(act_slide)
+        let mut dash = input_down(act_dash)
+        if dead {
+            fwd = 0.0
+            strafe = 0.0
+            jump = 0
+            slide = 0
+            dash = 0
+        }
+        // Overclock move-speed multiplier (uses last frame's state; 1-frame lag is fine).
+        let mut oc_mult = 1.0
+        if oc_active { oc_mult = 1.35 }
+        // Grapple anchor + active flag (set last frame after aiming; 1-frame lag fine).
+        let mut g_flag = 0.0
+        if grapple_on { g_flag = 1.0 }
+        let blob = [fwd, strafe, yaw, jump as f64, slide as f64, dash as f64, dt, pitch, respawn_req, oc_mult, gx, gy, gz, g_flag]
         net_send_input(blob)
         net_update(dt)
+        respawn_req = 0.0    // one-shot: consumed by the send above
 
         // Camera from the locally-predicted state (capsule centre -> eye). The
         // eye dips smoothly while sliding (lerp the crouch offset, no teleport).
@@ -559,36 +1003,109 @@ fn main() {
         let mut crouch_target = 0.0
         if net_local_state(12) > 0.5 { crouch_target = 0.45 }
         crouch = crouch + (crouch_target - crouch) * 0.2
-        let eye = py + 0.7 - crouch
+
+        // Camera dip: a damped spring that compresses on a jump LAUNCH (the leg
+        // push) and on LANDING (the absorb), then bounces back to neutral. It fires
+        // on EVERY jump, moving or standing - that's what makes a jump read as a
+        // weighty human motion rather than an instant teleport up.
+        let vy_now = net_local_state(5)
+        let air_now = net_local_state(7) < 0.5
+        // Anticipation: while the sim holds the standing-jump windup, load DOWN
+        // (the crouch before the jump). dip>0 lowers the eye.
+        if net_local_state(22) > 0.0 { dipv = dipv + 9.0 * dt }
+        // Launch: left the ground this frame with upward speed -> flick the view UP
+        // (legs extend / takeoff pop). dipv negative raises the eye.
+        if prev_air == false and air_now and vy_now > 1.0 { dipv = dipv - 1.5 }
+        // Landing: hit the ground -> absorb DOWN scaled by the fall speed (read LAST
+        // frame's vy, since the sim zeroes vy the instant it lands) + light shake.
+        if prev_air and air_now == false {
+            let impact = 0.0 - prev_vy
+            if impact > 2.0 {
+                let mut k = impact * 0.18
+                if k > 3.2 { k = 3.2 }
+                dipv = dipv + k
+                let mut shk = impact * 0.008
+                if shk > 0.085 { shk = 0.085 }
+                if shk > shake { shake = shk }
+            }
+        }
+        prev_vy = vy_now
+        prev_air = air_now
+        // Integrate the spring (stiffness + damping, lightly underdamped for a small
+        // settle bounce). Clamp the step so a frame hitch can't blow it up.
+        let mut sdt = dt
+        if sdt > 0.033 { sdt = 0.033 }
+        dipv = dipv - dip * 55.0 * sdt - dipv * 12.0 * sdt
+        dip = dip + dipv * sdt
+        // Decay the landing shake (quick damped wobble).
+        shake = shake - shake * 14.0 * dt
+        if shake < 0.0 { shake = 0.0 }
+
+        let eye = py + 0.7 - crouch - dip
 
         // Camera juice (visual only - aim/shoot use the same eff_pitch so the
         // crosshair stays true). Bank hard toward the wall while wallrunning, tilt
         // a little when strafing, and lean forward/back a touch with run input.
-        let onwall = net_local_state(13) > 0.5
-        let airborne = net_local_state(7) < 0.5
-        let mut roll_target = 0.0 - strafe * 0.05
-        if onwall and airborne {
+        // Only bank when the SIM is actually wallrunning (slot 23). On the floor
+        // next to a wall this is always false, so the camera just does the small
+        // strafe tilt and never snaps - no more glitch.
+        let wallrunning = net_local_state(23) > 0.5
+        let mut roll_target = strafe * 0.05
+        if wallrunning {
             let side = net_local_state(14) * cos(yaw) + net_local_state(15) * sin(yaw)
             roll_target = side * 0.28
         }
         roll = roll + (roll_target - roll) * 0.15
-        lean = lean + ((0.0 - fwd * 0.03) - lean) * 0.12
-        let eff_pitch = pitch + lean
+        lean = lean + ((fwd * 0.03) - lean) * 0.12
+        // Recline the view back a touch while sliding (lean back into the slide).
+        let mut stilt_t = 0.0
+        if net_local_state(12) > 0.5 { stilt_t = 0.04 }
+        slidetilt = slidetilt + (stilt_t - slidetilt) * 0.12
+        let eff_pitch = pitch + lean + slidetilt
+
+        // Dash wind: a fresh dash makes its cooldown (state[9]) jump up - detect that
+        // rising edge and fire a one-time wind burst that decays.
+        let dcd_now = net_local_state(9)
+        if dcd_now > prev_dcd + 0.5 { dashwind = 1.0 }
+        prev_dcd = dcd_now
+        dashwind = dashwind - dt * 2.5
+        if dashwind < 0.0 { dashwind = 0.0 }
 
         let cp = cos(eff_pitch)
         let fx = cp * sin(yaw)
         let fy = sin(eff_pitch)
         let fz = 0.0 - cp * cos(yaw)
         r3d_camera_roll(roll)
-        r3d_camera(px, eye, pz, px + fx, eye + fy, pz + fz, 95.0)
+        // Landing shake: jitter the camera POSITION (eye + target by the same offset,
+        // so the view shakes but the aim direction is unchanged). Damped wobble.
+        let sjx = sin(etime * 130.0) * shake
+        let sjy = sin(etime * 170.0) * shake
+        let sjz = cos(etime * 150.0) * shake
+        r3d_camera(px + sjx, eye + sjy, pz + sjz, px + fx + sjx, eye + fy + sjy, pz + fz + sjz, 95.0)
 
-        // Hitscan gun: fire on click (rate-limited). Cast from the eye (offset
-        // forward to clear our own capsule); a hit knocks dynamic targets and
-        // leaves a tracer + spark for a few frames.
+        // Reload: manual (R) when not full, or auto when the mag is empty. Can't fire
+        // while reloading. Near-instant while OVERCLOCKED.
+        let mut cur_reload = reload_time
+        if oc_active { cur_reload = 0.18 }
+        if input_down(act_reload) > 0 and reload_t <= 0.0 and ammo < mag_size and dead == false {
+            reload_t = cur_reload
+        }
+        if reload_t > 0.0 {
+            reload_t = reload_t - dt
+            if reload_t <= 0.0 {
+                reload_t = 0.0
+                ammo = mag_size
+            }
+        }
+
+        // Hitscan gun: fire on click (rate-limited, costs ammo). Cast from the eye
+        // (offset forward to clear our own capsule); leaves a tracer + spark.
         fire_cd = fire_cd - dt
         if fire_cd < 0.0 { fire_cd = 0.0 }
-        if input_down(act_fire) > 0 {
+        if input_down(act_fire) > 0 and dead == false and ammo > 0 and reload_t <= 0.0 {
             if fire_cd <= 0.0 {
+                ammo = ammo - 1
+                if ammo <= 0 { reload_t = cur_reload }
                 let ox = px + fx * 0.6
                 let oy = eye + fy * 0.6
                 let oz = pz + fz * 0.6
@@ -597,10 +1114,53 @@ fn main() {
                     hxp = phys3d_hit_x()
                     hyp = phys3d_hit_y()
                     hzp = phys3d_hit_z()
-                    phys3d_apply_impulse(body, fx * 5.0, 4.0, fz * 5.0)
-                    // Hitmarker when a shot lands on a (dynamic) target.
-                    if body == t1 or body == t2 or body == t3 {
-                        hitmark = 0.12
+                    // Did we hit a live enemy bot? Deal damage; mark kill on death.
+                    let mut ei = 0
+                    while ei < 3 {
+                        if body == (eh[ei] as i64) and ehp[ei] > 0.0 {
+                            ehp[ei] = ehp[ei] - gun_dmg
+                            hitmark = 0.18
+                            epop[ei] = 0.1
+                            // Spark burst at the impact: a few particles flung back
+                            // toward the shooter + up, spread by index.
+                            let mut sp = 0
+                            while sp < 5 {
+                                ppx[pcur] = hxp
+                                ppy[pcur] = hyp
+                                ppz[pcur] = hzp
+                                let ang = (pcur as f64) * 1.7 + etime * 9.0
+                                pvx[pcur] = (0.0 - fx) * 2.0 + cos(ang) * 3.0
+                                pvy[pcur] = 2.8 + sin(ang) * 1.8
+                                pvz[pcur] = (0.0 - fz) * 2.0 + sin(ang * 1.3) * 3.0
+                                plife[pcur] = 0.35
+                                pcur = pcur + 1
+                                if pcur >= 28 { pcur = 0 }
+                                sp = sp + 1
+                            }
+                            play_noise(55, 30)   // soft, smooth, longer low-passed "pf" hit
+                            if ehp[ei] <= 0.0 {
+                                ehp[ei] = 0.0
+                                eresp[ei] = enemy_respawn
+                                killmark = 0.35
+                                if round_over == false { kills = kills + 1 }
+                                // Overclock: a kill refills the meter a LITTLE (airborne
+                                // a bit more), or EXTENDS an active overclock by a fixed
+                                // amount with NO cap (chain kills to stay overclocked).
+                                if oc_active {
+                                    oc_timer = oc_timer + 2.5
+                                } else {
+                                    let mut ocg = 13.0
+                                    if net_local_state(7) < 0.5 { ocg = 20.0 }
+                                    oc_meter = oc_meter + ocg
+                                    if oc_meter > 100.0 { oc_meter = 100.0 }
+                                    oc_gain_t = 0.0
+                                }
+                                // Kill confirm: a fuller, lower two-tone (stronger).
+                                play_sound(12, 110, 0)
+                                play_sound(7, 110, 0)
+                            }
+                        }
+                        ei = ei + 1
                     }
                 } else {
                     hxp = ox + fx * 120.0
@@ -609,6 +1169,228 @@ fn main() {
                 }
                 hit_t = 0.05
                 fire_cd = 0.11
+                if oc_active { fire_cd = 0.06 }   // faster fire while overclocked
+            }
+        }
+
+        // --- Grappling hook (E): aim + fire to anchor onto a surface, then get
+        // yanked toward it (the PULL is in the sim). Disengages on release / reaching
+        // the anchor / a max time; cooldown after use.
+        g_cd = g_cd - dt
+        if g_cd < 0.0 { g_cd = 0.0 }
+        let gkey = input_down(act_grapple)
+        if grapple_on {
+            g_time = g_time + dt
+            let gddx = gx - px
+            let gddy = gy - (py + 0.7)
+            let gddz = gz - pz
+            let gdd = sqrt(gddx * gddx + gddy * gddy + gddz * gddz)
+            if gkey < 1 or gdd < 2.2 or g_time > 2.5 {
+                grapple_on = false
+                g_cd = 1.2
+            }
+        } else {
+            if gkey > 0 and g_prev < 1 and g_cd <= 0.0 and dead == false {
+                let gox = px + fx * 0.4
+                let goy = eye + fy * 0.4
+                let goz = pz + fz * 0.4
+                let gbody = phys3d_raycast_full(gox, goy, goz, fx, fy, fz, 50.0)
+                if gbody >= 0 {
+                    gx = phys3d_hit_x()
+                    gy = phys3d_hit_y()
+                    gz = phys3d_hit_z()
+                    grapple_on = true
+                    g_time = 0.0
+                    play_sound(0 - 6, 55, 0)   // grapple-fire thunk
+                }
+            }
+        }
+        g_prev = gkey
+        // Rope: a cyan line from the hand to the anchor while grappling.
+        if grapple_on {
+            r3d_debug_line(px + fx * 0.4, eye - 0.12, pz + fz * 0.4, gx, gy, gz, 0.55, 0.9, 1.0)
+        }
+
+        // --- Enemy bots: strafe in place and shoot the player on a timer. ---
+        etime = etime + dt
+        let pchar = (net_local_state(21) as i64) - 1
+        let mut ei2 = 0
+        while ei2 < 3 {
+            let h = eh[ei2] as i64
+            epop[ei2] = epop[ei2] - dt
+            if epop[ei2] < 0.0 { epop[ei2] = 0.0 }
+            if ehp[ei2] > 0.0 {
+                // Strafe around the spawn anchor via COLLIDE-AND-SLIDE + gravity, so
+                // the bot respects walls/floor/dome and is a solid character the player
+                // bumps into - not a body teleported straight through the world.
+                let tx = esx[ei2] + sin(etime * 1.5 + (ei2 as f64) * 2.1) * 2.5
+                let bvx = (tx - phys3d_x(h)) * 5.0
+                let bvz = (esz[ei2] - phys3d_z(h)) * 5.0
+                phys3d_move_character(h, bvx * dt, (0.0 - 13.0) * dt, bvz * dt, dt)
+                let sx = phys3d_x(h)
+                let sy = phys3d_y(h)
+                let sz = phys3d_z(h)
+                efire[ei2] = efire[ei2] - dt
+                if efire[ei2] <= 0.0 {
+                    efire[ei2] = bot_fire_cd
+                    // Aim from the bot's chest at the player's chest; only hits with
+                    // a clear line of sight (a wall in between blocks it).
+                    let aey = sy + 0.5
+                    let ddx = px - sx
+                    let ddy = (py + 0.3) - aey
+                    let ddz = pz - sz
+                    let dl = sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
+                    if dl > 0.1 {
+                        let bnx = ddx / dl
+                        let bny = ddy / dl
+                        let bnz = ddz / dl
+                        let hb = phys3d_raycast_ex(h, sx, aey, sz, bnx, bny, bnz, 80.0)
+                        if pchar >= 0 and hb == pchar and pinvuln <= 0.0 and dead == false {
+                            let mut d = bot_dmg
+                            if psh > 0.0 {
+                                if psh >= d { psh = psh - d; d = 0.0 }
+                                else { d = d - psh; psh = 0.0 }
+                            }
+                            php = php - d
+                            dmg_timer = 0.0
+                            hurt_flash = 0.6
+                            shake = 0.085
+                            play_sound(0 - 18, 70, 0)   // low thud when you're hit
+                            // Screen direction the shot came from (for the indicator):
+                            // project attacker->player offset onto the view's fwd/right.
+                            let rcx = sx - px
+                            let rcz = sz - pz
+                            let fwd_c = rcx * sin(yaw) + rcz * (0.0 - cos(yaw))
+                            let rgt_c = rcx * cos(yaw) + rcz * sin(yaw)
+                            dmg_dir = atan2(rgt_c, fwd_c)
+                            if php <= 0.0 {
+                                // Death: enter the respawn-cooldown state (no instant
+                                // respawn). Restored when the cooldown elapses.
+                                dead = true
+                                respawn_cd = 3.0
+                                deaths = deaths + 1
+                                play_sound(0 - 26, 260, 0)   // deep death thud
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Dead: park below the map; on respawn, pop back to the spawn point.
+                phys3d_set_pos(h, esx[ei2], 0.0 - 50.0, esz[ei2])
+                eresp[ei2] = eresp[ei2] - dt
+                if eresp[ei2] <= 0.0 {
+                    ehp[ei2] = enemy_hp_max
+                    phys3d_set_pos(h, esx[ei2], 0.9, esz[ei2])
+                }
+            }
+            ei2 = ei2 + 1
+        }
+
+        // Player regen: shields refill first, then health, after a lull out of fire.
+        dmg_timer = dmg_timer + dt
+        if dmg_timer > regen_delay {
+            if psh < psh_max {
+                psh = psh + 30.0 * dt
+                if psh > psh_max { psh = psh_max }
+            } else {
+                if php < php_max {
+                    php = php + 18.0 * dt
+                    if php > php_max { php = php_max }
+                }
+            }
+        }
+        pinvuln = pinvuln - dt
+        if pinvuln < 0.0 { pinvuln = 0.0 }
+        hurt_flash = hurt_flash - dt
+        if hurt_flash < 0.0 { hurt_flash = 0.0 }
+
+        // Death respawn cooldown: restore + teleport to spawn when it elapses.
+        if dead {
+            respawn_cd = respawn_cd - dt
+            if respawn_cd <= 0.0 {
+                dead = false
+                php = php_max
+                psh = psh_max
+                ammo = mag_size
+                reload_t = 0.0
+                pinvuln = 2.0
+                respawn_req = 1.0
+            }
+        }
+        // --- OVERCLOCK meter + state (the signature mechanic) ---
+        // Style trickle fills the meter while doing movement (no fill while active).
+        let mut oc_gained = false
+        if oc_active == false {
+            if net_local_state(23) > 0.5 { oc_meter = oc_meter + 9.0 * dt; oc_gained = true }
+            if net_local_state(12) > 0.5 { oc_meter = oc_meter + 7.0 * dt; oc_gained = true }
+            if net_local_state(7) < 0.5 { oc_meter = oc_meter + 4.0 * dt; oc_gained = true }
+        }
+        if oc_meter > 100.0 { oc_meter = 100.0 }
+        if oc_gained { oc_gain_t = 0.0 } else { oc_gain_t = oc_gain_t + dt }
+        // Decay slowly when idle (not gaining for a bit) and not overclocked.
+        if oc_active == false and oc_gain_t > 2.5 {
+            oc_meter = oc_meter - 5.0 * dt
+            if oc_meter < 0.0 { oc_meter = 0.0 }
+        }
+        // Trigger on the key when full; runs ~10s (kills extend it, no cap).
+        if input_down(act_overclock) > 0 and oc_meter >= 100.0 and oc_active == false {
+            oc_active = true
+            oc_timer = 10.0
+            oc_meter = 0.0
+            play_sound(7, 90, 0)
+            play_sound(14, 150, 0)
+            play_sound(21, 220, 0)
+        }
+        if oc_active {
+            oc_timer = oc_timer - dt
+            if oc_timer <= 0.0 {
+                oc_active = false
+                oc_timer = 0.0
+            }
+        }
+
+        // Damage overlay -> GPU shader: low-health red vignette (below ~60% health) +
+        // a directional red hit glow + a pulsing GOLD overclock tint.
+        let mut vig = (0.6 - php / php_max) / 0.6
+        if vig < 0.0 { vig = 0.0 }
+        if vig > 1.0 { vig = 1.0 }
+        vig = vig * 0.4
+        let mut hitg = hurt_flash * 1.0
+        if hitg > 0.65 { hitg = 0.65 }
+        let mut oc_glow = 0.0
+        if oc_active { oc_glow = 1.0 }   // steady subtle world-dim (shader scales it)
+        r3d_damage(vig, hitg, sin(dmg_dir), 0.0 - cos(dmg_dir), oc_glow)
+
+        // FFA round: count down the timer; end on reaching the kill target (win) or
+        // the timer expiring (lose). After a short over-screen, reset for a new round.
+        if round_over == false {
+            round_timer = round_timer - dt
+            if kills >= kill_target {
+                round_over = true
+                won = true
+                over_t = 5.0
+            }
+            if round_timer <= 0.0 {
+                round_timer = 0.0
+                round_over = true
+                won = false
+                over_t = 5.0
+            }
+        } else {
+            over_t = over_t - dt
+            if over_t <= 0.0 {
+                kills = 0
+                deaths = 0
+                round_timer = 120.0
+                round_over = false
+                won = false
+                respawn_req = 1.0
+                let mut rb = 0
+                while rb < 3 {
+                    ehp[rb] = enemy_hp_max
+                    eresp[rb] = 0.0
+                    rb = rb + 1
+                }
             }
         }
 
@@ -620,10 +1402,27 @@ fn main() {
         r3d_draw(box_vis, 3.0, 1.0, 0.0 - 4.0, 0.0, 0.0, 0.0, 1.0)
         r3d_draw(dome_vis, 0.0, 3.0, 0.0 - 13.0, 0.0, 0.0, 0.0, 4.0)
 
-        // Dynamic targets at their live physics positions.
-        r3d_draw(target_vis, phys3d_x(t1), phys3d_y(t1), phys3d_z(t1), 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(target_vis, phys3d_x(t2), phys3d_y(t2), phys3d_z(t2), 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(target_vis, phys3d_x(t3), phys3d_y(t3), phys3d_z(t3), 0.0, 0.0, 0.0, 1.0)
+        // Live enemy bots at their physics positions (dead ones are hidden).
+        let mut ed = 0
+        while ed < 3 {
+            if ehp[ed] > 0.0 {
+                let h = eh[ed] as i64
+                let bx = phys3d_x(h)
+                let by = phys3d_y(h)
+                let bz = phys3d_z(h)
+                let psc = 1.0 + epop[ed]   // brief scale pop when hit (flinch)
+                // While OVERCLOCKED draw the EMISSIVE (glowing) enemy so the body
+                // itself lights up against the dimmed world; otherwise the lit mesh.
+                if oc_active {
+                    r3d_draw(enemy_glow_body, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                    r3d_draw(enemy_glow_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
+                } else {
+                    r3d_draw(enemy_vis, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                    r3d_draw(enemy_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
+                }
+            }
+            ed = ed + 1
+        }
 
         // Other players: draw a body + head at each remote's interpolated pos
         // (skip ourselves - first person). Positions come from the netcode.
@@ -650,47 +1449,227 @@ fn main() {
             hit_t = hit_t - dt
         }
 
+        // Impact spark particles: integrate (with a little gravity) and draw,
+        // shrinking as they fade so the burst reads as a clean little pop.
+        let mut pp = 0
+        while pp < 28 {
+            if plife[pp] > 0.0 {
+                plife[pp] = plife[pp] - dt
+                ppx[pp] = ppx[pp] + pvx[pp] * dt
+                ppy[pp] = ppy[pp] + pvy[pp] * dt
+                ppz[pp] = ppz[pp] + pvz[pp] * dt
+                pvy[pp] = pvy[pp] - 9.0 * dt
+                let mut psz = plife[pp] * 0.45
+                if psz > 0.16 { psz = 0.16 }
+                if psz > 0.0 {
+                    r3d_draw_billboard(spark, ppx[pp], ppy[pp], ppz[pp], psz)
+                }
+            }
+            pp = pp + 1
+        }
+
         // HUD: crosshair + a horizontal speed bar; turns gold while wallrunning.
         clear(0, 0, 0)
-        let i = 0 - 6
-        while i <= 6 {
-            pixel(cx + i, cy, 230, 230, 230)
-            pixel(cx, cy + i, 230, 230, 230)
+        // (Hit flash + low-health vignette are now the GPU damage shader, above.)
+        // Crosshair: a centered dot (a small plus, symmetric about cx,cy so the
+        // point sits exactly between the ticks) + four ticks with a gap.
+        pixel(cx, cy, 240, 240, 240)
+        pixel(cx - 1, cy, 240, 240, 240)
+        pixel(cx + 1, cy, 240, 240, 240)
+        pixel(cx, cy - 1, 240, 240, 240)
+        pixel(cx, cy + 1, 240, 240, 240)
+        let i = 5
+        while i <= 11 {
+            pixel(cx + i, cy, 215, 215, 215)
+            pixel(cx - i, cy, 215, 215, 215)
+            pixel(cx, cy + i, 215, 215, 215)
+            pixel(cx, cy - i, 215, 215, 215)
             i = i + 1
         }
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
+
+        // Wind/speed lines via the engine's procedural SHADER pass (soft, diffuse
+        // white streaks at the edges, fading to a clear centre - r3d_speedlines).
+        // We just feed it an intensity: slide = speed-scaled (held), dash = a one-
+        // time burst, smoothed so it eases in/out.
+        let mut wtarget = 0.0
+        // Speed-scaled wind: only while sliding normally, but ALWAYS while overclocked
+        // (still scaling with your actual speed, not a flat max).
+        if net_local_state(12) > 0.5 or oc_active {
+            wtarget = (spd - 5.0) * 0.085
+            if wtarget < 0.0 { wtarget = 0.0 }
+        }
+        if dashwind > wtarget { wtarget = dashwind }
+        if wtarget > 1.0 { wtarget = 1.0 }
+        let mut wk = 0.5
+        if wtarget < windlvl { wk = 0.05 }
+        windlvl = windlvl + (wtarget - windlvl) * wk
+        r3d_speedlines(windlvl, etime)
+
         let mut bar = (spd * 18.0) as i64
-        if bar > 880 { bar = 880 }
-        let onwall = net_local_state(13)
+        if bar > fbw - 80 { bar = fbw - 80 }
         let mut cr = 90
         let mut cg = 220
         let mut cb = 255
-        if onwall > 0.5 {
+        if net_local_state(23) > 0.5 {
             cr = 255
             cg = 200
             cb = 60
         }
         let mut b = 0
         while b < bar {
-            pixel(40 + b, 500, cr, cg, cb)
-            pixel(40 + b, 501, cr, cg, cb)
-            pixel(40 + b, 502, cr, cg, cb)
+            pixel(40 + b, fbh - 42, cr, cg, cb)
+            pixel(40 + b, fbh - 41, cr, cg, cb)
+            pixel(40 + b, fbh - 40, cr, cg, cb)
             b = b + 1
         }
 
-        // Hitmarker: a brief red X over the crosshair when a target is hit.
-        if hitmark > 0.0 {
-            let mut k = 3
-            while k <= 8 {
-                pixel(cx + k, cy + k, 255, 70, 70)
-                pixel(cx + k, cy - k, 255, 70, 70)
-                pixel(cx - k, cy + k, 255, 70, 70)
-                pixel(cx - k, cy - k, 255, 70, 70)
-                k = k + 1
+        // Hitmarker: four short diagonal ticks around the crosshair (COD-style).
+        // White on a normal hit, RED and bigger on a kill. Both count down.
+        if hitmark > 0.0 or killmark > 0.0 {
+            let mut mr = 235
+            let mut mg = 235
+            let mut mb = 235
+            let mut len = 4
+            if killmark > 0.0 {
+                mr = 255
+                mg = 55
+                mb = 55
+                len = 6
+            }
+            let gap = 4
+            let mut d = 0
+            while d <= len {
+                pixel(cx + gap + d, cy + gap + d, mr, mg, mb)
+                pixel(cx - gap - d, cy + gap + d, mr, mg, mb)
+                pixel(cx + gap + d, cy - gap - d, mr, mg, mb)
+                pixel(cx - gap - d, cy - gap - d, mr, mg, mb)
+                d = d + 1
             }
             hitmark = hitmark - dt
+            killmark = killmark - dt
         }
+
+        // Health (green) + shield (cyan) bars, bottom-left.
+        let mut hwi = (php / php_max * 240.0) as i64
+        if hwi < 0 { hwi = 0 }
+        let mut hb2 = 0
+        while hb2 < hwi {
+            pixel(40 + hb2, fbh - 20, 70, 210, 90)
+            pixel(40 + hb2, fbh - 19, 70, 210, 90)
+            pixel(40 + hb2, fbh - 18, 70, 210, 90)
+            pixel(40 + hb2, fbh - 17, 70, 210, 90)
+            hb2 = hb2 + 1
+        }
+        let mut swi = (psh / psh_max * 240.0) as i64
+        if swi < 0 { swi = 0 }
+        let mut sb2 = 0
+        while sb2 < swi {
+            pixel(40 + sb2, fbh - 30, 120, 200, 255)
+            pixel(40 + sb2, fbh - 29, 120, 200, 255)
+            pixel(40 + sb2, fbh - 28, 120, 200, 255)
+            sb2 = sb2 + 1
+        }
+
+        // FFA HUD: round timer (big, top-centre) + kills / target below it.
+        let col_white = 255 * 65536 + 255 * 256 + 255
+        let col_gold = 255 * 65536 + 200 * 256 + 60
+        draw_int(cx - 30, 12, round_timer as i64, 44, col_white)
+        draw_int(cx - 46, 66, kills, 26, col_gold)
+        draw_text(cx - 6, 66, "/", 26, col_white)
+        draw_int(cx + 14, 66, kill_target, 26, col_white)
+
+        // Round over: a coloured top/bottom border + big WIN/LOSE + the final kills.
+        if round_over {
+            let mut rr = 80
+            let mut rg = 210
+            let mut rb2 = 90
+            if won == false { rr = 225; rg = 70; rb2 = 60 }
+            let mut fxo = 0
+            while fxo < fbw {
+                let mut t = 0
+                while t < 8 {
+                    pixel(fxo, t, rr, rg, rb2)
+                    pixel(fxo, fbh - 1 - t, rr, rg, rb2)
+                    t = t + 1
+                }
+                fxo = fxo + 1
+            }
+            let bcol = rr * 65536 + rg * 256 + rb2
+            if won {
+                draw_text(cx - 70, cy - 60, "WIN", 70, bcol)
+            } else {
+                draw_text(cx - 95, cy - 60, "LOSE", 70, bcol)
+            }
+            draw_int(cx - 18, cy + 30, kills, 40, col_white)
+        }
+
+        // Ammo: current / mag, bottom-right. Reloading shows a small progress bar.
+        let col_ammo = 230 * 65536 + 230 * 256 + 235
+        let mut ammo_col = col_ammo
+        if ammo == 0 { ammo_col = 230 * 65536 + 70 * 256 + 60 }
+        draw_int(fbw - 150, fbh - 56, ammo, 36, ammo_col)
+        draw_text(fbw - 96, fbh - 50, "/", 26, col_white)
+        draw_int(fbw - 78, fbh - 50, mag_size, 26, col_white)
+        if reload_t > 0.0 {
+            let rw = ((1.0 - reload_t / reload_time) * 110.0) as i64
+            let mut rb3 = 0
+            while rb3 < rw {
+                pixel(fbw - 150 + rb3, fbh - 14, 255, 200, 60)
+                pixel(fbw - 150 + rb3, fbh - 13, 255, 200, 60)
+                rb3 = rb3 + 1
+            }
+        }
+
+        // Death screen: big "YOU DIED" + a respawn countdown (whole seconds).
+        if dead {
+            let col_red = 235 * 65536 + 70 * 256 + 60
+            draw_text(cx - 150, cy - 70, "YOU DIED", 56, col_red)
+            draw_int(cx - 14, cy + 10, (respawn_cd as i64) + 1, 50, col_white)
+        }
+
+        // OVERCLOCK meter: a gold bar, bottom-centre. While active it shows the time
+        // left; full + ready shows the [F] prompt.
+        let ocw = 300
+        let ocx = cx - 150
+        let ocy = fbh - 72
+        let mut obt = 0
+        while obt < ocw {
+            pixel(ocx + obt, ocy, 45, 38, 22)
+            pixel(ocx + obt, ocy + 1, 45, 38, 22)
+            pixel(ocx + obt, ocy + 2, 45, 38, 22)
+            pixel(ocx + obt, ocy + 3, 45, 38, 22)
+            obt = obt + 1
+        }
+        let mut ocf = (oc_meter / 100.0 * 300.0) as i64
+        if oc_active { ocf = (oc_timer / 10.0 * 300.0) as i64 }
+        if ocf > ocw { ocf = ocw }
+        if ocf < 0 { ocf = 0 }
+        let mut ofg = 200
+        if oc_active { ofg = 235 }
+        let mut obf = 0
+        while obf < ocf {
+            pixel(ocx + obf, ocy, 255, ofg, 70)
+            pixel(ocx + obf, ocy + 1, 255, ofg, 70)
+            pixel(ocx + obf, ocy + 2, 255, ofg, 70)
+            pixel(ocx + obf, ocy + 3, 255, ofg, 70)
+            obf = obf + 1
+        }
+        let col_oc = 255 * 65536 + 210 * 256 + 70
+        if oc_active {
+            draw_text(cx - 96, ocy - 28, "OVERCLOCKED", 22, col_oc)
+        } else {
+            if oc_meter >= 100.0 {
+                draw_text(cx - 96, ocy - 28, "OVERCLOCK [F]", 22, col_oc)
+            }
+        }
+
     }
+
+    // Clean shutdown when the window closes: release the mouse and silence audio
+    // so the cursor isn't left captured and no voice tail lingers.
+    grab_mouse(0)
+    audio_stop()
 }
