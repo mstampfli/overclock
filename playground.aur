@@ -2238,10 +2238,8 @@ fn main() {
                         brains[ei2].jcd = 0.5
                     }
                 }
-                // Crude WALL-CLIMB: airborne, shoving into a wall, target above -> ride up it.
-                if grnd == false and stuck and (tmy - by0) > 0.5 and brains[ei2].vy < 7.0 {
-                    brains[ei2].vy = 7.0
-                }
+                // (No synthetic wall-climb - that made bots levitate up walls and hover the
+                // ceiling. They reach height the human way: jumps + grapple, below.)
                 // GRAPPLE: when far from its target a bot grapple-leaps to close the gap, the
                 // way a player would - raycast toward the target, anchor on a surface, and
                 // reel in (the leap is carried by the knockback-velocity decay).
