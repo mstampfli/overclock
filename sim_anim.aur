@@ -1,0 +1,44 @@
+// Headless check of the locomotion anim state machine against a REALISTIC bot speed: it
+// strafes/jukes (speed swings 0..8 as the juke crosses zero, brief dips) and has one
+// sustained stop (shield channel, frames 380..470). Counts idle<->run clip SWITCHES over 10s.
+
+fn raw_speed(f: f64) -> f64 {
+    let mut v = 8.0 * sin(f * 0.09)   // strafe/juke velocity; |v| dips to 0 briefly each ~35 frames
+    if v < 0.0 { v = 0.0 - v }
+    if f > 380.0 and f < 470.0 { v = 0.0 }   // a real sustained stop (shielding)
+    v
+}
+
+fn main() {
+    let dt = 1.0 / 60.0
+    let mut old_clip = 0
+    let mut old_switch = 0
+    let mut aspd = 0.0
+    let mut state = 0 - 1
+    let mut state_t = 0.0
+    let mut aidle = 0.0
+    let mut new_switch = 0
+
+    let mut f = 0
+    while f < 600 {
+        let raw = raw_speed(f as f64)
+        // OLD: bare threshold on the raw speed
+        let mut oc = 0
+        if raw > 2.5 { oc = 1 }
+        if oc != old_clip { old_switch = old_switch + 1; old_clip = oc }
+        // NEW: smoothed + bias-to-run with a 0.35s idle-confirmation + small dwell
+        aspd = aspd + (raw - aspd) * 0.12
+        let mut desired = state
+        if desired < 0 { desired = 0 }
+        if aspd > 1.4 { desired = 1; aidle = 0.0 } else { aidle = aidle + dt; if aidle > 0.35 { desired = 0 } }
+        state_t = state_t + dt
+        let mut allow = 0
+        if state < 0 { allow = 1 }
+        if state_t > 0.15 { allow = 1 }
+        if allow == 1 and state != desired { new_switch = new_switch + 1; state = desired; state_t = 0.0 }
+        f = f + 1
+    }
+    println("10s of realistic strafe + one sustained stop:")
+    println("  OLD (bare threshold)                 clip switches =", old_switch)
+    println("  NEW (bias-to-run + idle-confirmation) clip switches =", new_switch)
+}

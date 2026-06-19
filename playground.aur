@@ -1030,6 +1030,9 @@ fn main() {
     let mut ashoot = [0.0; 9]       // >0 = recently fired, hold the shoot animation
     let mut ushoot = [0; 9]         // 1 = upper-body shoot overlay currently active
     let mut aspd = [0.0; 9]         // low-pass smoothed move speed (so idle/run doesn't flicker)
+    let mut astate_t = [0.0; 9]     // time in the current base clip (min-dwell anti-flicker)
+    let mut ajump = [0.0; 9]        // airborne latch (hold the jump clip through the apex)
+    let mut aidle_t = [0.0; 9]      // time spent slow (idle only after a SUSTAINED stop)
     let upper_mask_root = 3         // DEF-spine.002: overlay torso+arms, hips+legs keep locomotion
     let actor_scale = 1.0           // mannequin bind height 1.83m = real human scale
     let actor_yoff = 0.0 - 0.9      // model origin is at the feet; actor pos is the capsule centre
@@ -2979,20 +2982,31 @@ fn main() {
                     let svz = bz - aprevz[ed]
                     let mut inst = sqrt(svx * svx + svz * svz) / dt
                     if inst > 40.0 { inst = 0.0 }   // ignore respawn teleports
-                    aspd[ed] = aspd[ed] + (inst - aspd[ed]) * 0.2   // low-pass smooth
+                    aspd[ed] = aspd[ed] + (inst - aspd[ed]) * 0.12   // low-pass smooth
                     let spd = aspd[ed]
                     ashoot[ed] = ashoot[ed] - dt
                     if ashoot[ed] < 0.0 { ashoot[ed] = 0.0 }
-                    // BASE layer = pure locomotion: airborne -> jump (from the bot's OWN vertical +
-                    // knockback velocity, no ground-raycast flicker), running -> jog, else idle.
-                    // Wide hysteresis (1.5 / 3.5) on the SMOOTHED speed so it doesn't strobe.
                     let knock = sqrt(brains[ed].kx * brains[ed].kx + brains[ed].ky * brains[ed].ky + brains[ed].kz * brains[ed].kz)
-                    let mut want_clip = astate[ed]
-                    if want_clip < 0 { want_clip = anim_idle }
-                    if spd < 1.5 { want_clip = anim_idle }
-                    if spd > 3.5 { want_clip = anim_run }
-                    if brains[ed].vy > 1.5 or brains[ed].vy < (0.0 - 1.5) or knock > 4.0 { want_clip = anim_jump }
-                    if astate[ed] != want_clip { r3d_anim_play(actor_models[ed], want_clip, 1, 1.0, 0.12); astate[ed] = want_clip }
+                    // Airborne LATCH: set on a real takeoff/leap/hard fall, hold ~0.45s through the
+                    // apex, clear only when actually grounded - so jump never strobes around vy = 0.
+                    if brains[ed].vy > 3.0 or knock > 4.0 or brains[ed].vy < (0.0 - 5.0) { ajump[ed] = 0.45 }
+                    if phys3d_grounded(h) == 1 and brains[ed].vy < 1.0 { ajump[ed] = 0.0 }
+                    ajump[ed] = ajump[ed] - dt
+                    if ajump[ed] < 0.0 { ajump[ed] = 0.0 }
+                    // Desired BASE clip. Bias toward RUN: any sustained motion -> run instantly;
+                    // idle ONLY after the bot has been slow for 0.35s straight (a real stop, not a
+                    // juke/strafe dip). Jump latch wins. Small dwell as a final anti-strobe guard.
+                    let mut desired = astate[ed]
+                    if desired == anim_jump { desired = anim_idle }
+                    if spd > 1.4 { desired = anim_run; aidle_t[ed] = 0.0 } else { aidle_t[ed] = aidle_t[ed] + dt; if aidle_t[ed] > 0.35 { desired = anim_idle } }
+                    if ajump[ed] > 0.0 { desired = anim_jump }
+                    astate_t[ed] = astate_t[ed] + dt
+                    let mut allow = 0
+                    if astate[ed] < 0 { allow = 1 }
+                    if astate_t[ed] > 0.15 { allow = 1 }
+                    if desired == anim_jump { allow = 1 }
+                    if astate[ed] == anim_jump and ajump[ed] <= 0.0 { allow = 1 }
+                    if allow == 1 and astate[ed] != desired { r3d_anim_play(actor_models[ed], desired, 1, 1.0, 0.14); astate[ed] = desired; astate_t[ed] = 0.0 }
                     // UPPER-BODY overlay = the shoot pose on the torso/arms while the legs keep
                     // running or jumping (Aurora's animation-layering feature). So a bot can now
                     // run-and-gun or shoot midair, not freeze to one full-body clip.
@@ -3058,13 +3072,17 @@ fn main() {
                     let rvz = ez - aprevz[ai]
                     let mut rinst = sqrt(rvx * rvx + rvz * rvz) / dt
                     if rinst > 40.0 { rinst = 0.0 }
-                    aspd[ai] = aspd[ai] + (rinst - aspd[ai]) * 0.2
+                    aspd[ai] = aspd[ai] + (rinst - aspd[ai]) * 0.12
                     let rspd = aspd[ai]
-                    let mut rwc = astate[ai]
-                    if rwc < 0 { rwc = anim_idle }
-                    if rspd < 1.5 { rwc = anim_idle }
-                    if rspd > 3.5 { rwc = anim_run }
-                    if astate[ai] != rwc { r3d_anim_play(actor_models[ai], rwc, 1, 1.0, 0.15); astate[ai] = rwc }
+                    let mut rdes = astate[ai]
+                    if rdes < 0 { rdes = anim_idle }
+                    if rdes == anim_jump { rdes = anim_idle }
+                    if rspd > 1.4 { rdes = anim_run; aidle_t[ai] = 0.0 } else { aidle_t[ai] = aidle_t[ai] + dt; if aidle_t[ai] > 0.35 { rdes = anim_idle } }
+                    astate_t[ai] = astate_t[ai] + dt
+                    let mut rallow = 0
+                    if astate[ai] < 0 { rallow = 1 }
+                    if astate_t[ai] > 0.15 { rallow = 1 }
+                    if rallow == 1 and astate[ai] != rdes { r3d_anim_play(actor_models[ai], rdes, 1, 1.0, 0.15); astate[ai] = rdes; astate_t[ai] = 0.0 }
                     r3d_anim_update(actor_models[ai], dt)
                     r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale)
                     aprevx[ai] = ex
