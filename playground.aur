@@ -846,7 +846,8 @@ struct Brain {
     kz: f64,         // blast knockback velocity (decays) - also reused for a grapple-leap
     pop: f64,        // hit-flinch scale pop (draw)
     gcd: f64,        // grapple cooldown (a bot grapple-leaps to close big gaps, like a player)
-    getrifle: f64    // 1 = heading for ammo, so equip the rifle to top it up (not the launcher)
+    getrifle: f64,   // 1 = heading for ammo, so equip the rifle to top it up (not the launcher)
+    face: f64        // yaw the body should face (set toward its aim target; for the model draw)
 }
 
 fn menu_btn(x: i64, y: i64, w: i64, h: i64, mx: i64, my: i64) -> i64 {
@@ -1026,12 +1027,14 @@ fn main() {
     let mut astate = [0; 9]         // clip currently playing on each (-1 = unset)
     let mut aprevx = [0.0; 9]       // last-frame draw pos -> movement speed -> idle vs run
     let mut aprevz = [0.0; 9]
+    let mut ashoot = [0.0; 9]       // >0 = recently fired, hold the shoot animation
     let actor_scale = 1.0           // mannequin bind height 1.83m = real human scale
     let actor_yoff = 0.0 - 0.9      // model origin is at the feet; actor pos is the capsule centre
     let actor_yaw_off = 0.0         // set to 3.14159 if the mannequin faces AWAY from you
     let anim_idle = 9               // parsed clips: 9 Idle_Loop, 13 Jog_Fwd, 15 Jump_Loop
     let anim_run = 13
     let anim_jump = 15
+    let anim_shoot = 23             // 23 Pistol_Shoot (played briefly when a bot fires)
 
     // Physics world. World gravity pulls DYNAMIC bodies (the shootable targets)
     // down; the player capsule is kinematic and unaffected (it runs its own
@@ -1170,15 +1173,15 @@ fn main() {
     // Brain; the player + remote slots get a dummy (aim 0, unused). `aim` (shot spread) is a
     // bot's skill - the ONLY thing distinguishing a bot from the player in a fight.
     let mut brains = [
-        Brain { aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
-        Brain { aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
-        Brain { aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
-        Brain { aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
-        Brain { aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 }
+        Brain { aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        Brain { aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        Brain { aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        Brain { aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        Brain { aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 }
     ]
     // Per-player characters are created lazily by the sim (see sim_step).
 
@@ -2521,6 +2524,9 @@ fn main() {
                         tk = tk + 1
                     }
                     nearest = bestd
+                    // Face the body toward whatever it's aiming at (so the model + its shoot
+                    // animation point at the actual target, not hardcoded at the player).
+                    if tgi > (0 - 2) { brains[ci].face = atan2(tgx - bsx, 0.0 - (tgz - bsz)) }
                     // Launcher at range whenever it has a rocket (you can rocket from afar even
                     // with rifle ammo). OR when the rifle is fully dry but the launcher has ammo
                     // (only option) - that case only FIRES at range (gated below) + backs off.
@@ -2599,6 +2605,7 @@ fn main() {
                 if want > 0 and actors[ci].mag[wp] > 0 and actors[ci].rl <= 0.0 and actors[ci].heal <= 0.0 and actors[ci].fcd <= 0.0 {
                     actors[ci].mag[wp] = actors[ci].mag[wp] - 1
                     if actors[ci].mag[wp] <= 0 and actors[ci].res[wp] > 0 { actors[ci].rl = reload_w[wp]; actors[ci].rlw = wp }
+                    if ci != pl_i { ashoot[ci] = 0.4 }   // hold the bot's shoot animation briefly
                     let ox = sox + ax * 0.6
                     let oy = soy + ay * 0.6
                     let oz = soz + az * 0.6
@@ -2965,18 +2972,24 @@ fn main() {
                 let bz = phys3d_z(h)
                 let psc = 1.0 + brains[ed].pop   // brief scale pop when hit (flinch)
                 if actor_models[ed] >= 0 {
-                    // Drive the clip from real motion: airborne -> jump, moving -> jog, else idle.
                     let svx = bx - aprevx[ed]
                     let svz = bz - aprevz[ed]
                     let spd = sqrt(svx * svx + svz * svz) / dt
+                    ashoot[ed] = ashoot[ed] - dt
+                    if ashoot[ed] < 0.0 { ashoot[ed] = 0.0 }
+                    // Clip from real state: airborne -> jump, firing (and not sprinting) -> shoot,
+                    // running -> jog, else idle (with a speed deadband so it doesn't flicker).
                     let mut want_clip = astate[ed]
                     if want_clip < 0 { want_clip = anim_idle }
                     if spd < 1.5 { want_clip = anim_idle }
                     if spd > 3.0 { want_clip = anim_run }
+                    if ashoot[ed] > 0.0 and spd < 3.0 { want_clip = anim_shoot }
                     if phys3d_grounded(h) < 1 { want_clip = anim_jump }
-                    if astate[ed] != want_clip { r3d_anim_play(actor_models[ed], want_clip, 1, 1.0, 0.15); astate[ed] = want_clip }
+                    if astate[ed] != want_clip { r3d_anim_play(actor_models[ed], want_clip, 1, 1.0, 0.12); astate[ed] = want_clip }
                     r3d_anim_update(actor_models[ed], dt)
-                    let fyaw = atan2(px - bx, 0.0 - (pz - bz)) + actor_yaw_off
+                    // Face the run direction when sprinting, otherwise the aim target.
+                    let mut fyaw = brains[ed].face + actor_yaw_off
+                    if spd > 3.0 { fyaw = atan2(svx, 0.0 - svz) + actor_yaw_off }
                     r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, fyaw, 0.0, 0.0, actor_scale * psc)
                     aprevx[ed] = bx
                     aprevz[ed] = bz
@@ -3035,7 +3048,7 @@ fn main() {
                     if rspd > 3.0 { rwc = anim_run }
                     if astate[ai] != rwc { r3d_anim_play(actor_models[ai], rwc, 1, 1.0, 0.15); astate[ai] = rwc }
                     r3d_anim_update(actor_models[ai], dt)
-                    r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw, 0.0, 0.0, actor_scale)
+                    r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale)
                     aprevx[ai] = ex
                     aprevz[ai] = ez
                 } else {
