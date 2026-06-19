@@ -2187,7 +2187,10 @@ fn main() {
                 let mut hunting = 1
                 brains[ei2].getrifle = 0.0
                 if totalammo <= 0 {
-                    if amd < 300.0 { tmx = amx; tmz = amz; brains[ei2].getrifle = 1.0 } else { tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0) }
+                    // Fully dry: mark it an ammo errand (so the shield gate below won't pin it
+                    // standing still) and route to a box if one's near, else fall back.
+                    brains[ei2].getrifle = 1.0
+                    if amd < 300.0 { tmx = amx; tmz = amz } else { tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0) }
                     tmy = by0; hunting = 0
                 } else { if rifleammo < 40 and amd < 200.0 {
                     tmx = amx; tmz = amz; tmy = by0; hunting = 0; brains[ei2].getrifle = 1.0
@@ -2243,7 +2246,7 @@ fn main() {
                 let moved = sqrt((bx0 - brains[ei2].px0) * (bx0 - brains[ei2].px0) + (bz0 - brains[ei2].pz0) * (bz0 - brains[ei2].pz0))
                 let stuck = moved < 0.05 and tdist > 2.0
                 brains[ei2].jcd = brains[ei2].jcd - dt
-                if grnd and brains[ei2].jcd <= 0.0 and tdist > 2.5 {
+                if grnd and brains[ei2].jcd <= 0.0 and tdist > 2.5 and bheal == false {
                     if stuck or (tmy - by0) > 1.2 {
                         brains[ei2].vy = 9.5   // hop the obstacle / up toward the target
                         brains[ei2].jcd = 0.5
@@ -2441,7 +2444,11 @@ fn main() {
                 if ci == pl_i {
                     if input_down(act_heal) > 0 and dead == false { heal_want = true }
                 } else {
-                    if nearest > 14.0 { heal_want = true }
+                    // Only shield when genuinely idle-safe: disengaged AND not mid ammo-errand
+                    // (getrifle) AND not hurt enough to want a health pad. A dry or low bot must
+                    // go rearm/heal instead of freezing to channel (which made it hop in place
+                    // and never shoot) - that was the "hopping with no ammo, not shooting" bug.
+                    if nearest > 14.0 and brains[ci].getrifle < 0.5 and actors[ci].hp >= 45.0 { heal_want = true }
                 }
                 if heal_want and actors[ci].cells > 0 and actors[ci].sh < actors[ci].shmax {
                     actors[ci].heal = actors[ci].heal + dt
