@@ -2183,6 +2183,14 @@ fn main() {
                 let bshake = bnear * bnear * 1.4 * gi   // MUCH stronger up close
                 if shake < bshake { shake = bshake }
             }
+            // A DIRECT or VERY-near explosive (only explosives - bullets don't do this) lands a
+            // ~4x jolt right at the epicentre; falls off fast so a mid-range blast is unchanged.
+            let vnrad = 4.0 * gi
+            if pbd < vnrad {
+                let vn = 1.0 - pbd / vnrad
+                let vshake = vn * vn * 5.6 * gi   // ~4x the old direct-blast shake (1.4)
+                if shake < vshake { shake = vshake }
+            }
         }
 
         // --- Enemy bots: HUNT the player (chase + jump + wall-climb) and shoot. ---
@@ -2598,7 +2606,7 @@ fn main() {
                                     if vk < bot_n { brains[vk].pop = 0.1 }
                                     if mine == 1 { hitmark = 0.18; play_noise(45, 14) }
                                     if vk == pl_i and pinvuln <= 0.0 and dead == false {
-                                        dmg_timer = 0.0; hurt_flash = 0.6; shake = 0.34
+                                        dmg_timer = 0.0; hurt_flash = 0.6; shake = 0.085
                                         play_sound(0 - 18, 70, 0)
                                         let rcx = sox - px
                                         let rcz = soz - pz
@@ -2649,30 +2657,6 @@ fn main() {
                         trlife[trcur] = 0.06
                         trcur = trcur + 1
                         if trcur >= tracer_n { trcur = 0 }
-                        // Near-miss jolt: an ENEMY round that whips past your head shakes the
-                        // camera, ramping toward the direct-hit shake the closer it grazes. Gated
-                        // on the bullet actually reaching your vicinity (tproj < travel distance).
-                        if mine == 0 and dead == false and pinvuln <= 0.0 {
-                            let rpx = px - sox
-                            let rpy = eye - soy
-                            let rpz = pz - soz
-                            let tproj = rpx * ax + rpy * ay + rpz * az
-                            let segx = tex - sox
-                            let segy = tey - soy
-                            let segz = tez - soz
-                            let hdist = sqrt(segx * segx + segy * segy + segz * segz)
-                            if tproj > 0.0 and tproj < hdist {
-                                let cxx = rpx - ax * tproj
-                                let cyy = rpy - ay * tproj
-                                let czz = rpz - az * tproj
-                                let perp = sqrt(cxx * cxx + cyy * cyy + czz * czz)
-                                if perp < 1.5 {
-                                    let nf = 1.0 - perp / 1.5
-                                    let nm = nf * nf * 0.34
-                                    if shake < nm { shake = nm }
-                                }
-                            }
-                        }
                     } else {
                         prjx[prjcur] = ox; prjy[prjcur] = oy; prjz[prjcur] = oz
                         prjvx[prjcur] = ax * proj_speed; prjvy[prjcur] = ay * proj_speed; prjvz[prjcur] = az * proj_speed
