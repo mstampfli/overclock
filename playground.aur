@@ -1102,12 +1102,12 @@ fn main() {
     let pl_i = bot_n                        // the local player's slot
     let nactors = bot_n + 1 + max_remote    // bots + local player + remote slots
     let mut actors = [
-        Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0 },
-        Actor { hdl: 0 - 1, hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0 },
+        Actor { hdl: 0 - 1, hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
         Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
         Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
         Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 }
@@ -1238,11 +1238,11 @@ fn main() {
     // actors[5].wpn config (same for every Actor - player and bots). Per-actor ammo (mag +
     // reserve) and current actors[5].wpn live in the Actor struct (the player's is `me`, below).
     let mut prev_weapon = 0
-    let mag_size_w = [24, 1]    // mag sizes (launcher = single-shot rocket)
+    let mag_size_w = [30, 1]    // mag sizes (launcher = single-shot rocket)
     let fire_w = [0.11, 0.5]    // fire interval (rifle fast, launcher slow)
     let reload_w = [1.6, 3.0]   // reload time per actors[5].wpn (launcher much slower)
-    let res_max = [72, 3]       // reserve cap = 3 extra mags (rifle 3x24, launcher 3x1)
-    let res_refill = [24, 2]    // reserve added per ammo pickup (a mag / 2 rockets)
+    let res_max = [90, 3]       // reserve cap = 3 extra mags (rifle 3x30, launcher 3x1)
+    let res_refill = [30, 2]    // reserve added per ammo pickup (a full mag / 2 rockets)
     // OVERCLOCK signature mechanic: meter fills from kills + movement style; at full,
     // trigger a powered state (faster fire/move, instant reloads, gold glow). Kills
     // while overclocked EXTEND it with no cap (chain kills = stay overclocked).
@@ -1319,7 +1319,7 @@ fn main() {
     let mut windlvl = 0.0    // smoothed wind-line intensity (rises fast, lingers down)
 
     // Combat tuning (data-driven). Player gun is a fast hitscan; bots are slower.
-    let gun_dmg = 12.0           // rifle fires SO fast - each bullet only chips; explosives kill
+    let gun_dmg = 17.0           // rifle hits harder now (still fast); explosives are the heavy hits
     let enemy_hp_max = 100.0
     let enemy_respawn = 3.0
     // (No separate bot damage/weapons - bots are Actors and run the SAME actors[5].wpn config
@@ -1568,8 +1568,8 @@ fn main() {
                 respawn_req = 1.0
                 actors[5].wpn = 0
                 prev_weapon = 0
-                actors[5].mag[0] = 24; actors[5].mag[1] = 1
-                actors[5].res[0] = 48; actors[5].res[1] = 2
+                actors[5].mag[0] = 30; actors[5].mag[1] = 1
+                actors[5].res[0] = 60; actors[5].res[1] = 2
                 actors[5].rl = 0.0
                 oc_meter = 0.0
                 oc_active = false
@@ -1597,7 +1597,7 @@ fn main() {
                     actors[rb].hp = enemy_hp_max
                     actors[rb].sh = actors[rb].shmax
                     actors[rb].mag[0] = mag_size_w[0]; actors[rb].mag[1] = mag_size_w[1]
-                    actors[rb].res[0] = 48; actors[rb].res[1] = 2
+                    actors[rb].res[0] = 60; actors[rb].res[1] = 2
                     actors[rb].rl = 0.0
                     actors[rb].wpn = 0
                     actors[rb].cells = 0
@@ -2092,8 +2092,29 @@ fn main() {
                 let by0 = phys3d_y(h)
                 let bz0 = phys3d_z(h)
                 let grnd = phys3d_grounded(h) == 1
-                let tdx = px - bx0
-                let tdz = pz - bz0
+                // MOVE toward the NEAREST enemy - the player OR another bot. It's a free-for-
+                // all, so bots hunt each other too instead of all piling onto the player.
+                let mut tmx = bx0
+                let mut tmy = by0
+                let mut tmz = bz0
+                let mut bestmd = 100000.0
+                if dead == false {
+                    let dpm = sqrt((px - bx0) * (px - bx0) + (pz - bz0) * (pz - bz0))
+                    if dpm < bestmd { bestmd = dpm; tmx = px; tmy = py; tmz = pz }
+                }
+                let mut mq = 0
+                while mq < bot_n {
+                    if mq != ei2 and actors[mq].hp > 0.0 {
+                        let mqh = actors[mq].hdl as i64
+                        let mqx = phys3d_x(mqh)
+                        let mqz = phys3d_z(mqh)
+                        let dq = sqrt((mqx - bx0) * (mqx - bx0) + (mqz - bz0) * (mqz - bz0))
+                        if dq < bestmd { bestmd = dq; tmx = mqx; tmy = phys3d_y(mqh); tmz = mqz }
+                    }
+                    mq = mq + 1
+                }
+                let tdx = tmx - bx0
+                let tdz = tmz - bz0
                 let tdist = sqrt(tdx * tdx + tdz * tdz)
                 // Shield up ONLY when disengaged - like the player, a channeling actor can't
                 // fight: it must stop moving AND hold fire. A bot only starts a channel when
@@ -2129,7 +2150,7 @@ fn main() {
                 let mut adv = 1.0
                 if tdist < 4.0 { adv = 0.0 }
                 if tdist < 2.0 { adv = 0.0 - 1.0 }
-                if by0 - py > 0.4 and tdist < 2.5 { adv = 0.0 - 1.5 }   // get off the player
+                if by0 - tmy > 0.4 and tdist < 2.5 { adv = 0.0 - 1.5 }   // get off the player
                 let mut bvx = (mdx * adv + perpx * juke) * runsp
                 let mut bvz = (mdz * adv + perpz * juke) * runsp
                 if bheal { bvx = 0.0; bvz = 0.0 }   // stand still while channeling a shield
@@ -2140,14 +2161,14 @@ fn main() {
                 let stuck = moved < 0.05 and tdist > 2.0
                 brains[ei2].jcd = brains[ei2].jcd - dt
                 if grnd and brains[ei2].jcd <= 0.0 and tdist > 2.5 {
-                    if stuck or (py - by0) > 1.2 {
+                    if stuck or (tmy - by0) > 1.2 {
                         brains[ei2].vy = 9.5   // hop the obstacle / up toward the player
                         brains[ei2].jcd = 0.5
                     }
                 }
                 // Crude WALL-CLIMB: airborne, shoving into a wall, player above -> ride
                 // up it (reach rooftops like a wallrun).
-                if grnd == false and stuck and (py - by0) > 0.5 and brains[ei2].vy < 7.0 {
+                if grnd == false and stuck and (tmy - by0) > 0.5 and brains[ei2].vy < 7.0 {
                     brains[ei2].vy = 7.0
                 }
                 brains[ei2].px0 = bx0
@@ -2196,7 +2217,7 @@ fn main() {
                     actors[ei2].hp = enemy_hp_max
                     actors[ei2].sh = actors[ei2].shmax   // respawn with a full shield
                     actors[ei2].mag[0] = mag_size_w[0]; actors[ei2].mag[1] = mag_size_w[1]
-                    actors[ei2].res[0] = 48; actors[ei2].res[1] = 2
+                    actors[ei2].res[0] = 60; actors[ei2].res[1] = 2
                     actors[ei2].rl = 0.0
                     brains[ei2].vy = 0.0
                     phys3d_set_pos(h, esx[ei2], 0.9, esz[ei2])
@@ -2226,6 +2247,15 @@ fn main() {
                         actors[ci].res[rw] = actors[ci].res[rw] - tkr
                     }
                 }
+                // Auto-reload when the equipped weapon is empty but has reserve - so picking
+                // up ammo while dry refills you without needing a manual reload.
+                let awp = actors[ci].wpn
+                if actors[ci].rl <= 0.0 and actors[ci].mag[awp] <= 0 and actors[ci].res[awp] > 0 {
+                    let mut acrl = reload_w[awp]
+                    if ci == pl_i and oc_active { acrl = reload_w[awp] * 0.5 }
+                    actors[ci].rl = acrl
+                    actors[ci].rlw = awp
+                }
                 actors[ci].fcd = actors[ci].fcd - dt
                 if actors[ci].fcd < 0.0 { actors[ci].fcd = 0.0 }
                 // ---- INTENT: where this actor wants to shoot this frame ----
@@ -2243,7 +2273,7 @@ fn main() {
                     ax = fx; ay = fy; az = fz
                     let mut crl = reload_w[actors[ci].wpn]
                     if oc_active { crl = reload_w[actors[ci].wpn] * 0.5 }
-                    if input_down(act_reload) > 0 and actors[ci].rl <= 0.0 and actors[ci].mag[actors[ci].wpn] < mag_size_w[actors[ci].wpn] and actors[ci].res[actors[ci].wpn] > 0 and dead == false { actors[ci].rl = crl }
+                    if input_down(act_reload) > 0 and actors[ci].rl <= 0.0 and actors[ci].mag[actors[ci].wpn] < mag_size_w[actors[ci].wpn] and actors[ci].res[actors[ci].wpn] > 0 and dead == false { actors[ci].rl = crl; actors[ci].rlw = actors[ci].wpn }
                     if input_down(act_fire) > 0 and dead == false { want = 1 }
                 } else {
                     // Bot: pick the nearest enemy + a weapon + an aim (with spread). A bot
@@ -2561,7 +2591,7 @@ fn main() {
                 dead = false
                 actors[5].hp = php_max
                 actors[5].sh = 0.0   // respawn SHIELDLESS - shields are scarce; find/loot cells
-                actors[5].mag[0] = 24; actors[5].mag[1] = 1; actors[5].res[0] = 48; actors[5].res[1] = 2   // ammo back to start
+                actors[5].mag[0] = 30; actors[5].mag[1] = 1; actors[5].res[0] = 60; actors[5].res[1] = 2   // ammo back to start
                 actors[5].rl = 0.0
                 pinvuln = 2.0
                 respawn_req = 1.0
