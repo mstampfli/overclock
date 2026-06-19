@@ -782,6 +782,36 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
 
 // Draw a filled UI button into the HUD framebuffer; returns 1 if the cursor is over
 // it (brighter when hovered). Used by the main menu + settings screen.
+// One unified actor type for EVERY combatant - the player and the bots are the same
+// thing. Same health, shield (depletes before health), per-me.wpn mag + reserve, reload,
+// shield cells, and the same me.wpn config (gun_dmg / fire_w / mag_size_w / reload_w /
+// res_*). The ONLY field that makes a bot a bot is `aim` (their shot spread = skill).
+// vy/px0/pz0/jcd/k*/pop are the AI MOVER's state (the player's mover is the netcode sim).
+struct Actor {
+    hdl: i64,        // phys3d collider handle
+    hp: f64,
+    sh: f64,         // shield (absorbs damage before health)
+    shmax: f64,      // shield capacity
+    wpn: i64,        // current me.wpn: 0 rifle / 1 launcher
+    mag: [i64; 2],   // loaded rounds per me.wpn
+    res: [i64; 2],   // spare reserve per me.wpn
+    rl: f64,         // reload timer (>0 = reloading)
+    rlw: i64,        // which me.wpn is mid-reload
+    fcd: f64,        // fire cooldown
+    cells: i64,      // shield cells carried
+    heal: f64,       // shield-apply channel timer
+    aim: f64,        // AIM STRENGTH - the only per-actor knob (base shot spread, radians)
+    resp: f64,       // respawn timer
+    vy: f64,         // AI mover: vertical velocity
+    px0: f64,        // AI mover: last x (stuck detection)
+    pz0: f64,        // AI mover: last z
+    jcd: f64,        // AI mover: jump cooldown
+    kx: f64,
+    ky: f64,
+    kz: f64,         // blast knockback velocity (decays)
+    pop: f64         // hit-flinch scale pop (draw)
+}
+
 fn menu_btn(x: i64, y: i64, w: i64, h: i64, mx: i64, my: i64) -> i64 {
     let mut hov = 0
     if mx >= x and mx <= x + w and my >= y and my <= y + h { hov = 1 }
@@ -1058,37 +1088,17 @@ fn main() {
     let bot_n = 5
     let esx = [30.0, 0.0 - 30.0, 30.0, 0.0 - 30.0, 0.0]
     let esz = [30.0, 30.0, 0.0 - 30.0, 0.0 - 30.0, 0.0 - 42.0]
-    let eh = [
-        phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3) as f64,
-        phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3) as f64,
-        phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3) as f64,
-        phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3) as f64,
-        phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3) as f64
+    // The bots, as Actor structs (see the `Actor` definition). They start identical to a
+    // freshly-spawned player - full health + shield, full mags + reserve - and run the
+    // exact same combat. Only `aim` (shot spread) differs per bot. The player's own Actor
+    // mirror is `me` (below); both share the SAME code paths and me.wpn config.
+    let mut bots = [
+        Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 }
     ]
-    let mut ehp = [100.0, 100.0, 100.0, 100.0, 100.0]   // current health
-    // Per-bot shield: esh_max 0 = unshielded, >0 = carries a shield (depletes before
-    // health, makes them tankier, drawn tinted). On death a shielded bot ALSO drops a
-    // shield cell; an unshielded one never does. Only some carry one (scarce).
-    let esh_max = [0.0, 50.0, 0.0, 0.0, 50.0]
-    let mut esh = [0.0, 50.0, 0.0, 0.0, 50.0]
-    let mut eresp = [0.0, 0.0, 0.0, 0.0, 0.0]           // respawn countdown while dead
-    let mut efire = [0.4, 0.9, 1.4, 0.7, 1.1]           // staggered shot timers
-    // Bots fire CONTINUOUSLY (fast AR cadence) but spray + miss, and RELOAD when their
-    // mag runs dry (that pause is the natural gap in their fire). emag = rounds loaded.
-    let bot_mag = 20.0
-    let bot_reload = 2.2
-    let mut emag = [20.0, 20.0, 20.0, 20.0, 20.0]
-    // Per-bot blast knockback velocity (added to their move, decays). Bots are
-    // kinematic, so they don't take impulses - we shove them manually.
-    let mut ekx = [0.0, 0.0, 0.0, 0.0, 0.0]
-    let mut eky = [0.0, 0.0, 0.0, 0.0, 0.0]
-    let mut ekz = [0.0, 0.0, 0.0, 0.0, 0.0]
-    // Hunt-movement state: vertical velocity (gravity/jump), last pos (stuck detect),
-    // and a jump cooldown.
-    let mut ebvy = [0.0, 0.0, 0.0, 0.0, 0.0]
-    let mut ebpx = [0.0, 0.0, 0.0, 0.0, 0.0]
-    let mut ebpz = [0.0, 0.0, 0.0, 0.0, 0.0]
-    let mut ebjcd = [0.0, 0.0, 0.0, 0.0, 0.0]
     // Per-player characters are created lazily by the sim (see sim_step).
 
     // Rebindable input actions (ACTION -> input code; change freely at runtime).
@@ -1176,7 +1186,6 @@ fn main() {
     let mut dipv = 0.0       // its velocity
     let mut prev_vy = 0.0    // last frame's vy, so we know the speed we hit ground at
     let mut prev_air = false // were we airborne last frame
-    let mut fire_cd = 0.0
     let mut hit_t = 0.0
     let mut hxp = 0.0
     let mut hyp = 0.0
@@ -1198,20 +1207,15 @@ fn main() {
     let mut dead = false      // dead, waiting to respawn
     let mut prev_dead = false  // detect the death transition (to drop cells once)
     let mut respawn_cd = 0.0  // seconds until respawn
-    // Two weapons: 0 = hitscan rifle, 1 = single-shot rocket launcher. Per-weapon
-    // arrays indexed by `weapon`. AMMO is scarce: wmag = loaded, wres = spare reserve;
-    // reload pulls reserve into the mag, and you go DRY when the reserve is empty
-    // (refill from ammo drops). Swapping just changes the index.
-    let mut weapon = 0
+    // Two weapons: 0 = hitscan rifle, 1 = single-shot rocket launcher. These are SHARED
+    // me.wpn config (same for every Actor - player and bots). Per-actor ammo (mag +
+    // reserve) and current me.wpn live in the Actor struct (the player's is `me`, below).
     let mut prev_weapon = 0
     let mag_size_w = [24, 1]    // mag sizes (launcher = single-shot rocket)
     let fire_w = [0.11, 0.5]    // fire interval (rifle fast, launcher slow)
-    let reload_w = [1.6, 3.0]   // reload time per weapon (launcher much slower)
+    let reload_w = [1.6, 3.0]   // reload time per me.wpn (launcher much slower)
     let res_max = [72, 3]       // reserve cap = 3 extra mags (rifle 3x24, launcher 3x1)
     let res_refill = [24, 2]    // reserve added per ammo pickup (a mag / 2 rockets)
-    let mut wmag = [24, 1]      // loaded rounds per weapon
-    let mut wres = [48, 2]      // spare RESERVE per weapon (scarce)
-    let mut reload_t = 0.0      // reload in progress while > 0
     // OVERCLOCK signature mechanic: meter fills from kills + movement style; at full,
     // trigger a powered state (faster fire/move, instant reloads, gold glow). Kills
     // while overclocked EXTEND it with no cap (chain kills = stay overclocked).
@@ -1291,9 +1295,8 @@ fn main() {
     let gun_dmg = 12.0           // rifle fires SO fast - each bullet only chips; explosives kill
     let enemy_hp_max = 100.0
     let enemy_respawn = 3.0
-    // (No separate bot damage - bots use the SAME weapons/damage as players. Their AR
-    // hits for gun_dmg; their inaccuracy/fire cadence is the only "bot" difference.)
-    let bot_fire_cd = 0.15       // continuous AR cadence; spread + reloads keep it survivable
+    // (No separate bot damage/weapons - bots are Actors and run the SAME me.wpn config
+    // and combat code as the player. Only their aim spread (Actor.aim) differs.)
     // Frag grenade (cooldown tactical): an arcing projectile that inherits your
     // momentum, bounces off geometry, and detonates on a fuse with radial falloff.
     let nade_throw = 17.0      // launch speed along the look direction
@@ -1314,9 +1317,11 @@ fn main() {
     let php_max = 100.0          // player health
     let psh_max = 50.0           // player shield (sits over health, regens first)
     let regen_delay = 2.0        // seconds out of damage before regen kicks in
-    // Player survivability state.
-    let mut php = php_max
-    let mut psh = psh_max
+    // THE PLAYER as an Actor - the same type and fields as a bot (see `Actor`). Combat,
+    // ammo, shields and reload all run through these fields exactly like the bots do; the
+    // player's `aim` is 0 (perfect - you aim with the mouse) and `hdl` is set each frame
+    // from the sim's character handle. Movement is the netcode sim, not the AI mover.
+    let mut me = Actor { hdl: 0 - 1, hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 }
     let mut dmg_timer = regen_delay   // time since last hit (starts "rested")
     let mut pinvuln = 0.0        // brief invulnerability after a respawn
     let mut hurt_flash = 0.0     // red screen-edge flash when hit
@@ -1331,7 +1336,6 @@ fn main() {
     let mut pvz = [0.0; 28]
     let mut plife = [0.0; 28]
     let mut pcur = 0             // round-robin write cursor
-    let mut epop = [0.0, 0.0, 0.0, 0.0, 0.0]   // per-enemy hit flinch (scale pop)
     // Enemy drops: a collectable spawned at a bot's body on death. type 0 = health
     // (instant heal), 1 = shield cell (inventory). droplife > 0 = active, counts down.
     let drop_n = 6
@@ -1342,10 +1346,8 @@ fn main() {
     let mut droplife = [0.0; 6]
     let mut dropcur = 0
     let drop_life = 12.0
-    // Shields are Apex-style: you carry CELLS and apply them with an action (a channel)
-    // rather than picking up instant shield. healing > 0 = mid-channel.
-    let mut shield_cells = 0
-    let mut healing = 0.0
+    // Shields are Apex-style: you carry CELLS (me.cells) and apply them with an action (a
+    // channel, me.heal) rather than picking up instant shield. me.heal > 0 = mid-channel.
     let heal_channel = 2.5      // seconds to apply one cell
     let cell_shield = 25.0      // shield restored per cell (psh_max 50 = 2 cells)
     let max_cells = 4
@@ -1376,6 +1378,11 @@ fn main() {
         loop {
             if r3d_present() == 0 { screen = s_quit; break }
             r3d_begin()
+        // Clear the persistent game post-overlays so the red damage vignette + speed
+        // lines don't linger over the menu/pause/settings. The game loop reapplies them
+        // from hurt_flash/windlvl on resume.
+        r3d_damage(0.0, 0.0, 0.0, 0.0, 0.0)
+        r3d_speedlines(0.0, 0.0)
         menu_t = menu_t + frame_dt()
         let sw = surface_w()
         let sh = surface_h()
@@ -1438,35 +1445,38 @@ fn main() {
             // goes very low. -/+ step by one; clicking the bar jumps to that level.
             let sens_unit = 0.0001
             let sens_max = 0.012
-            draw_text(80, 108, "Sensitivity", 22, wht)
-            if menu_btn(240, 104, 34, 30, mx, my) == 1 { if clicked == 1 { sens = sens - sens_unit; if sens < sens_unit { sens = sens_unit } } }
-            draw_text(257 - text_width("-", 22) / 2, 108, "-", 22, wht)
-            let sbx = 282
+            // Centred panel: everything is laid out from `cl` (a centred left edge) so the
+            // whole settings screen sits in the middle of any window size.
+            let cl = cx - 260
+            draw_text(cl, 108, "Sensitivity", 22, wht)
+            if menu_btn(cl + 160, 104, 34, 30, mx, my) == 1 { if clicked == 1 { sens = sens - sens_unit; if sens < sens_unit { sens = sens_unit } } }
+            draw_text(cl + 177 - text_width("-", 22) / 2, 108, "-", 22, wht)
+            let sbx = cl + 202
             let sbw = 230
             if draw_bar(sbx, 108, sbw, 22, sens / sens_max, mx, my) == 1 { if clicked == 1 { let sf = ((mx - sbx) as f64) / (sbw as f64) * sens_max; let slv = (sf / sens_unit + 0.5) as i64; sens = (slv as f64) * sens_unit; if sens < sens_unit { sens = sens_unit } if sens > sens_max { sens = sens_max } } }
-            if menu_btn(520, 104, 34, 30, mx, my) == 1 { if clicked == 1 { sens = sens + sens_unit; if sens > sens_max { sens = sens_max } } }
-            draw_text(537 - text_width("+", 22) / 2, 108, "+", 22, wht)
-            draw_int(566, 108, (sens / sens_unit + 0.5) as i64, 22, gold)
+            if menu_btn(cl + 440, 104, 34, 30, mx, my) == 1 { if clicked == 1 { sens = sens + sens_unit; if sens > sens_max { sens = sens_max } } }
+            draw_text(cl + 457 - text_width("+", 22) / 2, 108, "+", 22, wht)
+            draw_int(cl + 486, 108, (sens / sens_unit + 0.5) as i64, 22, gold)
             // Volume: a bar, 0..100, stepped by EXACTLY 1.
-            draw_text(80, 158, "Volume", 22, wht)
-            if menu_btn(240, 154, 34, 30, mx, my) == 1 { if clicked == 1 { vol = vol - 1; if vol < 0 { vol = 0 } audio_volume(vol) } }
-            draw_text(257 - text_width("-", 22) / 2, 158, "-", 22, wht)
-            let vbx = 282
+            draw_text(cl, 158, "Volume", 22, wht)
+            if menu_btn(cl + 160, 154, 34, 30, mx, my) == 1 { if clicked == 1 { vol = vol - 1; if vol < 0 { vol = 0 } audio_volume(vol) } }
+            draw_text(cl + 177 - text_width("-", 22) / 2, 158, "-", 22, wht)
+            let vbx = cl + 202
             let vbw = 230
             if draw_bar(vbx, 158, vbw, 22, (vol as f64) / 100.0, mx, my) == 1 { if clicked == 1 { let vf = ((mx - vbx) as f64) / (vbw as f64) * 100.0; vol = vf as i64; if vol < 0 { vol = 0 } if vol > 100 { vol = 100 } audio_volume(vol) } }
-            if menu_btn(520, 154, 34, 30, mx, my) == 1 { if clicked == 1 { vol = vol + 1; if vol > 100 { vol = 100 } audio_volume(vol) } }
-            draw_text(537 - text_width("+", 22) / 2, 158, "+", 22, wht)
-            draw_int(566, 158, vol, 22, gold)
+            if menu_btn(cl + 440, 154, 34, 30, mx, my) == 1 { if clicked == 1 { vol = vol + 1; if vol > 100 { vol = 100 } audio_volume(vol) } }
+            draw_text(cl + 457 - text_width("+", 22) / 2, 158, "+", 22, wht)
+            draw_int(cl + 486, 158, vol, 22, gold)
             // Keybinds: click a code box, then press a key.
-            draw_text(80, 206, "Keybinds - click a box, then press a key", 18, gold)
+            draw_text(cl, 206, "Keybinds - click a box, then press a key", 18, gold)
             let mut ki = 0
             while ki < act_n {
                 let ry = 234 + ki * 28
-                draw_action_name(ki, 90, ry + 4, wht)
+                draw_action_name(ki, cl + 10, ry + 4, wht)
                 let mut kc = gold
                 if rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
-                if menu_btn(300, ry, 90, 24, mx, my) == 1 { if clicked == 1 { rebind = ki } }
-                draw_text(314, ry + 4, key_name(bind_code[ki] as i64), 18, kc)
+                if menu_btn(cl + 220, ry, 90, 24, mx, my) == 1 { if clicked == 1 { rebind = ki } }
+                draw_text(cl + 234, ry + 4, key_name(bind_code[ki] as i64), 18, kc)
                 ki = ki + 1
             }
             // Capture the next key for the action being rebound.
@@ -1520,22 +1530,22 @@ fn main() {
                 round_over = false
                 over_t = 0.0
                 won = false
-                php = php_max
-                psh = psh_max
+                me.hp = php_max
+                me.sh = psh_max
                 dead = false
                 prev_dead = false
                 respawn_cd = 0.0
                 pinvuln = 1.5
                 dmg_timer = regen_delay
                 hurt_flash = 0.0
-                shield_cells = 0
-                healing = 0.0
+                me.cells = 0
+                me.heal = 0.0
                 respawn_req = 1.0
-                weapon = 0
+                me.wpn = 0
                 prev_weapon = 0
-                wmag[0] = 24; wmag[1] = 1
-                wres[0] = 48; wres[1] = 2
-                reload_t = 0.0
+                me.mag[0] = 24; me.mag[1] = 1
+                me.res[0] = 48; me.res[1] = 2
+                me.rl = 0.0
                 oc_meter = 0.0
                 oc_active = false
                 oc_timer = 0.0
@@ -1559,15 +1569,20 @@ fn main() {
                 while rp < drop_n { droplife[rp] = 0.0; rp = rp + 1 }
                 let mut rb = 0
                 while rb < bot_n {
-                    ehp[rb] = enemy_hp_max
-                    esh[rb] = esh_max[rb]
-                    emag[rb] = bot_mag
-                    eresp[rb] = 0.0
-                    ekx[rb] = 0.0; eky[rb] = 0.0; ekz[rb] = 0.0
-                    ebvy[rb] = 0.0
-                    epop[rb] = 0.0
-                    ebjcd[rb] = 0.0
-                    phys3d_set_pos(eh[rb] as i64, esx[rb], 0.9, esz[rb])
+                    bots[rb].hp = enemy_hp_max
+                    bots[rb].sh = bots[rb].shmax
+                    bots[rb].mag[0] = mag_size_w[0]; bots[rb].mag[1] = mag_size_w[1]
+                    bots[rb].res[0] = 48; bots[rb].res[1] = 2
+                    bots[rb].rl = 0.0
+                    bots[rb].wpn = 0
+                    bots[rb].cells = 0
+                    bots[rb].heal = 0.0
+                    bots[rb].resp = 0.0
+                    bots[rb].kx = 0.0; bots[rb].ky = 0.0; bots[rb].kz = 0.0
+                    bots[rb].vy = 0.0
+                    bots[rb].pop = 0.0
+                    bots[rb].jcd = 0.0
+                    phys3d_set_pos(bots[rb].hdl as i64, esx[rb], 0.9, esz[rb])
                     rb = rb + 1
                 }
                 do_reset = false
@@ -1614,8 +1629,8 @@ fn main() {
             dash = 0
         }
         // Applying a shield cell is a committed action: no sliding or dashing while you
-        // do it (1-frame lag on `healing` is fine).
-        if healing > 0.0 {
+        // do it (1-frame lag on `me.heal` is fine).
+        if me.heal > 0.0 {
             slide = 0
             dash = 0
         }
@@ -1623,7 +1638,7 @@ fn main() {
         // slows you to a vulnerable walk.
         let mut oc_mult = 1.0
         if oc_active { oc_mult = 1.35 }
-        if healing > 0.0 { oc_mult = 0.5 }
+        if me.heal > 0.0 { oc_mult = 0.5 }
         // Grapple anchor + active flag (set last frame after aiming; 1-frame lag fine).
         let mut g_flag = 0.0
         if grapple_on { g_flag = 1.0 }
@@ -1726,45 +1741,45 @@ fn main() {
         // explosions) pan + attenuate by direction and distance.
         audio_listener(px, eye, pz, fx, fy, fz)
 
-        // Weapon select (1 = rifle, 2 = launcher). Per-weapon ammo lives in arrays, so a
+        // Weapon select (1 = rifle, 2 = launcher). Per-me.wpn ammo lives in arrays, so a
         // swap just changes the index; it cancels a reload and adds a brief swap delay.
-        if input_down(act_wep1) > 0 { weapon = 0 }
-        if input_down(act_wep2) > 0 { weapon = 1 }
-        if weapon != prev_weapon {
-            reload_t = 0.0
-            fire_cd = 0.25
-            prev_weapon = weapon
+        if input_down(act_wep1) > 0 { me.wpn = 0 }
+        if input_down(act_wep2) > 0 { me.wpn = 1 }
+        if me.wpn != prev_weapon {
+            me.rl = 0.0
+            me.fcd = 0.25
+            prev_weapon = me.wpn
         }
 
         // Reload: manual (R) or auto when the mag empties - pulls from the RESERVE into
         // the mag. No reserve = dry (find ammo). Faster (not instant) while OVERCLOCKED.
-        let mut cur_reload = reload_w[weapon]
-        if oc_active { cur_reload = reload_w[weapon] * 0.5 }
-        if input_down(act_reload) > 0 and reload_t <= 0.0 and wmag[weapon] < mag_size_w[weapon] and wres[weapon] > 0 and dead == false {
-            reload_t = cur_reload
+        let mut cur_reload = reload_w[me.wpn]
+        if oc_active { cur_reload = reload_w[me.wpn] * 0.5 }
+        if input_down(act_reload) > 0 and me.rl <= 0.0 and me.mag[me.wpn] < mag_size_w[me.wpn] and me.res[me.wpn] > 0 and dead == false {
+            me.rl = cur_reload
         }
-        if reload_t > 0.0 {
-            reload_t = reload_t - dt
-            if reload_t <= 0.0 {
-                reload_t = 0.0
-                let mut take = mag_size_w[weapon] - wmag[weapon]
-                if take > wres[weapon] { take = wres[weapon] }
-                wmag[weapon] = wmag[weapon] + take
-                wres[weapon] = wres[weapon] - take
+        if me.rl > 0.0 {
+            me.rl = me.rl - dt
+            if me.rl <= 0.0 {
+                me.rl = 0.0
+                let mut take = mag_size_w[me.wpn] - me.mag[me.wpn]
+                if take > me.res[me.wpn] { take = me.res[me.wpn] }
+                me.mag[me.wpn] = me.mag[me.wpn] + take
+                me.res[me.wpn] = me.res[me.wpn] - take
             }
         }
 
         // Fire (rate-limited, costs a loaded round). Auto-reload from reserve on empty.
-        fire_cd = fire_cd - dt
-        if fire_cd < 0.0 { fire_cd = 0.0 }
-        if input_down(act_fire) > 0 and dead == false and wmag[weapon] > 0 and reload_t <= 0.0 and healing <= 0.0 {
-            if fire_cd <= 0.0 {
-                wmag[weapon] = wmag[weapon] - 1
-                if wmag[weapon] <= 0 and wres[weapon] > 0 { reload_t = cur_reload }
+        me.fcd = me.fcd - dt
+        if me.fcd < 0.0 { me.fcd = 0.0 }
+        if input_down(act_fire) > 0 and dead == false and me.mag[me.wpn] > 0 and me.rl <= 0.0 and me.heal <= 0.0 {
+            if me.fcd <= 0.0 {
+                me.mag[me.wpn] = me.mag[me.wpn] - 1
+                if me.mag[me.wpn] <= 0 and me.res[me.wpn] > 0 { me.rl = cur_reload }
                 let ox = px + fx * 0.6
                 let oy = eye + fy * 0.6
                 let oz = pz + fz * 0.6
-                if weapon == 0 {
+                if me.wpn == 0 {
                 play_sound_at(2, 26, 8, ox, oy, oz)   // soft low laser-y rifle tick (quiet bg)
                 let body = phys3d_raycast_full(ox, oy, oz, fx, fy, fz, 120.0)
                 if body >= 0 {
@@ -1774,15 +1789,15 @@ fn main() {
                     // Did we hit a live enemy bot? Deal damage; mark kill on death.
                     let mut ei = 0
                     while ei < bot_n {
-                        if body == (eh[ei] as i64) and ehp[ei] > 0.0 {
+                        if body == (bots[ei].hdl as i64) and bots[ei].hp > 0.0 {
                             let mut gdmg = gun_dmg
-                            if esh[ei] > 0.0 {
-                                if esh[ei] >= gdmg { esh[ei] = esh[ei] - gdmg; gdmg = 0.0 }
-                                else { gdmg = gdmg - esh[ei]; esh[ei] = 0.0 }
+                            if bots[ei].sh > 0.0 {
+                                if bots[ei].sh >= gdmg { bots[ei].sh = bots[ei].sh - gdmg; gdmg = 0.0 }
+                                else { gdmg = gdmg - bots[ei].sh; bots[ei].sh = 0.0 }
                             }
-                            ehp[ei] = ehp[ei] - gdmg
+                            bots[ei].hp = bots[ei].hp - gdmg
                             hitmark = 0.18
-                            epop[ei] = 0.1
+                            bots[ei].pop = 0.1
                             // Spark burst at the impact: a few particles flung back
                             // toward the shooter + up, spread by index.
                             let mut sp = 0
@@ -1800,28 +1815,28 @@ fn main() {
                                 sp = sp + 1
                             }
                             play_noise(45, 14)   // soft, quiet low-passed "pf" hit marker
-                            if ehp[ei] <= 0.0 {
-                                ehp[ei] = 0.0
-                                eresp[ei] = enemy_respawn
+                            if bots[ei].hp <= 0.0 {
+                                bots[ei].hp = 0.0
+                                bots[ei].resp = enemy_respawn
                                 // Drop HEALTH + AMMO always; a shielded bot ALSO drops a cell.
-                                dropx[dropcur] = phys3d_x(eh[ei] as i64)
+                                dropx[dropcur] = phys3d_x(bots[ei].hdl as i64)
                                 dropy[dropcur] = 0.6
-                                dropz[dropcur] = phys3d_z(eh[ei] as i64)
+                                dropz[dropcur] = phys3d_z(bots[ei].hdl as i64)
                                 droptype[dropcur] = 0.0
                                 droplife[dropcur] = drop_life
                                 dropcur = dropcur + 1
                                 if dropcur >= drop_n { dropcur = 0 }
-                                dropx[dropcur] = phys3d_x(eh[ei] as i64) - 0.6
+                                dropx[dropcur] = phys3d_x(bots[ei].hdl as i64) - 0.6
                                 dropy[dropcur] = 0.6
-                                dropz[dropcur] = phys3d_z(eh[ei] as i64)
+                                dropz[dropcur] = phys3d_z(bots[ei].hdl as i64)
                                 droptype[dropcur] = 2.0
                                 droplife[dropcur] = drop_life
                                 dropcur = dropcur + 1
                                 if dropcur >= drop_n { dropcur = 0 }
-                                if esh_max[ei] > 0.0 {
-                                    dropx[dropcur] = phys3d_x(eh[ei] as i64) + 0.6
+                                if bots[ei].shmax > 0.0 {
+                                    dropx[dropcur] = phys3d_x(bots[ei].hdl as i64) + 0.6
                                     dropy[dropcur] = 0.6
-                                    dropz[dropcur] = phys3d_z(eh[ei] as i64)
+                                    dropz[dropcur] = phys3d_z(bots[ei].hdl as i64)
                                     droptype[dropcur] = 1.0
                                     droplife[dropcur] = drop_life
                                     dropcur = dropcur + 1
@@ -1878,8 +1893,8 @@ fn main() {
                     if prjcur >= proj_n { prjcur = 0 }
                     play_sound_at(0 - 8, 70, 55, ox, oy, oz)   // launch thump (3D)
                 }
-                fire_cd = fire_w[weapon]
-                if oc_active { fire_cd = fire_cd * 0.55 }   // faster fire while overclocked
+                me.fcd = fire_w[me.wpn]
+                if oc_active { me.fcd = me.fcd * 0.55 }   // faster fire while overclocked
             }
         }
 
@@ -2040,41 +2055,41 @@ fn main() {
             // Radial damage with linear falloff; a kill runs the usual bookkeeping.
             let mut ej = 0
             while ej < bot_n {
-                if ehp[ej] > 0.0 {
-                    let ghh = eh[ej] as i64
+                if bots[ej].hp > 0.0 {
+                    let ghh = bots[ej].hdl as i64
                     let bdx = phys3d_x(ghh) - ex_x
                     let bdy = (phys3d_y(ghh) + 0.5) - ex_y
                     let bdz = phys3d_z(ghh) - ex_z
                     let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
                     if bdd < rad {
                         let mut edmg = nade_dmg * gi * (1.0 - 0.55 * bdd / rad)
-                        if esh[ej] > 0.0 {
-                            if esh[ej] >= edmg { esh[ej] = esh[ej] - edmg; edmg = 0.0 }
-                            else { edmg = edmg - esh[ej]; esh[ej] = 0.0 }
+                        if bots[ej].sh > 0.0 {
+                            if bots[ej].sh >= edmg { bots[ej].sh = bots[ej].sh - edmg; edmg = 0.0 }
+                            else { edmg = edmg - bots[ej].sh; bots[ej].sh = 0.0 }
                         }
-                        ehp[ej] = ehp[ej] - edmg
-                        epop[ej] = 0.15
-                        if ehp[ej] <= 0.0 {
-                            ehp[ej] = 0.0
-                            eresp[ej] = enemy_respawn
-                            dropx[dropcur] = phys3d_x(eh[ej] as i64)
+                        bots[ej].hp = bots[ej].hp - edmg
+                        bots[ej].pop = 0.15
+                        if bots[ej].hp <= 0.0 {
+                            bots[ej].hp = 0.0
+                            bots[ej].resp = enemy_respawn
+                            dropx[dropcur] = phys3d_x(bots[ej].hdl as i64)
                             dropy[dropcur] = 0.6
-                            dropz[dropcur] = phys3d_z(eh[ej] as i64)
+                            dropz[dropcur] = phys3d_z(bots[ej].hdl as i64)
                             droptype[dropcur] = 0.0
                             droplife[dropcur] = drop_life
                             dropcur = dropcur + 1
                             if dropcur >= drop_n { dropcur = 0 }
-                            dropx[dropcur] = phys3d_x(eh[ej] as i64) - 0.6
+                            dropx[dropcur] = phys3d_x(bots[ej].hdl as i64) - 0.6
                             dropy[dropcur] = 0.6
-                            dropz[dropcur] = phys3d_z(eh[ej] as i64)
+                            dropz[dropcur] = phys3d_z(bots[ej].hdl as i64)
                             droptype[dropcur] = 2.0
                             droplife[dropcur] = drop_life
                             dropcur = dropcur + 1
                             if dropcur >= drop_n { dropcur = 0 }
-                            if esh_max[ej] > 0.0 {
-                                dropx[dropcur] = phys3d_x(eh[ej] as i64) + 0.6
+                            if bots[ej].shmax > 0.0 {
+                                dropx[dropcur] = phys3d_x(bots[ej].hdl as i64) + 0.6
                                 dropy[dropcur] = 0.6
-                                dropz[dropcur] = phys3d_z(eh[ej] as i64)
+                                dropz[dropcur] = phys3d_z(bots[ej].hdl as i64)
                                 droptype[dropcur] = 1.0
                                 droplife[dropcur] = drop_life
                                 dropcur = dropcur + 1
@@ -2099,9 +2114,9 @@ fn main() {
                     }
                     if bdd < krad and bdd > 0.01 {
                         let kf = bot_kb * gi * (1.0 - bdd / krad)
-                        ekx[ej] = ekx[ej] + bdx / bdd * kf
-                        eky[ej] = eky[ej] + kf * 0.7 + 12.0
-                        ekz[ej] = ekz[ej] + bdz / bdd * kf
+                        bots[ej].kx = bots[ej].kx + bdx / bdd * kf
+                        bots[ej].ky = bots[ej].ky + kf * 0.7 + 12.0
+                        bots[ej].kz = bots[ej].kz + bdz / bdd * kf
                     }
                 }
                 ej = ej + 1
@@ -2127,14 +2142,14 @@ fn main() {
             let pbd = sqrt(pbx * pbx + pby * pby + pbz * pbz)
             if pbd < rad and pinvuln <= 0.0 and dead == false {
                 let mut sd = nade_dmg * gi * (1.0 - 0.55 * pbd / rad) * 0.5
-                if psh > 0.0 {
-                    if psh >= sd { psh = psh - sd; sd = 0.0 }
-                    else { sd = sd - psh; psh = 0.0 }
+                if me.sh > 0.0 {
+                    if me.sh >= sd { me.sh = me.sh - sd; sd = 0.0 }
+                    else { sd = sd - me.sh; me.sh = 0.0 }
                 }
-                php = php - sd
+                me.hp = me.hp - sd
                 dmg_timer = 0.0
                 hurt_flash = 0.6
-                if php <= 0.0 {
+                if me.hp <= 0.0 {
                     dead = true
                     respawn_cd = 3.0
                     deaths = deaths + 1
@@ -2174,17 +2189,22 @@ fn main() {
 
         // --- Enemy bots: HUNT the player (chase + jump + wall-climb) and shoot. ---
         etime = etime + dt
-        let pchar = (net_local_state(21) as i64) - 1
+        me.hdl = (net_local_state(21) as i64) - 1
+        // Player horizontal speed - bots aim WORSE at a fast-moving target (move well to
+        // get shot less; stand still and you are easy to hit).
+        let pvx_s = net_local_state(4)
+        let pvz_s = net_local_state(6)
+        let pspd = sqrt(pvx_s * pvx_s + pvz_s * pvz_s)
         let mut ei2 = 0
-        while ei2 < 3 {
-            let h = eh[ei2] as i64
-            epop[ei2] = epop[ei2] - dt
-            if epop[ei2] < 0.0 { epop[ei2] = 0.0 }
+        while ei2 < bot_n {
+            let h = bots[ei2].hdl as i64
+            bots[ei2].pop = bots[ei2].pop - dt
+            if bots[ei2].pop < 0.0 { bots[ei2].pop = 0.0 }
             // Decay any blast knockback (a shove that fades back to AI control).
-            ekx[ei2] = ekx[ei2] - ekx[ei2] * 2.8 * dt
-            eky[ei2] = eky[ei2] - eky[ei2] * 2.8 * dt
-            ekz[ei2] = ekz[ei2] - ekz[ei2] * 2.8 * dt
-            if ehp[ei2] > 0.0 {
+            bots[ei2].kx = bots[ei2].kx - bots[ei2].kx * 2.8 * dt
+            bots[ei2].ky = bots[ei2].ky - bots[ei2].ky * 2.8 * dt
+            bots[ei2].kz = bots[ei2].kz - bots[ei2].kz * 2.8 * dt
+            if bots[ei2].hp > 0.0 {
                 // HUNT the player like a mobile opponent: chase via collide-and-slide,
                 // with gravity, jumping over obstacles / up to higher ground, a strafe-
                 // juke so they are not a straight line, and a crude wall-climb to scale
@@ -2217,44 +2237,88 @@ fn main() {
                 let mut bvx = (mdx * adv + perpx * juke) * runsp
                 let mut bvz = (mdz * adv + perpz * juke) * runsp
                 // Gravity + jump.
-                ebvy[ei2] = ebvy[ei2] - 16.0 * dt
-                if grnd and ebvy[ei2] < 0.0 { ebvy[ei2] = 0.0 }
-                let moved = sqrt((bx0 - ebpx[ei2]) * (bx0 - ebpx[ei2]) + (bz0 - ebpz[ei2]) * (bz0 - ebpz[ei2]))
+                bots[ei2].vy = bots[ei2].vy - 16.0 * dt
+                if grnd and bots[ei2].vy < 0.0 { bots[ei2].vy = 0.0 }
+                let moved = sqrt((bx0 - bots[ei2].px0) * (bx0 - bots[ei2].px0) + (bz0 - bots[ei2].pz0) * (bz0 - bots[ei2].pz0))
                 let stuck = moved < 0.05 and tdist > 2.0
-                ebjcd[ei2] = ebjcd[ei2] - dt
-                if grnd and ebjcd[ei2] <= 0.0 and tdist > 2.5 {
+                bots[ei2].jcd = bots[ei2].jcd - dt
+                if grnd and bots[ei2].jcd <= 0.0 and tdist > 2.5 {
                     if stuck or (py - by0) > 1.2 {
-                        ebvy[ei2] = 9.5   // hop the obstacle / up toward the player
-                        ebjcd[ei2] = 0.5
+                        bots[ei2].vy = 9.5   // hop the obstacle / up toward the player
+                        bots[ei2].jcd = 0.5
                     }
                 }
                 // Crude WALL-CLIMB: airborne, shoving into a wall, player above -> ride
                 // up it (reach rooftops like a wallrun).
-                if grnd == false and stuck and (py - by0) > 0.5 and ebvy[ei2] < 7.0 {
-                    ebvy[ei2] = 7.0
+                if grnd == false and stuck and (py - by0) > 0.5 and bots[ei2].vy < 7.0 {
+                    bots[ei2].vy = 7.0
                 }
-                ebpx[ei2] = bx0
-                ebpz[ei2] = bz0
+                bots[ei2].px0 = bx0
+                bots[ei2].pz0 = bz0
                 // While still flying from a blast, stop steering so the launch reads.
-                let knock = sqrt(ekx[ei2] * ekx[ei2] + eky[ei2] * eky[ei2] + ekz[ei2] * ekz[ei2])
+                let knock = sqrt(bots[ei2].kx * bots[ei2].kx + bots[ei2].ky * bots[ei2].ky + bots[ei2].kz * bots[ei2].kz)
                 if knock > 4.0 {
                     bvx = 0.0
                     bvz = 0.0
                 }
-                phys3d_move_character(h, (bvx + ekx[ei2]) * dt, (ebvy[ei2] + eky[ei2]) * dt, (bvz + ekz[ei2]) * dt, dt)
+                phys3d_move_character(h, (bvx + bots[ei2].kx) * dt, (bots[ei2].vy + bots[ei2].ky) * dt, (bvz + bots[ei2].kz) * dt, dt)
                 let sx = phys3d_x(h)
                 let sy = phys3d_y(h)
                 let sz = phys3d_z(h)
-                efire[ei2] = efire[ei2] - dt
-                if efire[ei2] <= 0.0 { if emag[ei2] <= 0.0 {
-                    // Dry mag: reload. This pause is the gap in their continuous fire.
-                    emag[ei2] = bot_mag
-                    efire[ei2] = bot_reload
+                // Collect nearby drops - SAME pickups the player gets: health restores,
+                // shield cells go to inventory, ammo refills the equipped weapon's reserve.
+                let mut bdp = 0
+                while bdp < drop_n {
+                    if droplife[bdp] > 0.0 {
+                        let pdx = sx - dropx[bdp]
+                        let pdz = sz - dropz[bdp]
+                        if sqrt(pdx * pdx + pdz * pdz) < 1.4 {
+                            if droptype[bdp] < 0.5 {
+                                if bots[ei2].hp < enemy_hp_max { bots[ei2].hp = enemy_hp_max; droplife[bdp] = 0.0 }
+                            } else { if droptype[bdp] < 1.5 {
+                                if bots[ei2].cells < max_cells { bots[ei2].cells = bots[ei2].cells + 1; droplife[bdp] = 0.0 }
+                            } else {
+                                let bwp = bots[ei2].wpn
+                                if bots[ei2].res[bwp] < res_max[bwp] {
+                                    bots[ei2].res[bwp] = bots[ei2].res[bwp] + res_refill[bwp]
+                                    if bots[ei2].res[bwp] > res_max[bwp] { bots[ei2].res[bwp] = res_max[bwp] }
+                                    droplife[bdp] = 0.0
+                                }
+                            } }
+                        }
+                    }
+                    bdp = bdp + 1
+                }
+                // Shield up when hurt: auto-apply a carried cell over a channel - the AI's
+                // version of the player holding Q. Same heal_channel + cell_shield.
+                if bots[ei2].cells > 0 and bots[ei2].sh < bots[ei2].shmax {
+                    bots[ei2].heal = bots[ei2].heal + dt
+                    if bots[ei2].heal >= heal_channel {
+                        bots[ei2].heal = 0.0
+                        bots[ei2].cells = bots[ei2].cells - 1
+                        bots[ei2].sh = bots[ei2].sh + cell_shield
+                        if bots[ei2].sh > bots[ei2].shmax { bots[ei2].sh = bots[ei2].shmax }
+                    }
                 } else {
-                    efire[ei2] = bot_fire_cd
-                    emag[ei2] = emag[ei2] - 1.0
+                    bots[ei2].heal = 0.0
+                }
+                // Reload ticks every frame (pulls reserve into the mag) - SAME as the
+                // player's reload, using the same reload_w / mag_size_w.
+                if bots[ei2].rl > 0.0 {
+                    bots[ei2].rl = bots[ei2].rl - dt
+                    if bots[ei2].rl <= 0.0 {
+                        bots[ei2].rl = 0.0
+                        let rw = bots[ei2].rlw
+                        let mut take = mag_size_w[rw] - bots[ei2].mag[rw]
+                        if take > bots[ei2].res[rw] { take = bots[ei2].res[rw] }
+                        bots[ei2].mag[rw] = bots[ei2].mag[rw] + take
+                        bots[ei2].res[rw] = bots[ei2].res[rw] - take
+                    }
+                }
+                bots[ei2].fcd = bots[ei2].fcd - dt
+                if bots[ei2].fcd <= 0.0 and bots[ei2].rl <= 0.0 {
                     let aey = sy + 0.5
-                    // FFA: shoot the NEAREST enemy - the player OR another bot.
+                    // FFA: target the NEAREST enemy - the player OR another bot.
                     let mut tgx = 0.0
                     let mut tgy = 0.0
                     let mut tgz = 0.0
@@ -2266,8 +2330,8 @@ fn main() {
                     }
                     let mut tk = 0
                     while tk < bot_n {
-                        if tk != ei2 and ehp[tk] > 0.0 {
-                            let ek = eh[tk] as i64
+                        if tk != ei2 and bots[tk].hp > 0.0 {
+                            let ek = bots[tk].hdl as i64
                             let dx2 = phys3d_x(ek) - sx
                             let dz2 = phys3d_z(ek) - sz
                             let dd2 = sqrt(dx2 * dx2 + dz2 * dz2)
@@ -2275,7 +2339,17 @@ fn main() {
                         }
                         tk = tk + 1
                     }
-                    if tgi > (0 - 2) {
+                    // Weapon choice (their AI): launcher at range if a rocket is loaded, else
+                    // the rifle. Same two weapons + ammo the player has.
+                    let mut bw = 0
+                    if bestd > 22.0 and bots[ei2].mag[1] > 0 and sin(etime * 1.3 + (ei2 as f64) * 2.3) > 0.6 { bw = 1 }
+                    bots[ei2].wpn = bw
+                    if bots[ei2].mag[bw] <= 0 {
+                        // Dry: reload from reserve (same reload_w as the player), or wait.
+                        if bots[ei2].res[bw] > 0 { bots[ei2].rl = reload_w[bw]; bots[ei2].rlw = bw }
+                        bots[ei2].fcd = 0.4
+                    } else {
+                        if tgi > (0 - 2) {
                         let ddx = tgx - sx
                         let ddy = tgy - aey
                         let ddz = tgz - sz
@@ -2284,8 +2358,12 @@ fn main() {
                             let bnx = ddx / dl
                             let bny = ddy / dl
                             let bnz = ddz / dl
-                            // Rocket when far (occasional window), else rifle hitscan.
-                            if bestd > 22.0 and sin(etime * 1.3 + (ei2 as f64) * 2.3) > 0.6 {
+                            // Spend a round + set the SAME fire cadence the player gets; auto-
+                            // reload when the mag empties (just like the player).
+                            bots[ei2].mag[bw] = bots[ei2].mag[bw] - 1
+                            if bots[ei2].mag[bw] <= 0 and bots[ei2].res[bw] > 0 { bots[ei2].rl = reload_w[bw]; bots[ei2].rlw = bw }
+                            bots[ei2].fcd = fire_w[bw]
+                            if bw == 1 {
                                 prjx[prjcur] = sx + bnx * 0.8
                                 prjy[prjcur] = aey + bny * 0.8
                                 prjz[prjcur] = sz + bnz * 0.8
@@ -2296,12 +2374,12 @@ fn main() {
                                 prjsrc[prjcur] = 1.0
                                 prjcur = prjcur + 1
                                 if prjcur >= proj_n { prjcur = 0 }
-                                efire[ei2] = bot_fire_cd + 1.2   // slower between rockets
                                 play_sound_at(0 - 8, 60, 45, sx, aey, sz)   // bot rocket launch
                             } else {
-                                // Aim spread so bots MISS some - scaled by distance, so the
-                                // fast continuous fire is lethal up close but sprays at range.
-                                let spr = 0.04 + bestd * 0.0055
+                                // Spread = AIM STRENGTH + distance + the TARGET's speed. A
+                                // player moving fast is much harder to hit than a still one.
+                                let mut spr = bots[ei2].aim + bestd * 0.004
+                                if tgi < 0 { spr = spr + pspd * 0.02 }
                                 let mut snx = bnx + sin(etime * 57.0 + (ei2 as f64) * 11.0) * spr
                                 let mut sny = bny + sin(etime * 43.0 + (ei2 as f64) * 5.0) * spr * 0.7
                                 let mut snz = bnz + sin(etime * 67.0 + (ei2 as f64) * 9.0) * spr
@@ -2319,13 +2397,13 @@ fn main() {
                                 trlife[trcur] = 0.06
                                 trcur = trcur + 1
                                 if trcur >= tracer_n { trcur = 0 }
-                                if hb == pchar and pchar >= 0 and pinvuln <= 0.0 and dead == false {
+                                if hb == me.hdl and me.hdl >= 0 and pinvuln <= 0.0 and dead == false {
                                     let mut d = gun_dmg
-                                    if psh > 0.0 {
-                                        if psh >= d { psh = psh - d; d = 0.0 }
-                                        else { d = d - psh; psh = 0.0 }
+                                    if me.sh > 0.0 {
+                                        if me.sh >= d { me.sh = me.sh - d; d = 0.0 }
+                                        else { d = d - me.sh; me.sh = 0.0 }
                                     }
-                                    php = php - d
+                                    me.hp = me.hp - d
                                     dmg_timer = 0.0
                                     hurt_flash = 0.6
                                     shake = 0.085
@@ -2335,7 +2413,7 @@ fn main() {
                                     let fwd_c = rcx * sin(yaw) + rcz * (0.0 - cos(yaw))
                                     let rgt_c = rcx * cos(yaw) + rcz * sin(yaw)
                                     dmg_dir = atan2(rgt_c, fwd_c)
-                                    if php <= 0.0 {
+                                    if me.hp <= 0.0 {
                                         dead = true
                                         respawn_cd = 3.0
                                         deaths = deaths + 1
@@ -2346,35 +2424,35 @@ fn main() {
                                     // death drop loot, no player score.
                                     let mut bk = 0
                                     while bk < bot_n {
-                                        if bk != ei2 and hb == (eh[bk] as i64) and ehp[bk] > 0.0 {
+                                        if bk != ei2 and hb == (bots[bk].hdl as i64) and bots[bk].hp > 0.0 {
                                             let mut bd = gun_dmg
-                                            if esh[bk] > 0.0 {
-                                                if esh[bk] >= bd { esh[bk] = esh[bk] - bd; bd = 0.0 }
-                                                else { bd = bd - esh[bk]; esh[bk] = 0.0 }
+                                            if bots[bk].sh > 0.0 {
+                                                if bots[bk].sh >= bd { bots[bk].sh = bots[bk].sh - bd; bd = 0.0 }
+                                                else { bd = bd - bots[bk].sh; bots[bk].sh = 0.0 }
                                             }
-                                            ehp[bk] = ehp[bk] - bd
-                                            epop[bk] = 0.1
-                                            if ehp[bk] <= 0.0 {
-                                                ehp[bk] = 0.0
-                                                eresp[bk] = enemy_respawn
-                                                dropx[dropcur] = phys3d_x(eh[bk] as i64)
+                                            bots[bk].hp = bots[bk].hp - bd
+                                            bots[bk].pop = 0.1
+                                            if bots[bk].hp <= 0.0 {
+                                                bots[bk].hp = 0.0
+                                                bots[bk].resp = enemy_respawn
+                                                dropx[dropcur] = phys3d_x(bots[bk].hdl as i64)
                                                 dropy[dropcur] = 0.6
-                                                dropz[dropcur] = phys3d_z(eh[bk] as i64)
+                                                dropz[dropcur] = phys3d_z(bots[bk].hdl as i64)
                                                 droptype[dropcur] = 0.0
                                                 droplife[dropcur] = drop_life
                                                 dropcur = dropcur + 1
                                                 if dropcur >= drop_n { dropcur = 0 }
-                                                dropx[dropcur] = phys3d_x(eh[bk] as i64) - 0.6
+                                                dropx[dropcur] = phys3d_x(bots[bk].hdl as i64) - 0.6
                                                 dropy[dropcur] = 0.6
-                                                dropz[dropcur] = phys3d_z(eh[bk] as i64)
+                                                dropz[dropcur] = phys3d_z(bots[bk].hdl as i64)
                                                 droptype[dropcur] = 2.0
                                                 droplife[dropcur] = drop_life
                                                 dropcur = dropcur + 1
                                                 if dropcur >= drop_n { dropcur = 0 }
-                                                if esh_max[bk] > 0.0 {
-                                                    dropx[dropcur] = phys3d_x(eh[bk] as i64) + 0.6
+                                                if bots[bk].shmax > 0.0 {
+                                                    dropx[dropcur] = phys3d_x(bots[bk].hdl as i64) + 0.6
                                                     dropy[dropcur] = 0.6
-                                                    dropz[dropcur] = phys3d_z(eh[bk] as i64)
+                                                    dropz[dropcur] = phys3d_z(bots[bk].hdl as i64)
                                                     droptype[dropcur] = 1.0
                                                     droplife[dropcur] = drop_life
                                                     dropcur = dropcur + 1
@@ -2392,12 +2470,14 @@ fn main() {
             } else {
                 // Dead: park below the map; on respawn, pop back to the spawn point.
                 phys3d_set_pos(h, esx[ei2], 0.0 - 50.0, esz[ei2])
-                eresp[ei2] = eresp[ei2] - dt
-                if eresp[ei2] <= 0.0 {
-                    ehp[ei2] = enemy_hp_max
-                    esh[ei2] = esh_max[ei2]   // shielded bots respawn with their shield
-                    emag[ei2] = bot_mag       // and a full mag
-                    ebvy[ei2] = 0.0
+                bots[ei2].resp = bots[ei2].resp - dt
+                if bots[ei2].resp <= 0.0 {
+                    bots[ei2].hp = enemy_hp_max
+                    bots[ei2].sh = bots[ei2].shmax   // respawn with a full shield
+                    bots[ei2].mag[0] = mag_size_w[0]; bots[ei2].mag[1] = mag_size_w[1]
+                    bots[ei2].res[0] = 48; bots[ei2].res[1] = 2
+                    bots[ei2].rl = 0.0
+                    bots[ei2].vy = 0.0
                     phys3d_set_pos(h, esx[ei2], 0.9, esz[ei2])
                 }
             }
@@ -2421,14 +2501,14 @@ fn main() {
                 let pdz = pz - pkz[pk]
                 if dead == false and sqrt(pdx * pdx + pdz * pdz) < 1.4 {
                     if pktype[pk] < 0.5 {
-                        if php < php_max {
-                            php = php_max   // health pickups fully recharge health
+                        if me.hp < php_max {
+                            me.hp = php_max   // health pickups fully recharge health
                             pkcd[pk] = pk_respawn
                             play_sound(7, 80, 0)
                         }
                     } else {
-                        if shield_cells < max_cells {
-                            shield_cells = shield_cells + 1
+                        if me.cells < max_cells {
+                            me.cells = me.cells + 1
                             pkcd[pk] = pk_respawn
                             play_sound(14, 90, 0)
                         }
@@ -2447,23 +2527,23 @@ fn main() {
                 let edz = pz - dropz[dr]
                 if dead == false and sqrt(edx * edx + edz * edz) < 1.4 {
                     if droptype[dr] < 0.5 {
-                        if php < php_max {
-                            php = php_max   // health pickups fully recharge health
+                        if me.hp < php_max {
+                            me.hp = php_max   // health pickups fully recharge health
                             droplife[dr] = 0.0
                             play_sound(7, 80, 0)
                         }
                     } else {
                         if droptype[dr] < 1.5 {
-                            if shield_cells < max_cells {
-                                shield_cells = shield_cells + 1
+                            if me.cells < max_cells {
+                                me.cells = me.cells + 1
                                 droplife[dr] = 0.0
                                 play_sound(14, 90, 0)
                             }
                         } else {
-                            // Ammo: refill the EQUIPPED weapon's reserve (capped).
-                            if wres[weapon] < res_max[weapon] {
-                                wres[weapon] = wres[weapon] + res_refill[weapon]
-                                if wres[weapon] > res_max[weapon] { wres[weapon] = res_max[weapon] }
+                            // Ammo: refill the EQUIPPED me.wpn's reserve (capped).
+                            if me.res[me.wpn] < res_max[me.wpn] {
+                                me.res[me.wpn] = me.res[me.wpn] + res_refill[me.wpn]
+                                if me.res[me.wpn] > res_max[me.wpn] { me.res[me.wpn] = res_max[me.wpn] }
                                 droplife[dr] = 0.0
                                 play_sound(10, 80, 0)
                             }
@@ -2478,20 +2558,20 @@ fn main() {
         // does NOT interrupt it. On completion it consumes a cell and tops up your shield.
         // You walk slowly and can't slide/dash/fire while channeling.
         let qheld = input_down(act_heal) > 0
-        if healing <= 0.0 {
-            if qheld and shield_cells > 0 and psh < psh_max and dead == false {
-                healing = heal_channel
+        if me.heal <= 0.0 {
+            if qheld and me.cells > 0 and me.sh < psh_max and dead == false {
+                me.heal = heal_channel
             }
         } else {
             if qheld == false or dead {
-                healing = 0.0   // released or died: cancel, cell NOT spent
+                me.heal = 0.0   // released or died: cancel, cell NOT spent
             } else {
-                healing = healing - dt
-                if healing <= 0.0 {
-                    healing = 0.0
-                    shield_cells = shield_cells - 1
-                    psh = psh + cell_shield
-                    if psh > psh_max { psh = psh_max }
+                me.heal = me.heal - dt
+                if me.heal <= 0.0 {
+                    me.heal = 0.0
+                    me.cells = me.cells - 1
+                    me.sh = me.sh + cell_shield
+                    if me.sh > psh_max { me.sh = psh_max }
                     play_sound(16, 120, 0)
                 }
             }
@@ -2508,7 +2588,7 @@ fn main() {
             // you, after respawn - can loot them). Shields are scarce, so they recycle.
             if prev_dead == false {
                 let mut dcd = 0
-                while dcd < shield_cells {
+                while dcd < me.cells {
                     dropx[dropcur] = px
                     dropy[dropcur] = py - 0.3
                     dropz[dropcur] = pz
@@ -2518,7 +2598,7 @@ fn main() {
                     if dropcur >= drop_n { dropcur = 0 }
                     dcd = dcd + 1
                 }
-                shield_cells = 0
+                me.cells = 0
                 // Also drop an ammo box at the body.
                 dropx[dropcur] = px + 0.6
                 dropy[dropcur] = py - 0.3
@@ -2536,10 +2616,10 @@ fn main() {
             respawn_cd = respawn_cd - dt
             if respawn_cd <= 0.0 {
                 dead = false
-                php = php_max
-                psh = 0.0   // respawn SHIELDLESS - shields are scarce; find/loot cells
-                wmag[0] = 24; wmag[1] = 1; wres[0] = 48; wres[1] = 2   // ammo back to start
-                reload_t = 0.0
+                me.hp = php_max
+                me.sh = 0.0   // respawn SHIELDLESS - shields are scarce; find/loot cells
+                me.mag[0] = 24; me.mag[1] = 1; me.res[0] = 48; me.res[1] = 2   // ammo back to start
+                me.rl = 0.0
                 pinvuln = 2.0
                 respawn_req = 1.0
             }
@@ -2569,7 +2649,7 @@ fn main() {
             // window loaded, and grant a small overshield on top of your shield.
             g_cd = 0.0
             nade_cd = 0.0
-            psh = psh_max + 25.0
+            me.sh = psh_max + 25.0
             play_sound(7, 90, 0)
             play_sound(14, 150, 0)
             play_sound(21, 220, 0)
@@ -2584,7 +2664,7 @@ fn main() {
 
         // Damage overlay -> GPU shader: low-health red vignette (below ~60% health) +
         // a directional red hit glow + a pulsing GOLD overclock tint.
-        let mut vig = (0.6 - php / php_max) / 0.6
+        let mut vig = (0.6 - me.hp / php_max) / 0.6
         if vig < 0.0 { vig = 0.0 }
         if vig > 1.0 { vig = 1.0 }
         vig = vig * 0.4
@@ -2620,8 +2700,8 @@ fn main() {
                 respawn_req = 1.0
                 let mut rb = 0
                 while rb < 3 {
-                    ehp[rb] = enemy_hp_max
-                    eresp[rb] = 0.0
+                    bots[rb].hp = enemy_hp_max
+                    bots[rb].resp = 0.0
                     rb = rb + 1
                 }
             }
@@ -2682,12 +2762,12 @@ fn main() {
         // Live enemy bots at their physics positions (dead ones are hidden).
         let mut ed = 0
         while ed < bot_n {
-            if ehp[ed] > 0.0 {
-                let h = eh[ed] as i64
+            if bots[ed].hp > 0.0 {
+                let h = bots[ed].hdl as i64
                 let bx = phys3d_x(h)
                 let by = phys3d_y(h)
                 let bz = phys3d_z(h)
-                let psc = 1.0 + epop[ed]   // brief scale pop when hit (flinch)
+                let psc = 1.0 + bots[ed].pop   // brief scale pop when hit (flinch)
                 // While OVERCLOCKED draw the EMISSIVE (glowing) enemy so the body
                 // itself lights up against the dimmed world; otherwise the lit mesh.
                 if oc_active {
@@ -2695,7 +2775,7 @@ fn main() {
                     r3d_draw(enemy_glow_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
                 } else {
                     // Cyan tint while the shield is up so you can read who is shielded.
-                    if esh[ed] > 0.0 {
+                    if bots[ed].sh > 0.0 {
                         r3d_draw(enemy_vis_sh, bx, by, bz, 0.0, 0.0, 0.0, psc)
                     } else {
                         r3d_draw(enemy_vis, bx, by, bz, 0.0, 0.0, 0.0, psc)
@@ -2708,12 +2788,12 @@ fn main() {
 
         // Other players: draw a body + head at each remote's interpolated pos
         // (skip ourselves - first person). Positions come from the netcode.
-        let me = net_my_id()
+        let myid = net_my_id()
         let pcount = net_player_count()
         let mut pi = 0
         while pi < pcount {
             let pid = net_player_id_at(pi)
-            if pid != me {
+            if pid != myid {
                 let ex = net_player_x(pid)
                 let ey = net_player_y(pid)
                 let ez = net_player_z(pid)
@@ -2897,7 +2977,7 @@ fn main() {
         }
 
         // Health (green) + shield (cyan) bars, bottom-left.
-        let mut hwi = (php / php_max * 240.0) as i64
+        let mut hwi = (me.hp / php_max * 240.0) as i64
         if hwi < 0 { hwi = 0 }
         let mut hb2 = 0
         while hb2 < hwi {
@@ -2907,7 +2987,7 @@ fn main() {
             pixel(40 + hb2, fbh - 17, 70, 210, 90)
             hb2 = hb2 + 1
         }
-        let mut swi = (psh / psh_max * 240.0) as i64
+        let mut swi = (me.sh / psh_max * 240.0) as i64
         if swi < 0 { swi = 0 }
         if swi > 240 { swi = 240 }   // overshield reads as a full bar
         let mut sb2 = 0
@@ -2919,7 +2999,7 @@ fn main() {
         }
         // Shield CELLS carried (Apex-style): cyan pips right of the shield bar.
         let mut cc = 0
-        while cc < shield_cells {
+        while cc < me.cells {
             let cpx = 290 + cc * 14
             let mut cpy = 0
             while cpy < 9 {
@@ -2933,8 +3013,8 @@ fn main() {
             cc = cc + 1
         }
         // Shield-apply channel: a progress bar under the crosshair while channeling.
-        if healing > 0.0 {
-            let hw = ((1.0 - healing / heal_channel) * 120.0) as i64
+        if me.heal > 0.0 {
+            let hw = ((1.0 - me.heal / heal_channel) * 120.0) as i64
             let mut hbi = 0
             while hbi < hw {
                 pixel(cx - 60 + hbi, cy + 44, 120, 220, 255)
@@ -2995,18 +3075,18 @@ fn main() {
         // Ammo: LOADED / RESERVE, bottom-right. Loaded turns red when dry; reserve dim.
         let col_ammo = 230 * 65536 + 230 * 256 + 235
         let mut ammo_col = col_ammo
-        if wmag[weapon] == 0 { ammo_col = 230 * 65536 + 70 * 256 + 60 }
-        // Current weapon name above the ammo (rifle gold-ish, launcher magenta).
-        if weapon == 0 {
+        if me.mag[me.wpn] == 0 { ammo_col = 230 * 65536 + 70 * 256 + 60 }
+        // Current me.wpn name above the ammo (rifle gold-ish, launcher magenta).
+        if me.wpn == 0 {
             draw_text(fbw - 150, fbh - 84, "RIFLE", 22, 230 * 65536 + 220 * 256 + 150)
         } else {
             draw_text(fbw - 175, fbh - 84, "LAUNCHER", 22, 255 * 65536 + 120 * 256 + 230)
         }
-        draw_int(fbw - 150, fbh - 56, wmag[weapon], 36, ammo_col)
+        draw_int(fbw - 150, fbh - 56, me.mag[me.wpn], 36, ammo_col)
         draw_text(fbw - 96, fbh - 50, "/", 26, col_white)
-        draw_int(fbw - 78, fbh - 50, wres[weapon], 26, 150 * 65536 + 150 * 256 + 160)
-        if reload_t > 0.0 {
-            let rw = ((1.0 - reload_t / reload_w[weapon]) * 110.0) as i64
+        draw_int(fbw - 78, fbh - 50, me.res[me.wpn], 26, 150 * 65536 + 150 * 256 + 160)
+        if me.rl > 0.0 {
+            let rw = ((1.0 - me.rl / reload_w[me.wpn]) * 110.0) as i64
             let mut rb3 = 0
             while rb3 < rw {
                 pixel(fbw - 150 + rb3, fbh - 14, 255, 200, 60)
