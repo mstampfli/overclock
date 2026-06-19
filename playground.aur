@@ -1117,7 +1117,7 @@ fn main() {
     // 7 heal, 8 ammo, 9 ammo, 10 heal - ammo + heal are common, shields rare.
     let pktype = [0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 0.0, 0.0, 2.0, 2.0, 0.0]
     let mut pkcd = [0.0; 11]   // respawn cooldown; 0 = available
-    let pk_respawn = 8.0
+    let pk_respawn = 4.0   // pickups respawn fast so ammo stays available for everyone
 
     // Enemy bots: kinematic characters (like players) that HUNT the player - chase,
     // jump obstacles, climb walls, strafe-juke, and shoot. Spawn anchors in esx/esz;
@@ -2187,7 +2187,7 @@ fn main() {
                 if totalammo <= 0 {
                     if amd < 300.0 { tmx = amx; tmz = amz } else { tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0) }
                     tmy = by0; hunting = 0
-                } else { if rifleammo < 20 and amd < 200.0 {
+                } else { if rifleammo < 40 and amd < 200.0 {
                     tmx = amx; tmz = amz; tmy = by0; hunting = 0
                 } else { if actors[ei2].hp < 45.0 and hld < 200.0 {
                     tmx = hlx; tmz = hlz; tmy = by0; hunting = 0
@@ -2377,11 +2377,11 @@ fn main() {
                         tk = tk + 1
                     }
                     nearest = bestd
+                    // Use the launcher at range ONLY when flush with rifle ammo to spare. A bot
+                    // that's low on rifle stays on the rifle, so the ammo it picks up tops up the
+                    // rifle (the equipped weapon) instead of feeding the launcher forever.
                     let mut bw = 0
-                    if bestd > 22.0 and actors[ci].mag[1] > 0 and sin(etime * 1.3 + (ci as f64) * 2.3) > 0.6 { bw = 1 }
-                    // Smart fallback: if the rifle is completely out but the launcher has ammo,
-                    // switch to the launcher instead of standing there with an empty gun.
-                    if actors[ci].mag[0] + actors[ci].res[0] <= 0 and actors[ci].mag[1] + actors[ci].res[1] > 0 { bw = 1 }
+                    if actors[ci].mag[0] + actors[ci].res[0] > 30 and bestd > 22.0 and actors[ci].mag[1] > 0 and sin(etime * 1.3 + (ci as f64) * 2.3) > 0.6 { bw = 1 }
                     actors[ci].wpn = bw
                     if tgi > (0 - 2) {
                         let ddx = tgx - sox
@@ -2566,15 +2566,8 @@ fn main() {
                             } else { if pktype[fp] < 1.5 {
                                 if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; pkcd[fp] = pk_respawn; if mine == 1 { play_sound(14, 90, 0) } }
                             } else {
-                                // Ammo: the player tops up the EQUIPPED weapon; a bot smartly
-                                // tops up whichever weapon it is LOWEST on (so it never refills a
-                                // launcher while its rifle is empty).
-                                let mut rw3 = cwp
-                                if mine == 0 {
-                                    rw3 = 0
-                                    if actors[ci].mag[1] + actors[ci].res[1] < actors[ci].mag[0] + actors[ci].res[0] { rw3 = 1 }
-                                }
-                                if actors[ci].res[rw3] < res_max[rw3] { actors[ci].res[rw3] = actors[ci].res[rw3] + res_refill[rw3]; if actors[ci].res[rw3] > res_max[rw3] { actors[ci].res[rw3] = res_max[rw3] } pkcd[fp] = pk_respawn; if mine == 1 { play_sound(10, 80, 0) } }
+                                // Ammo: refill the EQUIPPED weapon's reserve (same rule for all).
+                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } pkcd[fp] = pk_respawn; if mine == 1 { play_sound(10, 80, 0) } }
                             } }
                         }
                     }
@@ -2591,12 +2584,7 @@ fn main() {
                             } else { if droptype[gp] < 1.5 {
                                 if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; droplife[gp] = 0.0; if mine == 1 { play_sound(14, 90, 0) } }
                             } else {
-                                let mut rw4 = cwp
-                                if mine == 0 {
-                                    rw4 = 0
-                                    if actors[ci].mag[1] + actors[ci].res[1] < actors[ci].mag[0] + actors[ci].res[0] { rw4 = 1 }
-                                }
-                                if actors[ci].res[rw4] < res_max[rw4] { actors[ci].res[rw4] = actors[ci].res[rw4] + res_refill[rw4]; if actors[ci].res[rw4] > res_max[rw4] { actors[ci].res[rw4] = res_max[rw4] } droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
+                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
                             } }
                         }
                     }
