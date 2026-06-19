@@ -2246,8 +2246,12 @@ fn main() {
                 let moved = sqrt((bx0 - brains[ei2].px0) * (bx0 - brains[ei2].px0) + (bz0 - brains[ei2].pz0) * (bz0 - brains[ei2].pz0))
                 let stuck = moved < 0.05 and tdist > 2.0
                 brains[ei2].jcd = brains[ei2].jcd - dt
-                if grnd and brains[ei2].jcd <= 0.0 and tdist > 2.5 and bheal == false {
-                    if stuck or (tmy - by0) > 1.2 {
+                if grnd and brains[ei2].jcd <= 0.0 and bheal == false {
+                    // Jump to TRAVERSE (stuck while genuinely going somewhere far) or to follow
+                    // the target UP - but not while micro-strafing at standoff range, which just
+                    // made the bot bob in place circling the player.
+                    let want_jump = (stuck and tdist > 4.5) or ((tmy - by0) > 1.2 and tdist > 2.5)
+                    if want_jump {
                         brains[ei2].vy = 9.5   // hop the obstacle / up toward the target
                         brains[ei2].jcd = 0.5
                     }
@@ -2427,9 +2431,12 @@ fn main() {
                             }
                             want = 1
                             if actors[ci].mag[bw] <= 0 {
-                                if actors[ci].res[bw] > 0 { actors[ci].rl = reload_w[bw]; actors[ci].rlw = bw }
+                                // Start a reload ONLY if one isn't already running. The old code
+                                // re-armed rl to the full reload time every frame the mag was
+                                // empty, so the timer never hit 0 - the mag never refilled and the
+                                // bot chased with an empty gun forever (the real "not reloading" bug).
+                                if actors[ci].rl <= 0.0 and actors[ci].res[bw] > 0 { actors[ci].rl = reload_w[bw]; actors[ci].rlw = bw }
                                 want = 0
-                                actors[ci].fcd = 0.4
                             }
                             // Never fire the launcher point-blank (the rocket would catch the
                             // bot in its own blast) - hold it until there's distance.

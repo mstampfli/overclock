@@ -1,0 +1,75 @@
+// Headless simulation of the bot combat-loop RELOAD state machine, lifted verbatim
+// from playground.aur (reload tick -> auto-reload -> fire-intent empty path -> the shot),
+// in the exact same order. No window/physics: pure arithmetic, so we can actually SEE
+// whether a chasing bot with an emptied mag ever reloads and fires.
+//
+//   sim(0) = OLD behaviour: the fire-intent re-armed rl to the full reload time EVERY frame
+//   sim(1) = FIXED behaviour: the fire-intent only starts a reload when one isn't running
+
+fn sim(fixed: i64) -> i64 {
+    let dt = 1.0 / 60.0
+    let mag_size = 30
+    let reload_w = 1.6
+    let fire_w = 0.11
+
+    // Start state: bot just emptied its mag into the player and is now chasing (target present).
+    let mut mag = 0
+    let mut res = 60
+    let mut rl = 0.0
+    let mut fcd = 0.0
+    let mut shots = 0
+    let mut reloads = 0
+
+    let mut f = 0
+    while f < 300 {                 // 5 seconds at 60 fps
+        // (1) RELOAD TICK: pull reserve -> mag when the timer elapses (playground.aur:2323)
+        if rl > 0.0 {
+            rl = rl - dt
+            if rl <= 0.0 {
+                rl = 0.0
+                let mut tkr = mag_size - mag
+                if tkr > res { tkr = res }
+                mag = mag + tkr
+                res = res - tkr
+                reloads = reloads + 1
+            }
+        }
+        // (2) AUTO-RELOAD: equipped weapon empty + has reserve (playground.aur:2337)
+        if rl <= 0.0 and mag <= 0 and res > 0 { rl = reload_w }
+        // (3) FIRE INTENT, empty-mag path - target present, so this branch runs every frame
+        //     (playground.aur:2426). THIS is where the bug lived.
+        let mut want = 1
+        if mag <= 0 {
+            if fixed > 0 {
+                if rl <= 0.0 and res > 0 { rl = reload_w }   // FIXED: only start if idle
+            } else {
+                if res > 0 { rl = reload_w }                 // OLD BUG: reset to full every frame
+            }
+            want = 0
+        }
+        // (4) THE SHOT (playground.aur:2459)
+        fcd = fcd - dt
+        if fcd < 0.0 { fcd = 0.0 }
+        if want > 0 and mag > 0 and rl <= 0.0 and fcd <= 0.0 {
+            mag = mag - 1
+            if mag <= 0 and res > 0 { rl = reload_w }
+            fcd = fire_w
+            shots = shots + 1
+        }
+        if f == 30 or f == 96 or f == 150 or f == 250 or f == 299 {
+            println("  frame", f, "| rl", rl, "| mag", mag, "| res", res, "| reloads", reloads, "| shots", shots)
+        }
+        f = f + 1
+    }
+    return shots
+}
+
+fn main() {
+    println("=== OLD (fire-intent resets rl every frame) ===")
+    let old = sim(0)
+    println("OLD: total shots fired in 5s =", old)
+    println("")
+    println("=== NEW (fire-intent only starts a reload when idle) ===")
+    let new = sim(1)
+    println("NEW: total shots fired in 5s =", new)
+}
