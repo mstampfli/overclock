@@ -1029,6 +1029,7 @@ fn main() {
     let mut aprevz = [0.0; 9]
     let mut ashoot = [0.0; 9]       // >0 = recently fired, hold the shoot animation
     let mut ushoot = [0; 9]         // 1 = upper-body shoot overlay currently active
+    let mut aspd = [0.0; 9]         // low-pass smoothed move speed (so idle/run doesn't flicker)
     let upper_mask_root = 3         // DEF-spine.002: overlay torso+arms, hips+legs keep locomotion
     let actor_scale = 1.0           // mannequin bind height 1.83m = real human scale
     let actor_yoff = 0.0 - 0.9      // model origin is at the feet; actor pos is the capsule centre
@@ -2976,16 +2977,20 @@ fn main() {
                 if actor_models[ed] >= 0 {
                     let svx = bx - aprevx[ed]
                     let svz = bz - aprevz[ed]
-                    let spd = sqrt(svx * svx + svz * svz) / dt
+                    let mut inst = sqrt(svx * svx + svz * svz) / dt
+                    if inst > 40.0 { inst = 0.0 }   // ignore respawn teleports
+                    aspd[ed] = aspd[ed] + (inst - aspd[ed]) * 0.2   // low-pass smooth
+                    let spd = aspd[ed]
                     ashoot[ed] = ashoot[ed] - dt
                     if ashoot[ed] < 0.0 { ashoot[ed] = 0.0 }
                     // BASE layer = pure locomotion: airborne -> jump (from the bot's OWN vertical +
                     // knockback velocity, no ground-raycast flicker), running -> jog, else idle.
+                    // Wide hysteresis (1.5 / 3.5) on the SMOOTHED speed so it doesn't strobe.
                     let knock = sqrt(brains[ed].kx * brains[ed].kx + brains[ed].ky * brains[ed].ky + brains[ed].kz * brains[ed].kz)
                     let mut want_clip = astate[ed]
                     if want_clip < 0 { want_clip = anim_idle }
                     if spd < 1.5 { want_clip = anim_idle }
-                    if spd > 3.0 { want_clip = anim_run }
+                    if spd > 3.5 { want_clip = anim_run }
                     if brains[ed].vy > 1.5 or brains[ed].vy < (0.0 - 1.5) or knock > 4.0 { want_clip = anim_jump }
                     if astate[ed] != want_clip { r3d_anim_play(actor_models[ed], want_clip, 1, 1.0, 0.12); astate[ed] = want_clip }
                     // UPPER-BODY overlay = the shoot pose on the torso/arms while the legs keep
@@ -3051,11 +3056,14 @@ fn main() {
                 if actor_models[ai] >= 0 {
                     let rvx = ex - aprevx[ai]
                     let rvz = ez - aprevz[ai]
-                    let rspd = sqrt(rvx * rvx + rvz * rvz) / dt
+                    let mut rinst = sqrt(rvx * rvx + rvz * rvz) / dt
+                    if rinst > 40.0 { rinst = 0.0 }
+                    aspd[ai] = aspd[ai] + (rinst - aspd[ai]) * 0.2
+                    let rspd = aspd[ai]
                     let mut rwc = astate[ai]
                     if rwc < 0 { rwc = anim_idle }
                     if rspd < 1.5 { rwc = anim_idle }
-                    if rspd > 3.0 { rwc = anim_run }
+                    if rspd > 3.5 { rwc = anim_run }
                     if astate[ai] != rwc { r3d_anim_play(actor_models[ai], rwc, 1, 1.0, 0.15); astate[ai] = rwc }
                     r3d_anim_update(actor_models[ai], dt)
                     r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale)
