@@ -1018,6 +1018,17 @@ fn main() {
     let ammo_vis = r3d_make_box_emissive(0.2, 0.2, 0.2, 1.0, 0.85, 0.2)   // yellow ammo box
     // Projectile bolt for the launcher (self-lit magenta so it reads in flight).
     let proj_vis = r3d_make_box_emissive(0.12, 0.12, 0.12, 1.0, 0.4, 1.0)
+    // Downloaded CC0 low-poly character (three.js RobotExpressive, CC0 by Quaternius). If it
+    // fails to load (missing file / no GPU yet) the handle is -1 and actors fall back to boxes.
+    let actor_model = r3d_load_model("models/robot.glb")
+    let actor_scale = 0.9        // TUNE: scale to roughly the ~1.8m actor height
+    let actor_yoff = 0.0 - 0.9   // model origin is at its feet; actor pos is the capsule centre
+    let mut actor_clip = 2       // TUNE: which looping clip to play (idle/move)
+    if actor_model >= 0 {
+        let acc = r3d_clip_count(actor_model)
+        if actor_clip >= acc { actor_clip = 0 }
+        r3d_anim_play(actor_model, actor_clip, 1, 1.0, 0.0)
+    }
 
     // Physics world. World gravity pulls DYNAMIC bodies (the shootable targets)
     // down; the player capsule is kinematic and unaffected (it runs its own
@@ -2934,6 +2945,8 @@ fn main() {
             drd = drd + 1
         }
 
+        // Advance the shared character animation once per frame (only if the model loaded).
+        if actor_model >= 0 { r3d_anim_update(actor_model, dt) }
         // Live enemy bots at their physics positions (dead ones are hidden).
         let mut ed = 0
         while ed < bot_n {
@@ -2943,19 +2956,24 @@ fn main() {
                 let by = phys3d_y(h)
                 let bz = phys3d_z(h)
                 let psc = 1.0 + brains[ed].pop   // brief scale pop when hit (flinch)
-                // While OVERCLOCKED draw the EMISSIVE (glowing) enemy so the body
-                // itself lights up against the dimmed world; otherwise the lit mesh.
-                if oc_active {
-                    r3d_draw(enemy_glow_body, bx, by, bz, 0.0, 0.0, 0.0, psc)
-                    r3d_draw(enemy_glow_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
+                if actor_model >= 0 {
+                    // Downloaded character model, turned to face the player (TUNE the scale /
+                    // y-offset / clip / facing constants above if it looks off).
+                    let fyaw = atan2(px - bx, 0.0 - (pz - bz))
+                    r3d_draw(actor_model, bx, by + actor_yoff, bz, fyaw, 0.0, 0.0, actor_scale * psc)
                 } else {
-                    // Cyan tint while the shield is up so you can read who is shielded.
-                    if actors[ed].sh > 0.0 {
-                        r3d_draw(enemy_vis_sh, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                    // Fallback: the original box body + head (glow while overclocked, cyan if shielded).
+                    if oc_active {
+                        r3d_draw(enemy_glow_body, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                        r3d_draw(enemy_glow_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
                     } else {
-                        r3d_draw(enemy_vis, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                        if actors[ed].sh > 0.0 {
+                            r3d_draw(enemy_vis_sh, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                        } else {
+                            r3d_draw(enemy_vis, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                        }
+                        r3d_draw(enemy_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
                     }
-                    r3d_draw(enemy_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
                 }
             }
             ed = ed + 1
@@ -2988,8 +3006,12 @@ fn main() {
                 let eyaw = net_player_yaw(pid)
                 phys3d_set_pos(actors[ai].hdl, ex, ey, ez)
                 actors[ai].hp = 100.0   // active (transform mirror; server owns real combat)
-                r3d_draw(body_vis, ex, ey, ez, eyaw, 0.0, 0.0, 1.0)
-                r3d_draw(head_vis, ex, ey + 0.85, ez, eyaw, 0.0, 0.0, 1.0)
+                if actor_model >= 0 {
+                    r3d_draw(actor_model, ex, ey + actor_yoff, ez, eyaw, 0.0, 0.0, actor_scale)
+                } else {
+                    r3d_draw(body_vis, ex, ey, ez, eyaw, 0.0, 0.0, 1.0)
+                    r3d_draw(head_vis, ex, ey + 0.85, ez, eyaw, 0.0, 0.0, 1.0)
+                }
                 slot = slot + 1
             }
             pi = pi + 1
