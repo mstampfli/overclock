@@ -475,11 +475,18 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             // along-wall speed (we only ADD the normal push). Does NOT refresh the
             // air jump - only touching the ground gives your double-jump back, so a
             // wallrun chain can't also bank free double-jumps.
-            if vy < cfg[17] { vy = cfg[17] }
+            // The UP boost only fires off a DIFFERENT wall than the last one you jumped
+            // (slots 24/25, cleared on landing). Jumping the SAME wall again gives only the
+            // sideways push, no height - so you can't spam-jump-climb a wall by holding into
+            // it. Legit wall-to-wall jumps + the first jump off a wall keep full height.
+            let lwnx = f32_load(state, 24)
+            let lwnz = f32_load(state, 25)
+            let same_wall = wnx * lwnx + wnz * lwnz > 0.7
+            if same_wall == false {
+                if vy < cfg[17] { vy = cfg[17] }
+            }
             f32_store(state, 4, f32_load(state, 4) + wnx * cfg[18])
             f32_store(state, 6, f32_load(state, 6) + wnz * cfg[18])
-            // Remember the wall we kicked off so the air branch can block movement
-            // back INTO it during the lockout (no spam-jump wall climbing).
             f32_store(state, 24, wnx)
             f32_store(state, 25, wnz)
             wr = false
@@ -1260,6 +1267,9 @@ fn main() {
     let mut g_cd = 0.0        // cooldown after use
     let mut g_time = 0.0      // how long the current grapple has run
     let mut g_prev = 0        // grapple key last frame (edge-detect the fire)
+    let mut g_lx = 0.0        // player pos last grapple frame (detect being BLOCKED)
+    let mut g_ly = 0.0
+    let mut g_lz = 0.0
     // Frag grenade live state (one in flight at a time).
     let mut nade_live = false
     let mut grx = 0.0         // grenade world position
@@ -1791,7 +1801,12 @@ fn main() {
             let gddy = gy - (py + 0.7)
             let gddz = gz - pz
             let gdd = sqrt(gddx * gddx + gddy * gddy + gddz * gddz)
-            if gkey < 1 or gdd < 2.2 or g_time > 2.5 {
+            // BLOCKED: if the pull is on but you've barely moved (jammed against the surface
+            // the hook is on - e.g. pinned under the roof, short of the anchor), let go so you
+            // don't hang there. A real swing keeps moving, so it isn't caught by this.
+            let gmoved = sqrt((px - g_lx) * (px - g_lx) + (py - g_ly) * (py - g_ly) + (pz - g_lz) * (pz - g_lz))
+            g_lx = px; g_ly = py; g_lz = pz
+            if gkey < 1 or gdd < 2.2 or g_time > 2.5 or (g_time > 0.35 and gmoved < 0.05) {
                 grapple_on = false
                 g_cd = 1.2
             }
@@ -1807,6 +1822,7 @@ fn main() {
                     gz = phys3d_hit_z()
                     grapple_on = true
                     g_time = 0.0
+                    g_lx = px; g_ly = py; g_lz = pz
                     play_sound(0 - 6, 55, 0)   // grapple-fire thunk
                 }
             }
@@ -2094,15 +2110,14 @@ fn main() {
                 let by0 = phys3d_y(h)
                 let bz0 = phys3d_z(h)
                 let grnd = phys3d_grounded(h) == 1
-                // MOVE toward the NEAREST enemy - the player OR another bot. It's a free-for-
-                // all, so bots hunt each other too instead of all piling onto the player.
-                let mut tmx = bx0
-                let mut tmy = by0
-                let mut tmz = bz0
-                let mut bestmd = 100000.0
+                // NEAREST ENEMY (player or another bot) - free-for-all.
+                let mut enx = bx0
+                let mut eny = by0
+                let mut enz = bz0
+                let mut edist = 100000.0
                 if dead == false {
                     let dpm = sqrt((px - bx0) * (px - bx0) + (pz - bz0) * (pz - bz0))
-                    if dpm < bestmd { bestmd = dpm; tmx = px; tmy = py; tmz = pz }
+                    if dpm < edist { edist = dpm; enx = px; eny = py; enz = pz }
                 }
                 let mut mq = 0
                 while mq < bot_n {
@@ -2111,10 +2126,50 @@ fn main() {
                         let mqx = phys3d_x(mqh)
                         let mqz = phys3d_z(mqh)
                         let dq = sqrt((mqx - bx0) * (mqx - bx0) + (mqz - bz0) * (mqz - bz0))
-                        if dq < bestmd { bestmd = dq; tmx = mqx; tmy = phys3d_y(mqh); tmz = mqz }
+                        if dq < edist { edist = dq; enx = mqx; eny = phys3d_y(mqh); enz = mqz }
                     }
                     mq = mq + 1
                 }
+                // GOAL: a bot pursues what it NEEDS like a person - find the nearest ammo box
+                // and nearest health pad (fixed spots + enemy drops).
+                let mut amx = 0.0
+                let mut amz = 0.0
+                let mut amd = 100000.0
+                let mut hlx = 0.0
+                let mut hlz = 0.0
+                let mut hld = 100000.0
+                let mut sp2 = 0
+                while sp2 < pk_n {
+                    if pkcd[sp2] <= 0.0 {
+                        let sd = sqrt((pkx[sp2] - bx0) * (pkx[sp2] - bx0) + (pkz[sp2] - bz0) * (pkz[sp2] - bz0))
+                        if pktype[sp2] > 1.5 and sd < amd { amd = sd; amx = pkx[sp2]; amz = pkz[sp2] }
+                        if pktype[sp2] < 0.5 and sd < hld { hld = sd; hlx = pkx[sp2]; hlz = pkz[sp2] }
+                    }
+                    sp2 = sp2 + 1
+                }
+                let mut sp3 = 0
+                while sp3 < drop_n {
+                    if droplife[sp3] > 0.0 {
+                        let sd = sqrt((dropx[sp3] - bx0) * (dropx[sp3] - bx0) + (dropz[sp3] - bz0) * (dropz[sp3] - bz0))
+                        if droptype[sp3] > 1.5 and sd < amd { amd = sd; amx = dropx[sp3]; amz = dropz[sp3] }
+                        if droptype[sp3] < 0.5 and sd < hld { hld = sd; hlx = dropx[sp3]; hlz = dropz[sp3] }
+                    }
+                    sp3 = sp3 + 1
+                }
+                // Pick the goal: low on ammo -> grab ammo; hurt -> grab health; want to shield
+                // with an enemy near -> RETREAT to disengage (then it channels + hides). Else hunt.
+                let rifleammo = actors[ei2].mag[0] + actors[ei2].res[0]
+                let mut tmx = enx
+                let mut tmy = eny
+                let mut tmz = enz
+                let mut hunting = 1
+                if rifleammo < 8 and amd < 60.0 {
+                    tmx = amx; tmz = amz; tmy = by0; hunting = 0
+                } else { if actors[ei2].hp < 45.0 and hld < 60.0 {
+                    tmx = hlx; tmz = hlz; tmy = by0; hunting = 0
+                } else { if actors[ei2].cells > 0 and actors[ei2].sh < actors[ei2].shmax and edist < 16.0 {
+                    tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0); tmy = by0; hunting = 0
+                } } }
                 let tdx = tmx - bx0
                 let tdz = tmz - bz0
                 let tdist = sqrt(tdx * tdx + tdz * tdz)
@@ -2136,10 +2191,14 @@ fn main() {
                 // Keep a STANDOFF so bots ring you and fight at range instead of piling
                 // on / standing on your head: advance when far, hold and strafe at mid
                 // range, and actively back OFF when too close (or stacked above you).
+                // Standoff (ring + back off when too close) ONLY while hunting an enemy; when
+                // going for a pickup or retreating to shield, just advance to the goal.
                 let mut adv = 1.0
-                if tdist < 4.0 { adv = 0.0 }
-                if tdist < 2.0 { adv = 0.0 - 1.0 }
-                if by0 - tmy > 0.4 and tdist < 2.5 { adv = 0.0 - 1.5 }   // get off the player
+                if hunting == 1 {
+                    if tdist < 4.0 { adv = 0.0 }
+                    if tdist < 2.0 { adv = 0.0 - 1.0 }
+                    if by0 - tmy > 0.4 and tdist < 2.5 { adv = 0.0 - 1.5 }   // get off the player
+                }
                 let mut bvx = (mdx * adv + perpx * juke) * runsp
                 let mut bvz = (mdz * adv + perpz * juke) * runsp
                 if bheal { bvx = 0.0; bvz = 0.0 }   // stand still while channeling a shield
@@ -2151,12 +2210,11 @@ fn main() {
                 brains[ei2].jcd = brains[ei2].jcd - dt
                 if grnd and brains[ei2].jcd <= 0.0 and tdist > 2.5 {
                     if stuck or (tmy - by0) > 1.2 {
-                        brains[ei2].vy = 9.5   // hop the obstacle / up toward the player
+                        brains[ei2].vy = 9.5   // hop the obstacle / up toward the target
                         brains[ei2].jcd = 0.5
                     }
                 }
-                // Crude WALL-CLIMB: airborne, shoving into a wall, player above -> ride
-                // up it (reach rooftops like a wallrun).
+                // Crude WALL-CLIMB: airborne, shoving into a wall, target above -> ride up it.
                 if grnd == false and stuck and (tmy - by0) > 0.5 and brains[ei2].vy < 7.0 {
                     brains[ei2].vy = 7.0
                 }
