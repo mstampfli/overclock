@@ -845,7 +845,8 @@ struct Brain {
     ky: f64,
     kz: f64,         // blast knockback velocity (decays) - also reused for a grapple-leap
     pop: f64,        // hit-flinch scale pop (draw)
-    gcd: f64         // grapple cooldown (a bot grapple-leaps to close big gaps, like a player)
+    gcd: f64,        // grapple cooldown (a bot grapple-leaps to close big gaps, like a player)
+    getrifle: f64    // 1 = heading for ammo, so equip the rifle to top it up (not the launcher)
 }
 
 fn menu_btn(x: i64, y: i64, w: i64, h: i64, mx: i64, my: i64) -> i64 {
@@ -1147,15 +1148,15 @@ fn main() {
     // Brain; the player + remote slots get a dummy (aim 0, unused). `aim` (shot spread) is a
     // bot's skill - the ONLY thing distinguishing a bot from the player in a fight.
     let mut brains = [
-        Brain { aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
-        Brain { aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
-        Brain { aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
-        Brain { aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
-        Brain { aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 }
+        Brain { aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
+        Brain { aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
+        Brain { aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
+        Brain { aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
+        Brain { aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0 }
     ]
     // Per-player characters are created lazily by the sim (see sim_step).
 
@@ -2184,16 +2185,21 @@ fn main() {
                 let mut tmy = eny
                 let mut tmz = enz
                 let mut hunting = 1
+                brains[ei2].getrifle = 0.0
                 if totalammo <= 0 {
-                    if amd < 300.0 { tmx = amx; tmz = amz } else { tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0) }
+                    if amd < 300.0 { tmx = amx; tmz = amz; brains[ei2].getrifle = 1.0 } else { tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0) }
                     tmy = by0; hunting = 0
                 } else { if rifleammo < 40 and amd < 200.0 {
-                    tmx = amx; tmz = amz; tmy = by0; hunting = 0
+                    tmx = amx; tmz = amz; tmy = by0; hunting = 0; brains[ei2].getrifle = 1.0
+                } else { if actors[ei2].mag[0] + actors[ei2].res[0] <= 0 and actors[ei2].mag[1] + actors[ei2].res[1] > 0 and edist < 16.0 {
+                    // Rifle dry + only the launcher + no rifle ammo reachable + enemy close: back
+                    // off to get launcher distance (then it can rocket from range, not point-blank).
+                    tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0); tmy = by0; hunting = 0
                 } else { if actors[ei2].hp < 45.0 and hld < 200.0 {
                     tmx = hlx; tmz = hlz; tmy = by0; hunting = 0
                 } else { if actors[ei2].cells > 0 and actors[ei2].sh < actors[ei2].shmax and edist < 16.0 {
                     tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0); tmy = by0; hunting = 0
-                } } } }
+                } } } } }
                 let tdx = tmx - bx0
                 let tdz = tmz - bz0
                 let tdist = sqrt(tdx * tdx + tdz * tdz)
@@ -2377,11 +2383,15 @@ fn main() {
                         tk = tk + 1
                     }
                     nearest = bestd
-                    // Use the launcher at range ONLY when flush with rifle ammo to spare. A bot
-                    // that's low on rifle stays on the rifle, so the ammo it picks up tops up the
-                    // rifle (the equipped weapon) instead of feeding the launcher forever.
+                    // Launcher at range whenever it has a rocket (you can rocket from afar even
+                    // with rifle ammo). OR when the rifle is fully dry but the launcher has ammo
+                    // (only option) - that case only FIRES at range (gated below) + backs off.
+                    // BUT if this bot is heading for ammo (brains.getrifle), it equips the RIFLE
+                    // so the box it grabs tops up the rifle, not the launcher (breaks the loop).
                     let mut bw = 0
-                    if actors[ci].mag[0] + actors[ci].res[0] > 30 and bestd > 22.0 and actors[ci].mag[1] > 0 and sin(etime * 1.3 + (ci as f64) * 2.3) > 0.6 { bw = 1 }
+                    if bestd > 22.0 and actors[ci].mag[1] > 0 and sin(etime * 1.3 + (ci as f64) * 2.3) > 0.6 { bw = 1 }
+                    if actors[ci].mag[0] + actors[ci].res[0] <= 0 and actors[ci].mag[1] + actors[ci].res[1] > 0 { bw = 1 }
+                    if brains[ci].getrifle > 0.5 { bw = 0 }
                     actors[ci].wpn = bw
                     if tgi > (0 - 2) {
                         let ddx = tgx - sox
@@ -2411,6 +2421,9 @@ fn main() {
                                 want = 0
                                 actors[ci].fcd = 0.4
                             }
+                            // Never fire the launcher point-blank (the rocket would catch the
+                            // bot in its own blast) - hold it until there's distance.
+                            if bw == 1 and bestd < 11.0 { want = 0 }
                         }
                     }
                 }
