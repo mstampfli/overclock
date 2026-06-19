@@ -1039,7 +1039,7 @@ fn main() {
     let rifle_scale = 0.12      // mesh is ~5.2 units long -> ~0.62m
     let lnch_scale = 0.33       // mesh is ~1.8 units long
     let kat_scale = 0.12        // mesh is ~7.6 units tall
-    let gun_yaw = 1.5708        // +X barrel -> forward (flip sign if it points backward)
+    let gun_yaw = 0.0 - 1.5708  // +X barrel -> forward
     let gun_pitch = 0.0
     let gun_roll = 0.0
     let kat_yaw = 0.0
@@ -3050,6 +3050,18 @@ fn main() {
                     let dyaw = atan2(sin(tyaw - ayaw[ed]), cos(tyaw - ayaw[ed]))
                     if dyaw > 2.0 or dyaw < (0.0 - 2.0) { ayaw[ed] = tyaw } else { ayaw[ed] = ayaw[ed] + dyaw * 0.2 }
                     r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale)
+                    // Third-person weapon in the bot's hand (approx offset, aimed where it faces).
+                    // Reload = lower it and bring it back up; equipped weapon picks the mesh.
+                    let afwx = sin(ayaw[ed])
+                    let afwz = cos(ayaw[ed])
+                    let arix = cos(ayaw[ed])
+                    let ariz = 0.0 - sin(ayaw[ed])
+                    let mut handh = 1.25
+                    if actors[ed].rl > 0.0 { handh = handh - sin((actors[ed].rl / reload_w[actors[ed].wpn]) * 3.14159) * 0.4 }
+                    let mut twm = vm_rifle
+                    let mut twsc = rifle_scale
+                    if actors[ed].wpn == 1 { twm = vm_launcher; twsc = lnch_scale }
+                    r3d_draw(twm, bx + afwx * 0.12 + arix * 0.18, by + actor_yoff + handh, bz + afwz * 0.12 + ariz * 0.18, ayaw[ed] + gun_yaw, 0.0, 0.0, twsc)
                     aprevx[ed] = bx
                     aprevz[ed] = bz
                 } else {
@@ -3115,6 +3127,9 @@ fn main() {
                     if rallow == 1 and astate[ai] != rdes { r3d_anim_play(actor_models[ai], rdes, 1, 1.0, 0.15); astate[ai] = rdes; astate_t[ai] = 0.0 }
                     r3d_anim_update(actor_models[ai], dt)
                     r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale)
+                    // Third-person weapon in the remote player's hand (rifle by default).
+                    let ryr = eyaw + actor_yaw_off
+                    r3d_draw(vm_rifle, ex + sin(ryr) * 0.12 + cos(ryr) * 0.18, ey + actor_yoff + 1.25, ez + cos(ryr) * 0.12 - sin(ryr) * 0.18, ryr + gun_yaw, 0.0, 0.0, rifle_scale)
                     aprevx[ai] = ex
                     aprevz[ai] = ez
                 } else {
@@ -3143,17 +3158,29 @@ fn main() {
             let bpitch = 0.0 - eff_pitch
             let recoil = actors[5].fcd * 0.5         // gun kicks back briefly after each shot
             let bor = 0.16                            // right
-            let bou = 0.0 - 0.15                      // down
-            let bof = 0.40 - recoil                   // forward
+            let mut bou = 0.0 - 0.15                  // down
+            let mut bof = 0.40 - recoil               // forward
+            // Reload: dip the gun down + back, then bring it up again (a bump over the reload time).
+            if actors[5].rl > 0.0 {
+                let rfr = actors[5].rl / reload_w[actors[5].wpn]
+                let dip = sin(rfr * 3.14159) * 0.34
+                bou = bou - dip
+                bof = bof - dip * 0.25
+            }
             let katana_on = melee_cd > melee_cooldown - 0.35
             if katana_on {
-                let sp = (melee_cd - (melee_cooldown - 0.35)) / 0.35   // 1 -> 0 over the swing
-                let swr = bor + 0.14 - sp * 0.38                       // sweep diagonally...
-                let swu = bou + 0.18 - sp * 0.32                       // ...across the view
+                // A real diagonal slash: the blade sweeps upper-right -> lower-left AND tilts down
+                // through the arc (the mesh isn't rigged, so we animate its whole transform).
+                let sp = (melee_cd - (melee_cooldown - 0.35)) / 0.35   // 1 -> 0 over the slash
+                let prog = 1.0 - sp
+                let swr = bor + 0.30 - prog * 0.46
+                let swu = bou + 0.26 - prog * 0.44
+                let swp = (0.5 - sp) * 1.6                             // blade pitches down through it
+                let swrl = (sp - 0.5) * 1.4                            // and rolls into the cut
                 let kx = vex + vrx * swr + vux * swu + fx * bof
                 let ky = vey + vuy * swu + fy * bof
                 let kz = vez + vrz * swr + vuz * swu + fz * bof
-                r3d_draw(vm_katana, kx, ky, kz, byaw + kat_yaw, bpitch + kat_pitch, kat_roll, kat_scale)
+                r3d_draw(vm_katana, kx, ky, kz, byaw + kat_yaw, bpitch + kat_pitch + swp, kat_roll + swrl, kat_scale)
             } else {
                 let wx = vex + vrx * bor + vux * bou + fx * bof
                 let wy = vey + vuy * bou + fy * bof
