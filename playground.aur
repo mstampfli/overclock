@@ -1824,20 +1824,35 @@ fn main() {
             prev_weapon = actors[5].wpn
         }
 
-        // --- Melee (V): a katana-reach lunge. Long reach (short would never connect on a
-        // fast target) + heavy damage (125: full green bar + half a shield). Edge-triggered
-        // with a cooldown. Raycasts forward from the eye; the first ACTOR in reach gets hit.
+        // --- Melee (V): a katana-reach lunge. Long reach + a wide swing ARC (a short needle
+        // ray would never connect on a fast target) + heavy damage (125: full green bar + half
+        // a shield). Edge-triggered with a cooldown; the slash cleaves every foe in the arc.
         melee_cd = melee_cd - dt
         if melee_cd < 0.0 { melee_cd = 0.0 }
         let mkey = input_down(act_melee)
         if mkey > 0 and melee_prev == 0 and melee_cd <= 0.0 and dead == false {
             melee_cd = melee_cooldown
             play_noise(60, 16)   // swing swoosh
-            let mhb = phys3d_raycast_ex(actors[5].hdl as i64, px, eye, pz, fx, fy, fz, melee_range)
-            if mhb >= 0 {
-                let mut mvk = 0
-                while mvk < bot_n {
-                    if mhb == (actors[mvk].hdl as i64) and actors[mvk].hp > 0.0 {
+            // Arc/cone sweep - a katana SLASH, not a needle. Hit EVERY actor within reach and
+            // inside the ~120-deg swing arc, with a line-of-sight check so walls block it.
+            let mut mvk = 0
+            while mvk < bot_n {
+                if actors[mvk].hp > 0.0 {
+                    let mbx = phys3d_x(actors[mvk].hdl as i64)
+                    let mby = phys3d_y(actors[mvk].hdl as i64) + 0.5
+                    let mbz = phys3d_z(actors[mvk].hdl as i64)
+                    let mdx = mbx - px
+                    let mdy = mby - eye
+                    let mdz = mbz - pz
+                    let mdd = sqrt(mdx * mdx + mdy * mdy + mdz * mdz)
+                    let mut in_arc = 0
+                    if mdd > 0.001 and mdd < melee_range {
+                        if (mdx * fx + mdy * fy + mdz * fz) / mdd > 0.5 {
+                            let mlos = phys3d_raycast_ex(actors[5].hdl as i64, px, eye, pz, mdx / mdd, mdy / mdd, mdz / mdd, mdd + 0.4)
+                            if mlos < 0 or mlos == (actors[mvk].hdl as i64) { in_arc = 1 }
+                        }
+                    }
+                    if in_arc == 1 {
                         let mut md = melee_dmg
                         if actors[mvk].sh > 0.0 {
                             if actors[mvk].sh >= md { actors[mvk].sh = actors[mvk].sh - md; md = 0.0 }
@@ -1887,8 +1902,8 @@ fn main() {
                             play_sound(7, 110, 0)
                         }
                     }
-                    mvk = mvk + 1
                 }
+                mvk = mvk + 1
             }
         }
         melee_prev = mkey
