@@ -1018,18 +1018,20 @@ fn main() {
     let ammo_vis = r3d_make_box_emissive(0.2, 0.2, 0.2, 1.0, 0.85, 0.2)   // yellow ammo box
     // Projectile bolt for the launcher (self-lit magenta so it reads in flight).
     let proj_vis = r3d_make_box_emissive(0.12, 0.12, 0.12, 1.0, 0.4, 1.0)
-    // Downloaded CC0 low-poly character (three.js RobotExpressive, CC0 by Quaternius). If it
-    // fails to load (missing file / no GPU yet) the handle is -1 and actors fall back to boxes.
-    let actor_model = r3d_load_model("models/Rogue.glb")
-    let actor_scale = 0.55       // measured glb bind height ~3.3 units -> ~1.8m actor
-    let actor_yoff = 0.0 - 0.3   // lift so the feet sit on the ground (TUNE if floating/sunk)
-    let actor_yaw_off = 0.0      // set to 3.14159 if the character faces AWAY from you
-    let mut actor_clip = 36      // 36 = "Idle" (parsed straight from the glb's clip list)
-    if actor_model >= 0 {
-        let acc = r3d_clip_count(actor_model)
-        if actor_clip >= acc { actor_clip = 0 }
-        r3d_anim_play(actor_model, actor_clip, 1, 1.0, 0.0)
-    }
+    // Downloaded CC0 MANNEQUIN + 46-clip animation library (Quaternius Universal Animation
+    // Library, glTF mirror). One model instance PER actor so each animates independently
+    // (idle / run / jump from its real motion). Any actor whose load fails (-1) falls back to
+    // the box body+head, so nothing breaks. Instances loaded just below (needs the actor count).
+    let mut actor_models = [0; 9]   // model handle per actor slot (-1 = none / use boxes)
+    let mut astate = [0; 9]         // clip currently playing on each (-1 = unset)
+    let mut aprevx = [0.0; 9]       // last-frame draw pos -> movement speed -> idle vs run
+    let mut aprevz = [0.0; 9]
+    let actor_scale = 1.0           // mannequin bind height 1.83m = real human scale
+    let actor_yoff = 0.0 - 0.9      // model origin is at the feet; actor pos is the capsule centre
+    let actor_yaw_off = 0.0         // set to 3.14159 if the mannequin faces AWAY from you
+    let anim_idle = 9               // parsed clips: 9 Idle_Loop, 13 Jog_Fwd, 15 Jump_Loop
+    let anim_run = 13
+    let anim_jump = 15
 
     // Physics world. World gravity pulls DYNAMIC bodies (the shootable targets)
     // down; the player capsule is kinematic and unaffected (it runs its own
@@ -1146,6 +1148,13 @@ fn main() {
     let max_remote = 3
     let pl_i = bot_n                        // the local player's slot
     let nactors = bot_n + 1 + max_remote    // bots + local player + remote slots
+    // Load one mannequin instance per actor (the local player is first-person, so it stays -1).
+    let mut aml = 0
+    while aml < nactors {
+        astate[aml] = 0 - 1
+        if aml == pl_i { actor_models[aml] = 0 - 1 } else { actor_models[aml] = r3d_load_model("models/Mannequin.gltf") }
+        aml = aml + 1
+    }
     let mut actors = [
         Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
         Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
@@ -2946,8 +2955,6 @@ fn main() {
             drd = drd + 1
         }
 
-        // Advance the shared character animation once per frame (only if the model loaded).
-        if actor_model >= 0 { r3d_anim_update(actor_model, dt) }
         // Live enemy bots at their physics positions (dead ones are hidden).
         let mut ed = 0
         while ed < bot_n {
@@ -2957,11 +2964,22 @@ fn main() {
                 let by = phys3d_y(h)
                 let bz = phys3d_z(h)
                 let psc = 1.0 + brains[ed].pop   // brief scale pop when hit (flinch)
-                if actor_model >= 0 {
-                    // Downloaded character model, turned to face the player (TUNE the scale /
-                    // y-offset / clip / facing constants above if it looks off).
+                if actor_models[ed] >= 0 {
+                    // Drive the clip from real motion: airborne -> jump, moving -> jog, else idle.
+                    let svx = bx - aprevx[ed]
+                    let svz = bz - aprevz[ed]
+                    let spd = sqrt(svx * svx + svz * svz) / dt
+                    let mut want_clip = astate[ed]
+                    if want_clip < 0 { want_clip = anim_idle }
+                    if spd < 1.5 { want_clip = anim_idle }
+                    if spd > 3.0 { want_clip = anim_run }
+                    if phys3d_grounded(h) < 1 { want_clip = anim_jump }
+                    if astate[ed] != want_clip { r3d_anim_play(actor_models[ed], want_clip, 1, 1.0, 0.15); astate[ed] = want_clip }
+                    r3d_anim_update(actor_models[ed], dt)
                     let fyaw = atan2(px - bx, 0.0 - (pz - bz)) + actor_yaw_off
-                    r3d_draw(actor_model, bx, by + actor_yoff, bz, fyaw, 0.0, 0.0, actor_scale * psc)
+                    r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, fyaw, 0.0, 0.0, actor_scale * psc)
+                    aprevx[ed] = bx
+                    aprevz[ed] = bz
                 } else {
                     // Fallback: the original box body + head (glow while overclocked, cyan if shielded).
                     if oc_active {
@@ -3007,8 +3025,19 @@ fn main() {
                 let eyaw = net_player_yaw(pid)
                 phys3d_set_pos(actors[ai].hdl, ex, ey, ez)
                 actors[ai].hp = 100.0   // active (transform mirror; server owns real combat)
-                if actor_model >= 0 {
-                    r3d_draw(actor_model, ex, ey + actor_yoff, ez, eyaw, 0.0, 0.0, actor_scale)
+                if actor_models[ai] >= 0 {
+                    let rvx = ex - aprevx[ai]
+                    let rvz = ez - aprevz[ai]
+                    let rspd = sqrt(rvx * rvx + rvz * rvz) / dt
+                    let mut rwc = astate[ai]
+                    if rwc < 0 { rwc = anim_idle }
+                    if rspd < 1.5 { rwc = anim_idle }
+                    if rspd > 3.0 { rwc = anim_run }
+                    if astate[ai] != rwc { r3d_anim_play(actor_models[ai], rwc, 1, 1.0, 0.15); astate[ai] = rwc }
+                    r3d_anim_update(actor_models[ai], dt)
+                    r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw, 0.0, 0.0, actor_scale)
+                    aprevx[ai] = ex
+                    aprevz[ai] = ez
                 } else {
                     r3d_draw(body_vis, ex, ey, ez, eyaw, 0.0, 0.0, 1.0)
                     r3d_draw(head_vis, ex, ey + 0.85, ez, eyaw, 0.0, 0.0, 1.0)
