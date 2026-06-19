@@ -782,30 +782,36 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
 
 // Draw a filled UI button into the HUD framebuffer; returns 1 if the cursor is over
 // it (brighter when hovered). Used by the main menu + settings screen.
-// One unified actor type for EVERY combatant - the player and the bots are the same
-// thing. Same health, shield (depletes before health), per-me.wpn mag + reserve, reload,
-// shield cells, and the same me.wpn config (gun_dmg / fire_w / mag_size_w / reload_w /
-// res_*). The ONLY field that makes a bot a bot is `aim` (their shot spread = skill).
-// vy/px0/pz0/jcd/k*/pop are the AI MOVER's state (the player's mover is the netcode sim).
+// The shared COMBAT model for EVERY combatant - the player and the bots are the same
+// thing here: health, a shield (depletes before health), per-weapon mag + reserve,
+// reload, shield cells, and the same weapon config (gun_dmg / fire_w / mag_size_w /
+// reload_w / res_*). The player is `me`; the bots are `bots[]`. Both run the same combat.
 struct Actor {
     hdl: i64,        // phys3d collider handle
     hp: f64,
     sh: f64,         // shield (absorbs damage before health)
     shmax: f64,      // shield capacity
-    wpn: i64,        // current me.wpn: 0 rifle / 1 launcher
-    mag: [i64; 2],   // loaded rounds per me.wpn
-    res: [i64; 2],   // spare reserve per me.wpn
+    wpn: i64,        // current weapon: 0 rifle / 1 launcher
+    mag: [i64; 2],   // loaded rounds per weapon
+    res: [i64; 2],   // spare reserve per weapon
     rl: f64,         // reload timer (>0 = reloading)
-    rlw: i64,        // which me.wpn is mid-reload
+    rlw: i64,        // which weapon is mid-reload
     fcd: f64,        // fire cooldown
     cells: i64,      // shield cells carried
-    heal: f64,       // shield-apply channel timer
-    aim: f64,        // AIM STRENGTH - the only per-actor knob (base shot spread, radians)
+    heal: f64        // shield-apply channel timer
+}
+
+// Bot-only CONTROLLER / behaviour state (the player has none of this - the netcode sim
+// is the player's mover and the mouse is the player's aim). One Brain per bot, parallel
+// to bots[]. This is where smarter AI (state machine, target memory, pathfinding, aim
+// lead, reaction delay) would live; today it is just the mover + aim spread.
+struct Brain {
+    aim: f64,        // AIM STRENGTH - shot spread in radians (their skill; lower = sharper)
     resp: f64,       // respawn timer
-    vy: f64,         // AI mover: vertical velocity
-    px0: f64,        // AI mover: last x (stuck detection)
-    pz0: f64,        // AI mover: last z
-    jcd: f64,        // AI mover: jump cooldown
+    vy: f64,         // vertical velocity (AI gravity / jump)
+    px0: f64,        // last x (stuck detection)
+    pz0: f64,        // last z
+    jcd: f64,        // jump cooldown
     kx: f64,
     ky: f64,
     kz: f64,         // blast knockback velocity (decays)
@@ -1088,16 +1094,24 @@ fn main() {
     let bot_n = 5
     let esx = [30.0, 0.0 - 30.0, 30.0, 0.0 - 30.0, 0.0]
     let esz = [30.0, 30.0, 0.0 - 30.0, 0.0 - 30.0, 0.0 - 42.0]
-    // The bots, as Actor structs (see the `Actor` definition). They start identical to a
-    // freshly-spawned player - full health + shield, full mags + reserve - and run the
-    // exact same combat. Only `aim` (shot spread) differs per bot. The player's own Actor
-    // mirror is `me` (below); both share the SAME code paths and me.wpn config.
+    // The bots' COMBAT, as Actor structs - identical to a freshly-spawned player (full
+    // health + shield, full mags + reserve) and run through the exact same combat code as
+    // `me` (the player, below). Their AI/behaviour lives in the parallel `brains[]` (Brain).
     let mut bots = [
-        Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 }
+        Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0 }
+    ]
+    // Per-bot AI/behaviour state, parallel to bots[]. `aim` (shot spread) is each bot's
+    // skill - the ONLY thing that distinguishes a bot from the player in a fight.
+    let mut brains = [
+        Brain { aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
+        Brain { aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
+        Brain { aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
+        Brain { aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
+        Brain { aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 }
     ]
     // Per-player characters are created lazily by the sim (see sim_step).
 
@@ -1321,7 +1335,7 @@ fn main() {
     // ammo, shields and reload all run through these fields exactly like the bots do; the
     // player's `aim` is 0 (perfect - you aim with the mouse) and `hdl` is set each frame
     // from the sim's character handle. Movement is the netcode sim, not the AI mover.
-    let mut me = Actor { hdl: 0 - 1, hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 }
+    let mut me = Actor { hdl: 0 - 1, hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 }
     let mut dmg_timer = regen_delay   // time since last hit (starts "rested")
     let mut pinvuln = 0.0        // brief invulnerability after a respawn
     let mut hurt_flash = 0.0     // red screen-edge flash when hit
@@ -1577,11 +1591,11 @@ fn main() {
                     bots[rb].wpn = 0
                     bots[rb].cells = 0
                     bots[rb].heal = 0.0
-                    bots[rb].resp = 0.0
-                    bots[rb].kx = 0.0; bots[rb].ky = 0.0; bots[rb].kz = 0.0
-                    bots[rb].vy = 0.0
-                    bots[rb].pop = 0.0
-                    bots[rb].jcd = 0.0
+                    brains[rb].resp = 0.0
+                    brains[rb].kx = 0.0; brains[rb].ky = 0.0; brains[rb].kz = 0.0
+                    brains[rb].vy = 0.0
+                    brains[rb].pop = 0.0
+                    brains[rb].jcd = 0.0
                     phys3d_set_pos(bots[rb].hdl as i64, esx[rb], 0.9, esz[rb])
                     rb = rb + 1
                 }
@@ -1797,7 +1811,7 @@ fn main() {
                             }
                             bots[ei].hp = bots[ei].hp - gdmg
                             hitmark = 0.18
-                            bots[ei].pop = 0.1
+                            brains[ei].pop = 0.1
                             // Spark burst at the impact: a few particles flung back
                             // toward the shooter + up, spread by index.
                             let mut sp = 0
@@ -1817,7 +1831,7 @@ fn main() {
                             play_noise(45, 14)   // soft, quiet low-passed "pf" hit marker
                             if bots[ei].hp <= 0.0 {
                                 bots[ei].hp = 0.0
-                                bots[ei].resp = enemy_respawn
+                                brains[ei].resp = enemy_respawn
                                 // Drop HEALTH + AMMO always; a shielded bot ALSO drops a cell.
                                 dropx[dropcur] = phys3d_x(bots[ei].hdl as i64)
                                 dropy[dropcur] = 0.6
@@ -2068,10 +2082,10 @@ fn main() {
                             else { edmg = edmg - bots[ej].sh; bots[ej].sh = 0.0 }
                         }
                         bots[ej].hp = bots[ej].hp - edmg
-                        bots[ej].pop = 0.15
+                        brains[ej].pop = 0.15
                         if bots[ej].hp <= 0.0 {
                             bots[ej].hp = 0.0
-                            bots[ej].resp = enemy_respawn
+                            brains[ej].resp = enemy_respawn
                             dropx[dropcur] = phys3d_x(bots[ej].hdl as i64)
                             dropy[dropcur] = 0.6
                             dropz[dropcur] = phys3d_z(bots[ej].hdl as i64)
@@ -2114,9 +2128,9 @@ fn main() {
                     }
                     if bdd < krad and bdd > 0.01 {
                         let kf = bot_kb * gi * (1.0 - bdd / krad)
-                        bots[ej].kx = bots[ej].kx + bdx / bdd * kf
-                        bots[ej].ky = bots[ej].ky + kf * 0.7 + 12.0
-                        bots[ej].kz = bots[ej].kz + bdz / bdd * kf
+                        brains[ej].kx = brains[ej].kx + bdx / bdd * kf
+                        brains[ej].ky = brains[ej].ky + kf * 0.7 + 12.0
+                        brains[ej].kz = brains[ej].kz + bdz / bdd * kf
                     }
                 }
                 ej = ej + 1
@@ -2198,12 +2212,12 @@ fn main() {
         let mut ei2 = 0
         while ei2 < bot_n {
             let h = bots[ei2].hdl as i64
-            bots[ei2].pop = bots[ei2].pop - dt
-            if bots[ei2].pop < 0.0 { bots[ei2].pop = 0.0 }
+            brains[ei2].pop = brains[ei2].pop - dt
+            if brains[ei2].pop < 0.0 { brains[ei2].pop = 0.0 }
             // Decay any blast knockback (a shove that fades back to AI control).
-            bots[ei2].kx = bots[ei2].kx - bots[ei2].kx * 2.8 * dt
-            bots[ei2].ky = bots[ei2].ky - bots[ei2].ky * 2.8 * dt
-            bots[ei2].kz = bots[ei2].kz - bots[ei2].kz * 2.8 * dt
+            brains[ei2].kx = brains[ei2].kx - brains[ei2].kx * 2.8 * dt
+            brains[ei2].ky = brains[ei2].ky - brains[ei2].ky * 2.8 * dt
+            brains[ei2].kz = brains[ei2].kz - brains[ei2].kz * 2.8 * dt
             if bots[ei2].hp > 0.0 {
                 // HUNT the player like a mobile opponent: chase via collide-and-slide,
                 // with gravity, jumping over obstacles / up to higher ground, a strafe-
@@ -2237,31 +2251,31 @@ fn main() {
                 let mut bvx = (mdx * adv + perpx * juke) * runsp
                 let mut bvz = (mdz * adv + perpz * juke) * runsp
                 // Gravity + jump.
-                bots[ei2].vy = bots[ei2].vy - 16.0 * dt
-                if grnd and bots[ei2].vy < 0.0 { bots[ei2].vy = 0.0 }
-                let moved = sqrt((bx0 - bots[ei2].px0) * (bx0 - bots[ei2].px0) + (bz0 - bots[ei2].pz0) * (bz0 - bots[ei2].pz0))
+                brains[ei2].vy = brains[ei2].vy - 16.0 * dt
+                if grnd and brains[ei2].vy < 0.0 { brains[ei2].vy = 0.0 }
+                let moved = sqrt((bx0 - brains[ei2].px0) * (bx0 - brains[ei2].px0) + (bz0 - brains[ei2].pz0) * (bz0 - brains[ei2].pz0))
                 let stuck = moved < 0.05 and tdist > 2.0
-                bots[ei2].jcd = bots[ei2].jcd - dt
-                if grnd and bots[ei2].jcd <= 0.0 and tdist > 2.5 {
+                brains[ei2].jcd = brains[ei2].jcd - dt
+                if grnd and brains[ei2].jcd <= 0.0 and tdist > 2.5 {
                     if stuck or (py - by0) > 1.2 {
-                        bots[ei2].vy = 9.5   // hop the obstacle / up toward the player
-                        bots[ei2].jcd = 0.5
+                        brains[ei2].vy = 9.5   // hop the obstacle / up toward the player
+                        brains[ei2].jcd = 0.5
                     }
                 }
                 // Crude WALL-CLIMB: airborne, shoving into a wall, player above -> ride
                 // up it (reach rooftops like a wallrun).
-                if grnd == false and stuck and (py - by0) > 0.5 and bots[ei2].vy < 7.0 {
-                    bots[ei2].vy = 7.0
+                if grnd == false and stuck and (py - by0) > 0.5 and brains[ei2].vy < 7.0 {
+                    brains[ei2].vy = 7.0
                 }
-                bots[ei2].px0 = bx0
-                bots[ei2].pz0 = bz0
+                brains[ei2].px0 = bx0
+                brains[ei2].pz0 = bz0
                 // While still flying from a blast, stop steering so the launch reads.
-                let knock = sqrt(bots[ei2].kx * bots[ei2].kx + bots[ei2].ky * bots[ei2].ky + bots[ei2].kz * bots[ei2].kz)
+                let knock = sqrt(brains[ei2].kx * brains[ei2].kx + brains[ei2].ky * brains[ei2].ky + brains[ei2].kz * brains[ei2].kz)
                 if knock > 4.0 {
                     bvx = 0.0
                     bvz = 0.0
                 }
-                phys3d_move_character(h, (bvx + bots[ei2].kx) * dt, (bots[ei2].vy + bots[ei2].ky) * dt, (bvz + bots[ei2].kz) * dt, dt)
+                phys3d_move_character(h, (bvx + brains[ei2].kx) * dt, (brains[ei2].vy + brains[ei2].ky) * dt, (bvz + brains[ei2].kz) * dt, dt)
                 let sx = phys3d_x(h)
                 let sy = phys3d_y(h)
                 let sz = phys3d_z(h)
@@ -2378,7 +2392,7 @@ fn main() {
                             } else {
                                 // Spread = AIM STRENGTH + distance + the TARGET's speed. A
                                 // player moving fast is much harder to hit than a still one.
-                                let mut spr = bots[ei2].aim + bestd * 0.004
+                                let mut spr = brains[ei2].aim + bestd * 0.004
                                 if tgi < 0 { spr = spr + pspd * 0.02 }
                                 let mut snx = bnx + sin(etime * 57.0 + (ei2 as f64) * 11.0) * spr
                                 let mut sny = bny + sin(etime * 43.0 + (ei2 as f64) * 5.0) * spr * 0.7
@@ -2431,10 +2445,10 @@ fn main() {
                                                 else { bd = bd - bots[bk].sh; bots[bk].sh = 0.0 }
                                             }
                                             bots[bk].hp = bots[bk].hp - bd
-                                            bots[bk].pop = 0.1
+                                            brains[bk].pop = 0.1
                                             if bots[bk].hp <= 0.0 {
                                                 bots[bk].hp = 0.0
-                                                bots[bk].resp = enemy_respawn
+                                                brains[bk].resp = enemy_respawn
                                                 dropx[dropcur] = phys3d_x(bots[bk].hdl as i64)
                                                 dropy[dropcur] = 0.6
                                                 dropz[dropcur] = phys3d_z(bots[bk].hdl as i64)
@@ -2470,14 +2484,14 @@ fn main() {
             } else {
                 // Dead: park below the map; on respawn, pop back to the spawn point.
                 phys3d_set_pos(h, esx[ei2], 0.0 - 50.0, esz[ei2])
-                bots[ei2].resp = bots[ei2].resp - dt
-                if bots[ei2].resp <= 0.0 {
+                brains[ei2].resp = brains[ei2].resp - dt
+                if brains[ei2].resp <= 0.0 {
                     bots[ei2].hp = enemy_hp_max
                     bots[ei2].sh = bots[ei2].shmax   // respawn with a full shield
                     bots[ei2].mag[0] = mag_size_w[0]; bots[ei2].mag[1] = mag_size_w[1]
                     bots[ei2].res[0] = 48; bots[ei2].res[1] = 2
                     bots[ei2].rl = 0.0
-                    bots[ei2].vy = 0.0
+                    brains[ei2].vy = 0.0
                     phys3d_set_pos(h, esx[ei2], 0.9, esz[ei2])
                 }
             }
@@ -2701,7 +2715,7 @@ fn main() {
                 let mut rb = 0
                 while rb < 3 {
                     bots[rb].hp = enemy_hp_max
-                    bots[rb].resp = 0.0
+                    brains[rb].resp = 0.0
                     rb = rb + 1
                 }
             }
@@ -2767,7 +2781,7 @@ fn main() {
                 let bx = phys3d_x(h)
                 let by = phys3d_y(h)
                 let bz = phys3d_z(h)
-                let psc = 1.0 + bots[ed].pop   // brief scale pop when hit (flinch)
+                let psc = 1.0 + brains[ed].pop   // brief scale pop when hit (flinch)
                 // While OVERCLOCKED draw the EMISSIVE (glowing) enemy so the body
                 // itself lights up against the dimmed world; otherwise the lit mesh.
                 if oc_active {
