@@ -1849,10 +1849,7 @@ fn main() {
             }
         }
         g_prev = gkey
-        // Rope: a cyan line from the hand to the anchor while grappling.
-        if grapple_on {
-            r3d_debug_line(px + fx * 0.4, eye - 0.12, pz + fz * 0.4, gx, gy, gz, 0.55, 0.9, 1.0)
-        }
+        // (Rope is drawn by the unified per-actor grapple-rope pass below, for everyone.)
 
         // --- Frag grenade (G): a cooldown tactical. Throw an arcing projectile that
         // inherits your momentum, bounces off geometry (excluding yourself), and
@@ -2888,15 +2885,20 @@ fn main() {
             }
             tri = tri + 1
         }
-        // Grapple ropes: ANY actor (you, the bots, remote players) with a live grapple draws a
-        // cyan line from its body to its anchor - so you can SEE everyone's grapples.
+        // Grapple ropes - ONE pass for EVERY actor (you, the bots, remote players). A cyan
+        // line from the grappler to its anchor. Your own starts at the hand (first-person);
+        // everyone else's starts at their body.
         let mut gri = 0
         while gri < nactors {
             if actors[gri].gat > 0.0 {
-                let grh = actors[gri].hdl as i64
-                if grh >= 0 {
-                    r3d_debug_line(phys3d_x(grh), phys3d_y(grh) + 1.0, phys3d_z(grh), actors[gri].gax, actors[gri].gay, actors[gri].gaz, 0.5, 0.85, 1.0)
+                let mut rox = px + fx * 0.4
+                let mut roy = eye - 0.12
+                let mut roz = pz + fz * 0.4
+                if gri != pl_i {
+                    let grh = actors[gri].hdl as i64
+                    rox = phys3d_x(grh); roy = phys3d_y(grh) + 1.0; roz = phys3d_z(grh)
                 }
+                r3d_debug_line(rox, roy, roz, actors[gri].gax, actors[gri].gay, actors[gri].gaz, 0.55, 0.9, 1.0)
                 actors[gri].gat = actors[gri].gat - dt
             }
             gri = gri + 1
