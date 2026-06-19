@@ -343,7 +343,13 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             // pure tangential velocity (inward stick is applied to the move delta).
             let cvx = f32_load(state, 4)
             let cvz = f32_load(state, 6)
-            let cur_t = cvx * tx + cvz * tz
+            // REDIRECT your full horizontal speed along the wall axis (keep its magnitude) in
+            // the direction you were already heading, instead of only keeping the component
+            // already along the wall. So hitting a wall at an angle converts your WHOLE speed
+            // into wallrun speed rather than bleeding off the part pointing into the wall.
+            let hsp = sqrt(cvx * cvx + cvz * cvz)
+            let mut cur_t = hsp
+            if cvx * tx + cvz * tz < 0.0 { cur_t = 0.0 - hsp }
             if wf > 0.1 {
                 // Cap the UPWARD climb angle to 45 degrees - you can aim up to climb,
                 // but can't run straight up a wall (look further up -> still 45).
@@ -817,7 +823,11 @@ struct Actor {
     rlw: i64,        // which weapon is mid-reload
     fcd: f64,        // fire cooldown
     cells: i64,      // shield cells carried
-    heal: f64        // shield-apply channel timer
+    heal: f64,       // shield-apply channel timer
+    gax: f64,        // current grapple anchor (so EVERY actor's grapple rope can be drawn)
+    gay: f64,
+    gaz: f64,
+    gat: f64         // grapple-rope draw timer (>0 = draw a rope to the anchor)
 }
 
 // Bot-only CONTROLLER / behaviour state (the player has none of this - the netcode sim
@@ -1123,15 +1133,15 @@ fn main() {
     let pl_i = bot_n                        // the local player's slot
     let nactors = bot_n + 1 + max_remote    // bots + local player + remote slots
     let mut actors = [
-        Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0 },
-        Actor { hdl: 0 - 1, hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
-        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 }
+        Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        Actor { hdl: 0 - 1, hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 }
     ]
     // Per-actor AI/behaviour, parallel to actors[]. Only the bots (0..bot_n-1) use a real
     // Brain; the player + remote slots get a dummy (aim 0, unused). `aim` (shot spread) is a
@@ -1809,6 +1819,8 @@ fn main() {
         let gkey = input_down(act_grapple)
         if grapple_on {
             g_time = g_time + dt
+            // Publish the live rope so it's drawn (the same per-actor system bots use).
+            actors[5].gax = gx; actors[5].gay = gy; actors[5].gaz = gz; actors[5].gat = 0.1
             let gddx = gx - px
             let gddy = gy - (py + 0.7)
             let gddz = gz - pz
@@ -1820,7 +1832,7 @@ fn main() {
                 g_cd = 1.2
             }
         } else {
-            if gkey > 0 and g_prev < 1 and g_cd <= 0.0 and dead == false {
+            if gkey > 0 and g_prev < 1 and g_cd <= 0.0 and dead == false and actors[5].heal <= 0.0 {
                 let gox = px + fx * 0.4
                 let goy = eye + fy * 0.4
                 let goz = pz + fz * 0.4
@@ -2165,20 +2177,26 @@ fn main() {
                     }
                     sp3 = sp3 + 1
                 }
-                // Pick the goal: low on ammo -> grab ammo; hurt -> grab health; want to shield
-                // with an enemy near -> RETREAT to disengage (then it channels + hides). Else hunt.
+                // Pick the goal. TOP priority: if it has NO ammo at all, it must NOT circle the
+                // enemy unarmed - it runs to the nearest ammo (or just flees the enemy if none is
+                // known). Then: low ammo -> grab ammo; hurt -> grab health; want shield + enemy
+                // near -> retreat to disengage (then it channels + hides). Else hunt.
                 let rifleammo = actors[ei2].mag[0] + actors[ei2].res[0]
+                let totalammo = rifleammo + actors[ei2].mag[1] + actors[ei2].res[1]
                 let mut tmx = enx
                 let mut tmy = eny
                 let mut tmz = enz
                 let mut hunting = 1
-                if rifleammo < 20 and amd < 200.0 {
+                if totalammo <= 0 {
+                    if amd < 300.0 { tmx = amx; tmz = amz } else { tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0) }
+                    tmy = by0; hunting = 0
+                } else { if rifleammo < 20 and amd < 200.0 {
                     tmx = amx; tmz = amz; tmy = by0; hunting = 0
                 } else { if actors[ei2].hp < 45.0 and hld < 200.0 {
                     tmx = hlx; tmz = hlz; tmy = by0; hunting = 0
                 } else { if actors[ei2].cells > 0 and actors[ei2].sh < actors[ei2].shmax and edist < 16.0 {
                     tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0); tmy = by0; hunting = 0
-                } } }
+                } } } }
                 let tdx = tmx - bx0
                 let tdz = tmz - bz0
                 let tdist = sqrt(tdx * tdx + tdz * tdz)
@@ -2251,6 +2269,8 @@ fn main() {
                                 brains[ei2].ky = ly / ll * 16.0 + 4.0
                                 brains[ei2].kz = lz / ll * 22.0
                                 brains[ei2].gcd = 3.5
+                                actors[ei2].gax = bx0 + lx; actors[ei2].gay = by0 + 0.5 + ly; actors[ei2].gaz = bz0 + lz
+                                actors[ei2].gat = 0.4   // show the grapple rope for a moment
                                 play_sound_at(0 - 6, 55, 7, bx0, by0, bz0)   // grapple thunk (3D)
                             }
                         }
@@ -2867,6 +2887,19 @@ fn main() {
                 trlife[tri] = trlife[tri] - dt
             }
             tri = tri + 1
+        }
+        // Grapple ropes: ANY actor (you, the bots, remote players) with a live grapple draws a
+        // cyan line from its body to its anchor - so you can SEE everyone's grapples.
+        let mut gri = 0
+        while gri < nactors {
+            if actors[gri].gat > 0.0 {
+                let grh = actors[gri].hdl as i64
+                if grh >= 0 {
+                    r3d_debug_line(phys3d_x(grh), phys3d_y(grh) + 1.0, phys3d_z(grh), actors[gri].gax, actors[gri].gay, actors[gri].gaz, 0.5, 0.85, 1.0)
+                }
+                actors[gri].gat = actors[gri].gat - dt
+            }
+            gri = gri + 1
         }
 
         // Impact spark particles: integrate (with a little gravity) and draw,
