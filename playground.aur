@@ -959,6 +959,7 @@ fn draw_action_name(i: i64, x: i64, y: i64, col: i64) {
     if i == 12 { draw_text(x, y, "Apply Shield", 18, col) }
     if i == 13 { draw_text(x, y, "Weapon 1", 18, col) }
     if i == 14 { draw_text(x, y, "Weapon 2", 18, col) }
+    if i == 15 { draw_text(x, y, "Melee", 18, col) }
 }
 
 fn main() {
@@ -1176,11 +1177,12 @@ fn main() {
     let act_heal = 12
     let act_wep1 = 13
     let act_wep2 = 14
+    let act_melee = 15
     // Keybind codes per action (index = action id). Defaults: W5 S7 A6 D8 Space4
     // LCtrl11 LShift10 LMB100 R14 F17 E15 G46 Q16 [1]=30 [2]=31. Editable in Settings,
     // saved/loaded from disk along with sensitivity + volume.
-    let act_n = 15
-    let mut bind_code = [5.0, 7.0, 6.0, 8.0, 4.0, 11.0, 10.0, 100.0, 14.0, 17.0, 15.0, 46.0, 16.0, 30.0, 31.0]
+    let act_n = 16
+    let mut bind_code = [5.0, 7.0, 6.0, 8.0, 4.0, 11.0, 10.0, 100.0, 14.0, 17.0, 15.0, 46.0, 16.0, 30.0, 31.0, 19.0]
     let mut sens = 0.0025      // mouse sensitivity (rad per mouse unit)
     let mut vol = 70           // master volume 0..100
     let mut settings = [0.0; 20]
@@ -1189,6 +1191,9 @@ fn main() {
         vol = (settings[1]) as i64
         let mut li = 0
         while li < act_n { bind_code[li] = settings[2 + li]; li = li + 1 }
+        // Saves from before melee existed have no code for it (reads as 0 = ArrowLeft);
+        // restore the default so the new action isn't silently bound to a junk key.
+        if bind_code[act_melee] < 1.0 { bind_code[act_melee] = 19.0 }
     }
     let mut bi = 0
     while bi < act_n {
@@ -1304,6 +1309,8 @@ fn main() {
     let mut nfuse = 0.0       // seconds until detonation
     let mut nade_cd = 0.0     // throw cooldown remaining
     let mut nade_prev = 0     // throw key last frame (edge-detect)
+    let mut melee_cd = 0.0    // melee swing cooldown remaining
+    let mut melee_prev = 0    // melee key last frame (edge-detect)
     let mut boom_t = 0.0      // explosion flash timer
     let mut boom_int = 1.0    // explosion visual intensity (scales the boom draw)
     let mut boomx = 0.0
@@ -1371,6 +1378,12 @@ fn main() {
     let crate_kb = 6.0         // impulse on dynamic crates (impulse/mass; ~0.5kg crate)
     let bot_kb = 16.0          // knockback velocity on bots (falloff-scaled)
     let player_kb = 14.0       // knockback velocity on YOU (reduced; falloff-scaled)
+    // Melee (V): a katana-reach lunge. Long reach because a short one is impossible to land
+    // on a fast-moving target. 125 dmg = a full green bar (100) + half a shield bar (25);
+    // shield absorbs first, so a fully-shielded foe survives by a sliver, off-shield = oneshot.
+    let melee_dmg = 125.0
+    let melee_range = 5.0       // katana lunge reach (metres)
+    let melee_cooldown = 0.7    // seconds between swings (no spam)
     let shot_kb = 2.2          // per-bullet impulse on a hit crate (impulse/mass)
     // Explosion INTENSITY per source (scales damage, radius, knockback + visual): 1.0
     // is the baseline frag. Tweak these to make a source punchier/weaker.
@@ -1531,7 +1544,7 @@ fn main() {
             draw_text(cl, 206, "Keybinds - click a box, then press a key", 18, gold)
             let mut ki = 0
             while ki < act_n {
-                let ry = 234 + ki * 28
+                let ry = 230 + ki * 26
                 draw_action_name(ki, cl + 10, ry + 4, wht)
                 let mut kc = gold
                 if rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
@@ -1810,6 +1823,75 @@ fn main() {
             actors[5].fcd = 0.25
             prev_weapon = actors[5].wpn
         }
+
+        // --- Melee (V): a katana-reach lunge. Long reach (short would never connect on a
+        // fast target) + heavy damage (125: full green bar + half a shield). Edge-triggered
+        // with a cooldown. Raycasts forward from the eye; the first ACTOR in reach gets hit.
+        melee_cd = melee_cd - dt
+        if melee_cd < 0.0 { melee_cd = 0.0 }
+        let mkey = input_down(act_melee)
+        if mkey > 0 and melee_prev == 0 and melee_cd <= 0.0 and dead == false {
+            melee_cd = melee_cooldown
+            play_noise(60, 16)   // swing swoosh
+            let mhb = phys3d_raycast_ex(actors[5].hdl as i64, px, eye, pz, fx, fy, fz, melee_range)
+            if mhb >= 0 {
+                let mut mvk = 0
+                while mvk < bot_n {
+                    if mhb == (actors[mvk].hdl as i64) and actors[mvk].hp > 0.0 {
+                        let mut md = melee_dmg
+                        if actors[mvk].sh > 0.0 {
+                            if actors[mvk].sh >= md { actors[mvk].sh = actors[mvk].sh - md; md = 0.0 }
+                            else { md = md - actors[mvk].sh; actors[mvk].sh = 0.0 }
+                        }
+                        actors[mvk].hp = actors[mvk].hp - md
+                        brains[mvk].pop = 0.2
+                        hitmark = 0.2
+                        shake = 0.4
+                        play_sound(0 - 18, 105, 0)   // heavy slash thud
+                        let mhx = phys3d_x(actors[mvk].hdl as i64)
+                        let mhy = phys3d_y(actors[mvk].hdl as i64) + 0.5
+                        let mhz = phys3d_z(actors[mvk].hdl as i64)
+                        let mut msp = 0
+                        while msp < 8 {
+                            ppx[pcur] = mhx; ppy[pcur] = mhy; ppz[pcur] = mhz
+                            let mang = (msp as f64) * 0.9 + etime * 5.0
+                            pvx[pcur] = cos(mang) * 4.0 + fx * 3.0
+                            pvy[pcur] = 2.5 + sin(mang) * 2.0
+                            pvz[pcur] = sin(mang) * 4.0 + fz * 3.0
+                            plife[pcur] = 0.3
+                            pcur = pcur + 1
+                            if pcur >= 28 { pcur = 0 }
+                            msp = msp + 1
+                        }
+                        // Katana shove: knock the target back along the swing (decays via the
+                        // shared knockback channel bots already use for blasts/grapple-leaps).
+                        brains[mvk].kx = fx * 14.0
+                        brains[mvk].ky = 6.0
+                        brains[mvk].kz = fz * 14.0
+                        if actors[mvk].hp <= 0.0 {
+                            actors[mvk].hp = 0.0
+                            brains[mvk].resp = enemy_respawn
+                            dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64); dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
+                            dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64) - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
+                            if actors[mvk].shmax > 0.0 {
+                                dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64) + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
+                            }
+                            killmark = 0.4
+                            if round_over == false { kills = kills + 1 }
+                            if oc_active { oc_timer = oc_timer + 2.5 } else {
+                                oc_meter = oc_meter + 22.0
+                                if oc_meter > 100.0 { oc_meter = 100.0 }
+                                oc_gain_t = 0.0
+                            }
+                            play_sound(12, 110, 0)
+                            play_sound(7, 110, 0)
+                        }
+                    }
+                    mvk = mvk + 1
+                }
+            }
+        }
+        melee_prev = mkey
 
 
         // --- Grappling hook (E): aim + fire to anchor onto a surface, then get
@@ -2516,7 +2598,7 @@ fn main() {
                                     if vk < bot_n { brains[vk].pop = 0.1 }
                                     if mine == 1 { hitmark = 0.18; play_noise(45, 14) }
                                     if vk == pl_i and pinvuln <= 0.0 and dead == false {
-                                        dmg_timer = 0.0; hurt_flash = 0.6; shake = 0.085
+                                        dmg_timer = 0.0; hurt_flash = 0.6; shake = 0.34
                                         play_sound(0 - 18, 70, 0)
                                         let rcx = sox - px
                                         let rcz = soz - pz
@@ -2567,6 +2649,30 @@ fn main() {
                         trlife[trcur] = 0.06
                         trcur = trcur + 1
                         if trcur >= tracer_n { trcur = 0 }
+                        // Near-miss jolt: an ENEMY round that whips past your head shakes the
+                        // camera, ramping toward the direct-hit shake the closer it grazes. Gated
+                        // on the bullet actually reaching your vicinity (tproj < travel distance).
+                        if mine == 0 and dead == false and pinvuln <= 0.0 {
+                            let rpx = px - sox
+                            let rpy = eye - soy
+                            let rpz = pz - soz
+                            let tproj = rpx * ax + rpy * ay + rpz * az
+                            let segx = tex - sox
+                            let segy = tey - soy
+                            let segz = tez - soz
+                            let hdist = sqrt(segx * segx + segy * segy + segz * segz)
+                            if tproj > 0.0 and tproj < hdist {
+                                let cxx = rpx - ax * tproj
+                                let cyy = rpy - ay * tproj
+                                let czz = rpz - az * tproj
+                                let perp = sqrt(cxx * cxx + cyy * cyy + czz * czz)
+                                if perp < 1.5 {
+                                    let nf = 1.0 - perp / 1.5
+                                    let nm = nf * nf * 0.34
+                                    if shake < nm { shake = nm }
+                                }
+                            }
+                        }
                     } else {
                         prjx[prjcur] = ox; prjy[prjcur] = oy; prjz[prjcur] = oz
                         prjvx[prjcur] = ax * proj_speed; prjvy[prjcur] = ay * proj_speed; prjvz[prjcur] = az * proj_speed
