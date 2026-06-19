@@ -1033,6 +1033,7 @@ fn main() {
     let mut astate_t = [0.0; 9]     // time in the current base clip (min-dwell anti-flicker)
     let mut ajump = [0.0; 9]        // airborne latch (hold the jump clip through the apex)
     let mut aidle_t = [0.0; 9]      // time spent slow (idle only after a SUSTAINED stop)
+    let mut ayaw = [0.0; 9]         // smoothed displayed body yaw (so facing never snaps/jitters)
     let upper_mask_root = 3         // DEF-spine.002: overlay torso+arms, hips+legs keep locomotion
     let actor_scale = 1.0           // mannequin bind height 1.83m = real human scale
     let actor_yoff = 0.0 - 0.9      // model origin is at the feet; actor pos is the capsule centre
@@ -2611,7 +2612,7 @@ fn main() {
                 if want > 0 and actors[ci].mag[wp] > 0 and actors[ci].rl <= 0.0 and actors[ci].heal <= 0.0 and actors[ci].fcd <= 0.0 {
                     actors[ci].mag[wp] = actors[ci].mag[wp] - 1
                     if actors[ci].mag[wp] <= 0 and actors[ci].res[wp] > 0 { actors[ci].rl = reload_w[wp]; actors[ci].rlw = wp }
-                    if ci != pl_i { ashoot[ci] = 0.4 }   // hold the bot's shoot animation briefly
+                    if ci != pl_i { ashoot[ci] = 0.6 }   // hold the shoot overlay across brief fire gaps
                     let ox = sox + ax * 0.6
                     let oy = soy + ay * 0.6
                     let oz = soz + az * 0.6
@@ -3016,10 +3017,13 @@ fn main() {
                         if ushoot[ed] == 1 { r3d_anim_stop_upper(actor_models[ed], 0.18); ushoot[ed] = 0 }
                     }
                     r3d_anim_update(actor_models[ed], dt)
-                    // Face the aim target while firing; otherwise the run direction when sprinting.
-                    let mut fyaw = brains[ed].face + actor_yaw_off
-                    if spd > 3.0 and ashoot[ed] <= 0.0 { fyaw = atan2(svx, svz) + actor_yaw_off }
-                    r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, fyaw, 0.0, 0.0, actor_scale * psc)
+                    // Face the aim target, SMOOTHLY: low-pass the yaw the short way around, snap
+                    // only on a big (>115 deg) reorient. No raw-delta jitter, no target/move toggle.
+                    // Draw at the plain scale - NO hit "pop" (a throbbing humanoid reads as flicker).
+                    let tyaw = brains[ed].face + actor_yaw_off
+                    let dyaw = atan2(sin(tyaw - ayaw[ed]), cos(tyaw - ayaw[ed]))
+                    if dyaw > 2.0 or dyaw < (0.0 - 2.0) { ayaw[ed] = tyaw } else { ayaw[ed] = ayaw[ed] + dyaw * 0.2 }
+                    r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale)
                     aprevx[ed] = bx
                     aprevz[ed] = bz
                 } else {
