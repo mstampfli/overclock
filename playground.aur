@@ -96,6 +96,11 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     let was_wr = f32_load(state, 23) > 0.5
     let pwnx = f32_load(state, 14)
     let pwnz = f32_load(state, 15)
+    // Blast knock window (slot 29): a brief spell after a nade launch where your own
+    // movement accel/steering is suppressed, so the imparted velocity actually carries
+    // you instead of being instantly counter-steered. Count it down here.
+    let mut knock_t = f32_load(state, 29) - dt
+    if knock_t < 0.0 { knock_t = 0.0 }
     f32_store(state, 3, yaw)
 
     let mut player = (f32_load(state, 21) as i64) - 1
@@ -300,13 +305,16 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             // Skip ground friction the tick a jump fires AND for a short grace just
             // after landing, so hopping around keeps its momentum (only steady-state
             // grounded running brakes via friction -> crisp stops are unaffected).
-            let keep_mo = will_hop or gtime < 0.13
+            let keep_mo = will_hop or gtime < 0.13 or knock_t > 0.0
             if keep_mo == false {
                 mv_friction(state, cfg[4], dt)
             }
             // No sprint: the slide is the ground speed tool now. Run cap (boosted
-            // while overclocked).
-            mv_accel(state, wx, wz, cfg[2] * ocm, cfg[3], dt)
+            // while overclocked). Suppressed during the blast knock window so a frag
+            // can shove you even while you hold a direction.
+            if knock_t <= 0.0 {
+                mv_accel(state, wx, wz, cfg[2] * ocm, cfg[3], dt)
+            }
             // Cap to the run speed (or incoming momentum if higher) so turning /
             // diagonal input can't build speed ABOVE the cap. Momentum from a
             // slide-hop landing is preserved here and bled gradually by friction.
@@ -398,7 +406,7 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             let wlen = sqrt(wx * wx + wz * wz)
             // No air-steering while grappling - the pull dominates (you swing, you
             // don't strafe away from the anchor).
-            if asp > 0.1 and wlen > 0.1 and g_active == false {
+            if asp > 0.1 and wlen > 0.1 and g_active == false and knock_t <= 0.0 {
                 let wdx = wx / wlen
                 let wdz = wz / wlen
                 let cdx = avx / asp
@@ -415,8 +423,8 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             }
             // No air acceleration while grappling either - input adds NO momentum,
             // so pressing keys can't feed the pull's away/snap (no S-fling). You just
-            // swing on the pull + gravity.
-            if g_active == false {
+            // swing on the pull + gravity. Also off during the blast knock window.
+            if g_active == false and knock_t <= 0.0 {
                 mv_accel(state, wx, wz, cfg[5] * ocm, cfg[6], dt)
             }
             // Cap air speed to the air cap (or incoming momentum if higher). Steering
@@ -694,6 +702,35 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
         f32_store(state, 6, clz * csc)
     }
 
+    // Explosion knockback: a one-shot impulse the main loop pushes in via input slots
+    // 14-16 the tick a nearby frag detonates. Applied AFTER the clamp so a blast can
+    // briefly yeet you past the normal speed cap; it settles back to the cap next tick.
+    let bix = f32_load(input, 14)
+    let biy = f32_load(input, 15)
+    let biz = f32_load(input, 16)
+    let bhm = sqrt(bix * bix + biz * biz)
+    if bhm > 0.01 {
+        // Cancel the horizontal velocity heading INTO the blast first, so running
+        // toward a frag doesn't eat the push (the bug: you'd only get popped UP). Then
+        // the outward impulse below lands cleanly, and the knock window (set here)
+        // suppresses your accel for a moment so it actually carries you back.
+        let adx = bix / bhm
+        let adz = biz / bhm
+        let cvx = f32_load(state, 4)
+        let cvz = f32_load(state, 6)
+        let into = cvx * adx + cvz * adz
+        if into < 0.0 {
+            f32_store(state, 4, cvx - into * adx)
+            f32_store(state, 6, cvz - into * adz)
+        }
+        knock_t = 0.25
+    }
+    f32_store(state, 4, f32_load(state, 4) + bix)
+    f32_store(state, 6, f32_load(state, 6) + biz)
+    vy = vy + biy
+    f32_store(state, 5, vy)
+    f32_store(state, 29, knock_t)
+
     // Collide-and-slide via the physics character, then read the resolved
     // position back into the blob (the engine reads [0..3] for the transform).
     // The wall-stick is added to the move only (kept out of stored velocity) so
@@ -736,7 +773,7 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     if f32_load(state, 1) < 0.0 - 25.0 or f32_load(input, 8) > 0.5 {
         f32_store(state, 0, 0.0)
         f32_store(state, 1, 0.9)
-        f32_store(state, 2, 8.0)
+        f32_store(state, 2, 15.0)
         f32_store(state, 4, 0.0)
         f32_store(state, 5, 0.0)
         f32_store(state, 6, 0.0)
@@ -760,11 +797,13 @@ fn main() {
     // Visuals (sized by half-extents to match the physics colliders below; the
     // box mesh is built at the collider's size, so draw scale stays 1).
     let ground_vis = r3d_make_plane(200.0, 200.0, 0.32, 0.46, 0.34)
-    let side_vis = r3d_make_box_sized(0.5, 3.0, 8.0, 0.55, 0.58, 0.64)
-    let back_vis = r3d_make_box_sized(8.0, 3.0, 0.5, 0.5, 0.53, 0.6)
-    let box_vis = r3d_make_box_sized(1.0, 1.0, 1.0, 0.62, 0.5, 0.42)
-    let dome_vis = r3d_make_sphere(32, 0.72, 0.5, 0.55)
     let spark = r3d_make_sprite(1.0, 0.85, 0.35)
+    // Explosion palette (sprites are self-lit, so they glow): a white-hot flash, two
+    // fireball oranges, and a dark smoke puff. The blast is built from these.
+    let flash_vis = r3d_make_sprite(1.0, 0.96, 0.82)
+    let fire_vis = r3d_make_sprite(1.0, 0.55, 0.16)
+    let fire2_vis = r3d_make_sprite(0.92, 0.28, 0.09)
+    let smoke_vis = r3d_make_sprite(0.22, 0.21, 0.2)
     // Other players (capsule-ish box: radius 0.3, half-height 0.9).
     let body_vis = r3d_make_box_sized(0.3, 0.9, 0.3, 0.35, 0.7, 0.95)
     let head_vis = r3d_make_box_sized(0.18, 0.18, 0.18, 0.9, 0.8, 0.4)
@@ -775,22 +814,71 @@ fn main() {
     // themselves light up against the dimmed world.
     let enemy_glow_body = r3d_make_box_emissive(0.3, 0.9, 0.3, 1.0, 0.12, 0.18)
     let enemy_glow_head = r3d_make_box_emissive(0.18, 0.18, 0.18, 1.0, 0.45, 0.22)
+    // Frag grenade (small, self-lit so it reads as it arcs).
+    let nade_vis = r3d_make_box_emissive(0.09, 0.09, 0.09, 0.35, 1.0, 0.45)
+    // Loose crates (DYNAMIC physics props) the blast can fling around.
+    let crate_vis = r3d_make_box_sized(0.4, 0.4, 0.4, 0.6, 0.46, 0.3)
+    // Pickups (self-lit so they glow): green heal pad/orb, blue shield cell.
+    let heal_vis = r3d_make_box_emissive(0.22, 0.22, 0.22, 0.2, 1.0, 0.4)
+    let shield_vis = r3d_make_box_emissive(0.22, 0.22, 0.22, 0.3, 0.6, 1.0)
+    // Projectile bolt for the launcher (self-lit magenta so it reads in flight).
+    let proj_vis = r3d_make_box_emissive(0.12, 0.12, 0.12, 1.0, 0.4, 1.0)
 
     // Physics world. World gravity pulls DYNAMIC bodies (the shootable targets)
     // down; the player capsule is kinematic and unaffected (it runs its own
     // gravity in the sim), so this does not change movement feel.
     phys3d_init(0.0, 0.0 - 15.0, 0.0)
     phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 100.0, 0.5, 100.0, 0)        // ground
-    phys3d_add_box(0.0 - 6.0, 3.0, 0.0 - 10.0, 0.5, 3.0, 8.0, 0)     // left wall
-    phys3d_add_box(6.0, 3.0, 0.0 - 10.0, 0.5, 3.0, 8.0, 0)           // right wall
-    phys3d_add_box(0.0, 3.0, 0.0 - 19.0, 8.0, 3.0, 0.5, 0)           // back wall
-    phys3d_add_box(3.0, 1.0, 0.0 - 4.0, 1.0, 1.0, 1.0, 0)            // step box
-    phys3d_add_sphere(0.0, 3.0, 0.0 - 13.0, 4.0, 0)                  // curved dome
+    // Arena geometry: parallel arrays of box centre (x,y,z), half-extents (hx,hy,hz),
+    // and colour. Each becomes a static collider + a matching mesh (gmesh) drawn each
+    // frame. Layout (36x36, walled): 0-3 perimeter walls (wallrun + containment), 4 a
+    // central high-ground block, 5-8 buildings with rooftops (wallrun the sides), 9-10
+    // long freestanding wallrun walls, 11-12 steps up, 13-17 low cover blocks.
+    let geo_n = 18
+    let gcx = [0.0, 0.0, 18.0, 0.0 - 18.0, 0.0, 0.0 - 10.0, 11.0, 0.0 - 11.0, 10.0, 5.0, 0.0 - 6.0, 0.0 - 5.0, 0.0 - 6.5, 3.0, 0.0 - 3.0, 13.0, 0.0 - 13.0, 7.0]
+    let gcy = [4.0, 4.0, 4.0, 4.0, 1.6, 3.0, 2.2, 1.8, 2.6, 2.5, 2.5, 0.6, 1.2, 0.7, 0.7, 0.7, 0.7, 0.7]
+    let gcz = [0.0 - 18.0, 18.0, 0.0, 0.0, 0.0, 0.0 - 9.0, 9.0, 10.0, 0.0 - 10.0, 0.0 - 3.0, 4.0, 0.0 - 5.0, 0.0 - 6.5, 8.0, 0.0 - 12.0, 0.0, 0.0 - 2.0, 13.0]
+    let ghx = [18.0, 18.0, 0.5, 0.5, 4.0, 3.5, 3.0, 2.5, 3.0, 0.4, 7.0, 1.5, 1.2, 1.0, 1.2, 1.0, 1.0, 1.2]
+    let ghy = [4.0, 4.0, 4.0, 4.0, 1.6, 3.0, 2.2, 1.8, 2.6, 2.5, 2.5, 0.6, 1.2, 0.7, 0.7, 0.7, 0.7, 0.7]
+    let ghz = [0.5, 0.5, 18.0, 18.0, 4.0, 3.5, 3.0, 2.5, 3.0, 7.0, 0.4, 1.5, 1.2, 1.0, 1.2, 1.0, 1.0, 1.2]
+    let gr = [0.45, 0.45, 0.45, 0.45, 0.50, 0.55, 0.50, 0.52, 0.48, 0.50, 0.50, 0.46, 0.46, 0.42, 0.42, 0.42, 0.42, 0.42]
+    let gg = [0.48, 0.48, 0.48, 0.48, 0.52, 0.50, 0.52, 0.48, 0.50, 0.50, 0.50, 0.46, 0.46, 0.44, 0.44, 0.44, 0.44, 0.44]
+    let gb = [0.55, 0.55, 0.55, 0.55, 0.58, 0.46, 0.55, 0.44, 0.54, 0.56, 0.56, 0.50, 0.50, 0.48, 0.48, 0.48, 0.48, 0.48]
+    let mut gmesh = [0; 18]
+    let mut gbi = 0
+    while gbi < geo_n {
+        phys3d_add_box(gcx[gbi], gcy[gbi], gcz[gbi], ghx[gbi], ghy[gbi], ghz[gbi], 0)
+        gmesh[gbi] = r3d_make_box_sized(ghx[gbi], ghy[gbi], ghz[gbi], gr[gbi], gg[gbi], gb[gbi])
+        gbi = gbi + 1
+    }
+    // Dynamic crates (flag 1 = movable): props the frag blast can fling. Handles are
+    // kept so we can apply blast impulses and draw them at their live positions.
+    let crate_n = 6
+    let crates = [
+        phys3d_add_box(6.0, 0.45, 6.0, 0.4, 0.4, 0.4, 1) as f64,
+        phys3d_add_box(7.0, 0.45, 6.6, 0.4, 0.4, 0.4, 1) as f64,
+        phys3d_add_box(0.0 - 6.0, 0.45, 0.0 - 2.0, 0.4, 0.4, 0.4, 1) as f64,
+        phys3d_add_box(0.0 - 7.0, 0.45, 0.0 - 1.0, 0.4, 0.4, 0.4, 1) as f64,
+        phys3d_add_box(14.0, 0.45, 4.0, 0.4, 0.4, 0.4, 1) as f64,
+        phys3d_add_box(0.0 - 14.0, 0.45, 0.0 - 6.0, 0.4, 0.4, 0.4, 1) as f64
+    ]
+    // Fixed pickup spots that respawn on a timer. type 0 = HEALTH pad (instant heal on
+    // touch); type 1 = SHIELD CELL (adds a cell to your inventory; you APPLY it later).
+    let pk_n = 4
+    // 0 heal pad on the central high-ground block (risky); 1 heal pad in a corner;
+    // 2 shield cell on building A's roof (reward for getting up); 3 shield cell open.
+    let pkx = [0.0, 0.0 - 15.0, 0.0 - 10.0, 15.0]
+    let pky = [3.6, 0.5, 6.4, 0.5]
+    let pkz = [0.0, 15.0, 0.0 - 9.0, 0.0 - 14.0]
+    let pktype = [0.0, 0.0, 1.0, 0.0]   // only ONE fixed shield-cell spot (scarce)
+    let mut pkcd = [0.0, 0.0, 0.0, 0.0]   // respawn cooldown; 0 = available
+    let pk_respawn = 8.0
+
     // Enemy bots: kinematic characters (like players) that strafe in place and
     // shoot the player. Health/respawn/fire-timer live in arrays, indexed in the
     // main loop. Their physics handles go in `eh`; spawn anchors in esx/esz.
-    let esx = [4.0, 0.0 - 4.0, 0.0]
-    let esz = [0.0 - 8.0, 0.0 - 12.0, 0.0 - 16.0]
+    let esx = [0.0 - 4.0, 4.0, 15.0]
+    let esz = [0.0 - 14.0, 14.0, 5.0]
     let eh = [
         phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3) as f64,
         phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3) as f64,
@@ -799,6 +887,11 @@ fn main() {
     let mut ehp = [100.0, 100.0, 100.0]      // current health
     let mut eresp = [0.0, 0.0, 0.0]          // respawn countdown while dead
     let mut efire = [0.4, 0.9, 1.4]          // staggered shot timers
+    // Per-bot blast knockback velocity (added to their move, decays). Bots are
+    // kinematic, so they don't take impulses - we shove them manually.
+    let mut ekx = [0.0, 0.0, 0.0]
+    let mut eky = [0.0, 0.0, 0.0]
+    let mut ekz = [0.0, 0.0, 0.0]
     // Per-player characters are created lazily by the sim (see sim_step).
 
     // Rebindable input actions (ACTION -> input code; change freely at runtime).
@@ -813,6 +906,10 @@ fn main() {
     let act_reload = 8
     let act_overclock = 9
     let act_grapple = 10
+    let act_frag = 11
+    let act_heal = 12
+    let act_wep1 = 13
+    let act_wep2 = 14
     input_bind(act_fwd, 5)     // W
     input_bind(act_back, 7)    // S
     input_bind(act_left, 6)    // A
@@ -824,6 +921,10 @@ fn main() {
     input_bind(act_reload, 14) // R (reload)
     input_bind(act_overclock, 17) // F (trigger OVERCLOCK when the meter is full)
     input_bind(act_grapple, 15)   // E (grappling hook)
+    input_bind(act_frag, 46)      // G (frag grenade)
+    input_bind(act_heal, 16)      // Q (apply a shield cell)
+    input_bind(act_wep1, 30)      // 1 (rifle)  - digit row is 1-indexed at code 30
+    input_bind(act_wep2, 31)      // 2 (projectile launcher)
 
     // Movement tuning (data-driven; tweak and re-run to change the feel).
     let cfg = [
@@ -861,8 +962,8 @@ fn main() {
     net_sim(|state, input| {
         sim_step(state, input, cfg)
         0
-    }, 21, 14)
-    net_spawn_at(0.0, 0.9, 8.0)
+    }, 21, 17)
+    net_spawn_at(0.0, 0.9, 15.0)
 
     let mut yaw = 0.0
     let mut pitch = 0.0
@@ -893,9 +994,19 @@ fn main() {
     // Damage feedback + death + ammo.
     let mut dmg_dir = 0.0     // screen angle the last hit came from (for the indicator)
     let mut dead = false      // dead, waiting to respawn
+    let mut prev_dead = false  // detect the death transition (to drop cells once)
+    let mut drop_count = 0     // enemy-drop counter (makes shield drops scarce)
     let mut respawn_cd = 0.0  // seconds until respawn
-    let mag_size = 24
-    let mut ammo = 24         // rounds left in the magazine
+    // Two weapons: 0 = hitscan rifle, 1 = travel-time projectile launcher. `ammo` and
+    // `mag_size` are the CURRENT weapon's live values; the other weapon's ammo waits in
+    // `ammo_alt` (swapped on weapon change), so the gun/reload/HUD code stays simple.
+    let mut weapon = 0
+    let mut prev_weapon = 0
+    let mag_size_w = [24, 1]    // per-weapon mag sizes (launcher = single-shot rocket)
+    let fire_w = [0.11, 0.5]    // per-weapon fire interval (rifle fast, launcher slow)
+    let mut mag_size = 24
+    let mut ammo = 24         // rounds left in the CURRENT weapon's magazine
+    let mut ammo_alt = 1      // the other weapon's saved ammo (launcher starts with 1)
     let reload_time = 1.6
     let mut reload_t = 0.0    // reload in progress while > 0
     // OVERCLOCK signature mechanic: meter fills from kills + movement style; at full,
@@ -913,6 +1024,47 @@ fn main() {
     let mut g_cd = 0.0        // cooldown after use
     let mut g_time = 0.0      // how long the current grapple has run
     let mut g_prev = 0        // grapple key last frame (edge-detect the fire)
+    // Frag grenade live state (one in flight at a time).
+    let mut nade_live = false
+    let mut grx = 0.0         // grenade world position
+    let mut gry = 0.0
+    let mut grz = 0.0
+    let mut grvx = 0.0        // grenade velocity
+    let mut grvy = 0.0
+    let mut grvz = 0.0
+    let mut nfuse = 0.0       // seconds until detonation
+    let mut nade_cd = 0.0     // throw cooldown remaining
+    let mut nade_prev = 0     // throw key last frame (edge-detect)
+    let mut boom_t = 0.0      // explosion flash timer
+    let mut boom_int = 1.0    // explosion visual intensity (scales the boom draw)
+    let mut boomx = 0.0
+    let mut boomy = 0.0
+    let mut boomz = 0.0
+    // Unified explosion request: a nade fuse OR a rocket impact sets this + a point +
+    // an INTENSITY; one handler does the radial damage/knockback/FX, all scaled by the
+    // intensity (at most one blast per frame).
+    let mut explode = false
+    let mut ex_x = 0.0
+    let mut ex_y = 0.0
+    let mut ex_z = 0.0
+    let mut ex_int = 1.0
+    // Pending blast knockback to push into the player NEXT tick via the input blob
+    // (the sim owns the player velocity). One-shot: set on detonation, cleared after.
+    let mut blast_ix = 0.0
+    let mut blast_iy = 0.0
+    let mut blast_iz = 0.0
+    // Launcher projectiles in flight: position + velocity + life (>0 = active).
+    let proj_n = 12
+    let mut prjx = [0.0; 12]
+    let mut prjy = [0.0; 12]
+    let mut prjz = [0.0; 12]
+    let mut prjvx = [0.0; 12]
+    let mut prjvy = [0.0; 12]
+    let mut prjvz = [0.0; 12]
+    let mut prjlife = [0.0; 12]
+    let mut prjcur = 0
+    let proj_speed = 60.0    // travel speed (lead your target)
+    let proj_life = 2.2      // seconds before it fizzles (~130m range)
     let mut slidetilt = 0.0  // camera reclines back while sliding
     let mut dashwind = 0.0   // one-time wind-line burst on a dash (decays)
     let mut prev_dcd = 0.0   // previous dash cooldown, to detect a fresh dash
@@ -925,6 +1077,23 @@ fn main() {
     let enemy_respawn = 3.0
     let bot_dmg = 10.0
     let bot_fire_cd = 1.0
+    // Frag grenade (cooldown tactical): an arcing projectile that inherits your
+    // momentum, bounces off geometry, and detonates on a fuse with radial falloff.
+    let nade_throw = 17.0      // launch speed along the look direction
+    let nade_grav = 20.0       // arc gravity (snappier than the player's)
+    let nade_fuse = 1.4        // seconds to detonate
+    let nade_radius = 5.0      // blast radius (metres) for DAMAGE
+    let nade_dmg = 130.0       // damage at the centre; linear falloff to 0 at the edge
+    let nade_cooldown = 4.0    // throw cooldown
+    let nade_kb_radius = 8.0   // KNOCKBACK reach (wider than damage - it shoves further)
+    let crate_kb = 6.0         // impulse on dynamic crates (impulse/mass; ~0.5kg crate)
+    let bot_kb = 16.0          // knockback velocity on bots (falloff-scaled)
+    let player_kb = 14.0       // knockback velocity on YOU (reduced; falloff-scaled)
+    let shot_kb = 2.2          // per-bullet impulse on a hit crate (impulse/mass)
+    // Explosion INTENSITY per source (scales damage, radius, knockback + visual): 1.0
+    // is the baseline frag. Tweak these to make a source punchier/weaker.
+    let nade_intensity = 1.0
+    let rocket_intensity = 1.1
     let php_max = 100.0          // player health
     let psh_max = 50.0           // player shield (sits over health, regens first)
     let regen_delay = 2.0        // seconds out of damage before regen kicks in
@@ -946,6 +1115,23 @@ fn main() {
     let mut plife = [0.0; 28]
     let mut pcur = 0             // round-robin write cursor
     let mut epop = [0.0, 0.0, 0.0]   // per-enemy hit flinch (scale pop)
+    // Enemy drops: a collectable spawned at a bot's body on death. type 0 = health
+    // (instant heal), 1 = shield cell (inventory). droplife > 0 = active, counts down.
+    let drop_n = 6
+    let mut dropx = [0.0; 6]
+    let mut dropy = [0.0; 6]
+    let mut dropz = [0.0; 6]
+    let mut droptype = [0.0; 6]
+    let mut droplife = [0.0; 6]
+    let mut dropcur = 0
+    let drop_life = 12.0
+    // Shields are Apex-style: you carry CELLS and apply them with an action (a channel)
+    // rather than picking up instant shield. healing > 0 = mid-channel.
+    let mut shield_cells = 0
+    let mut healing = 0.0
+    let heal_channel = 2.5      // seconds to apply one cell
+    let cell_shield = 25.0      // shield restored per cell (psh_max 50 = 2 cells)
+    let max_cells = 4
 
     while r3d_present() {
         r3d_begin()
@@ -984,16 +1170,27 @@ fn main() {
             slide = 0
             dash = 0
         }
-        // Overclock move-speed multiplier (uses last frame's state; 1-frame lag is fine).
+        // Applying a shield cell is a committed action: no sliding or dashing while you
+        // do it (1-frame lag on `healing` is fine).
+        if healing > 0.0 {
+            slide = 0
+            dash = 0
+        }
+        // Movement speed multiplier (slot 9): overclock speeds you up, shield-apply
+        // slows you to a vulnerable walk.
         let mut oc_mult = 1.0
         if oc_active { oc_mult = 1.35 }
+        if healing > 0.0 { oc_mult = 0.5 }
         // Grapple anchor + active flag (set last frame after aiming; 1-frame lag fine).
         let mut g_flag = 0.0
         if grapple_on { g_flag = 1.0 }
-        let blob = [fwd, strafe, yaw, jump as f64, slide as f64, dash as f64, dt, pitch, respawn_req, oc_mult, gx, gy, gz, g_flag]
+        let blob = [fwd, strafe, yaw, jump as f64, slide as f64, dash as f64, dt, pitch, respawn_req, oc_mult, gx, gy, gz, g_flag, blast_ix, blast_iy, blast_iz]
         net_send_input(blob)
         net_update(dt)
         respawn_req = 0.0    // one-shot: consumed by the send above
+        blast_ix = 0.0       // one-shot blast impulse: consumed by the send above
+        blast_iy = 0.0
+        blast_iz = 0.0
 
         // Camera from the locally-predicted state (capsule centre -> eye). The
         // eye dips smoothly while sliding (lerp the crouch offset, no teleport).
@@ -1083,6 +1280,20 @@ fn main() {
         let sjz = cos(etime * 150.0) * shake
         r3d_camera(px + sjx, eye + sjy, pz + sjz, px + fx + sjx, eye + fy + sjy, pz + fz + sjz, 95.0)
 
+        // Weapon select (1 = rifle, 2 = launcher). Switching swaps in that weapon's
+        // saved ammo + mag size, cancels a reload, and adds a brief swap delay.
+        if input_down(act_wep1) > 0 { weapon = 0 }
+        if input_down(act_wep2) > 0 { weapon = 1 }
+        if weapon != prev_weapon {
+            let tmp_a = ammo
+            ammo = ammo_alt
+            ammo_alt = tmp_a
+            mag_size = mag_size_w[weapon]
+            reload_t = 0.0
+            fire_cd = 0.25
+            prev_weapon = weapon
+        }
+
         // Reload: manual (R) when not full, or auto when the mag is empty. Can't fire
         // while reloading. Near-instant while OVERCLOCKED.
         let mut cur_reload = reload_time
@@ -1102,13 +1313,14 @@ fn main() {
         // (offset forward to clear our own capsule); leaves a tracer + spark.
         fire_cd = fire_cd - dt
         if fire_cd < 0.0 { fire_cd = 0.0 }
-        if input_down(act_fire) > 0 and dead == false and ammo > 0 and reload_t <= 0.0 {
+        if input_down(act_fire) > 0 and dead == false and ammo > 0 and reload_t <= 0.0 and healing <= 0.0 {
             if fire_cd <= 0.0 {
                 ammo = ammo - 1
                 if ammo <= 0 { reload_t = cur_reload }
                 let ox = px + fx * 0.6
                 let oy = eye + fy * 0.6
                 let oz = pz + fz * 0.6
+                if weapon == 0 {
                 let body = phys3d_raycast_full(ox, oy, oz, fx, fy, fz, 120.0)
                 if body >= 0 {
                     hxp = phys3d_hit_x()
@@ -1141,6 +1353,17 @@ fn main() {
                             if ehp[ei] <= 0.0 {
                                 ehp[ei] = 0.0
                                 eresp[ei] = enemy_respawn
+                                // Drop a collectable at the body (alternate hp / cell).
+                                dropx[dropcur] = phys3d_x(eh[ei] as i64)
+                                dropy[dropcur] = 0.6
+                                dropz[dropcur] = phys3d_z(eh[ei] as i64)
+                                let mut dsh = 0.0
+                                if drop_count % 4 == 0 { dsh = 1.0 }
+                                drop_count = drop_count + 1
+                                droptype[dropcur] = dsh
+                                droplife[dropcur] = drop_life
+                                dropcur = dropcur + 1
+                                if dropcur >= drop_n { dropcur = 0 }
                                 killmark = 0.35
                                 if round_over == false { kills = kills + 1 }
                                 // Overclock: a kill refills the meter a LITTLE (airborne
@@ -1162,14 +1385,37 @@ fn main() {
                         }
                         ei = ei + 1
                     }
+                    // Shots shove loose crates (dynamic props) along the bullet line -
+                    // players and bots are NOT pushed by bullets, only by nade blasts.
+                    let mut sck = 0
+                    while sck < crate_n {
+                        if body == (crates[sck] as i64) {
+                            phys3d_apply_impulse(crates[sck] as i64, fx * shot_kb, fy * shot_kb, fz * shot_kb)
+                        }
+                        sck = sck + 1
+                    }
                 } else {
                     hxp = ox + fx * 120.0
                     hyp = oy + fy * 120.0
                     hzp = oz + fz * 120.0
                 }
                 hit_t = 0.05
-                fire_cd = 0.11
-                if oc_active { fire_cd = 0.06 }   // faster fire while overclocked
+                } else {
+                    // LAUNCHER: spawn a travel-time bolt; the update loop below carries
+                    // and collides it. Lead moving targets to land hits.
+                    prjx[prjcur] = ox
+                    prjy[prjcur] = oy
+                    prjz[prjcur] = oz
+                    prjvx[prjcur] = fx * proj_speed
+                    prjvy[prjcur] = fy * proj_speed
+                    prjvz[prjcur] = fz * proj_speed
+                    prjlife[prjcur] = proj_life
+                    prjcur = prjcur + 1
+                    if prjcur >= proj_n { prjcur = 0 }
+                    play_sound(0 - 8, 70, 0)   // launch thump
+                }
+                fire_cd = fire_w[weapon]
+                if oc_active { fire_cd = fire_cd * 0.55 }   // faster fire while overclocked
             }
         }
 
@@ -1211,6 +1457,233 @@ fn main() {
             r3d_debug_line(px + fx * 0.4, eye - 0.12, pz + fz * 0.4, gx, gy, gz, 0.55, 0.9, 1.0)
         }
 
+        // --- Frag grenade (G): a cooldown tactical. Throw an arcing projectile that
+        // inherits your momentum, bounces off geometry (excluding yourself), and
+        // detonates on a fuse, dealing radial damage with distance falloff. One in
+        // flight at a time; cools down after the throw.
+        nade_cd = nade_cd - dt
+        if nade_cd < 0.0 { nade_cd = 0.0 }
+        let gpc = (net_local_state(21) as i64) - 1
+        let nkey = input_down(act_frag)
+        if nkey > 0 and nade_prev == 0 and nade_live == false and nade_cd <= 0.0 and dead == false {
+            grx = px + fx * 0.5
+            gry = eye + fy * 0.5
+            grz = pz + fz * 0.5
+            // Launch along the look dir + a little up, PLUS our own velocity so a fast
+            // throw flies further (rewards movement).
+            grvx = fx * nade_throw + net_local_state(4)
+            grvy = fy * nade_throw + 3.0 + net_local_state(5) * 0.4
+            grvz = fz * nade_throw + net_local_state(6)
+            nfuse = nade_fuse
+            nade_live = true
+            nade_cd = nade_cooldown
+            play_sound(0 - 14, 90, 0)   // soft throw pop
+        }
+        nade_prev = nkey
+
+        if nade_live {
+            nfuse = nfuse - dt
+            grvy = grvy - nade_grav * dt
+            // Move with collision: cast along this frame's motion and bounce off the
+            // first surface (damped), else advance freely.
+            let grsp = sqrt(grvx * grvx + grvy * grvy + grvz * grvz)
+            if grsp > 0.001 {
+                let gdx = grvx / grsp
+                let gdy = grvy / grsp
+                let gdz = grvz / grsp
+                let gstep = grsp * dt
+                let ghb = phys3d_raycast_ex(gpc, grx, gry, grz, gdx, gdy, gdz, gstep + 0.08)
+                if ghb >= 0 {
+                    let cnx = phys3d_hit_nx()
+                    let cny = phys3d_hit_ny()
+                    let cnz = phys3d_hit_nz()
+                    grx = phys3d_hit_x() + cnx * 0.06
+                    gry = phys3d_hit_y() + cny * 0.06
+                    grz = phys3d_hit_z() + cnz * 0.06
+                    let vdot = grvx * cnx + grvy * cny + grvz * cnz
+                    grvx = (grvx - 2.0 * vdot * cnx) * 0.45
+                    grvy = (grvy - 2.0 * vdot * cny) * 0.45
+                    grvz = (grvz - 2.0 * vdot * cnz) * 0.45
+                } else {
+                    grx = grx + grvx * dt
+                    gry = gry + grvy * dt
+                    grz = grz + grvz * dt
+                }
+            }
+            // Tumble it as it flies so it reads as a thrown object.
+            r3d_draw(nade_vis, grx, gry, grz, etime * 7.0, etime * 5.0, 0.0, 1.0)
+            if nfuse <= 0.0 {
+                nade_live = false
+                explode = true
+                ex_x = grx
+                ex_y = gry
+                ex_z = grz
+                ex_int = nade_intensity
+            }
+        }
+
+        // --- Launcher projectiles: travel-time ROCKETS. Sweep each bolt's step with a
+        // raycast (excluding you); on ANY hit, request an explosion at the impact point
+        // (the unified handler does the damage/knockback/FX). Otherwise advance + draw. ---
+        let prc = (net_local_state(21) as i64) - 1
+        let mut prj = 0
+        while prj < proj_n {
+            if prjlife[prj] > 0.0 {
+                prjlife[prj] = prjlife[prj] - dt
+                let psp = sqrt(prjvx[prj] * prjvx[prj] + prjvy[prj] * prjvy[prj] + prjvz[prj] * prjvz[prj])
+                if psp > 0.001 {
+                    let pdx = prjvx[prj] / psp
+                    let pdy = prjvy[prj] / psp
+                    let pdz = prjvz[prj] / psp
+                    let phit = phys3d_raycast_ex(prc, prjx[prj], prjy[prj], prjz[prj], pdx, pdy, pdz, psp * dt + 0.12)
+                    if phit >= 0 {
+                        // Rocket: explode ON IMPACT (no fuse) at the hit point - the
+                        // unified handler does the radial damage/knockback/FX.
+                        explode = true
+                        ex_x = phys3d_hit_x()
+                        ex_y = phys3d_hit_y()
+                        ex_z = phys3d_hit_z()
+                        ex_int = rocket_intensity
+                        prjlife[prj] = 0.0
+                    } else {
+                        prjx[prj] = prjx[prj] + prjvx[prj] * dt
+                        prjy[prj] = prjy[prj] + prjvy[prj] * dt
+                        prjz[prj] = prjz[prj] + prjvz[prj] * dt
+                    }
+                }
+                if prjlife[prj] > 0.0 {
+                    r3d_draw(proj_vis, prjx[prj], prjy[prj], prjz[prj], 0.0, 0.0, 0.0, 1.0)
+                }
+            }
+            prj = prj + 1
+        }
+
+        // --- Unified explosion: a nade fuse OR a rocket impact set `explode` + a point
+        // + an intensity (gi). One handler does radial damage, knockback (crates / bots /
+        // you), self-damage, and FX - everything scaled by the intensity. ---
+        if explode {
+            explode = false
+            let gi = ex_int
+            let rad = nade_radius * gi    // damage radius
+            let krad = nade_kb_radius * gi  // knockback reach
+            boom_t = 0.6
+            boom_int = gi
+            boomx = ex_x
+            boomy = ex_y
+            boomz = ex_z
+            // Radial damage with linear falloff; a kill runs the usual bookkeeping.
+            let mut ej = 0
+            while ej < 3 {
+                if ehp[ej] > 0.0 {
+                    let ghh = eh[ej] as i64
+                    let bdx = phys3d_x(ghh) - ex_x
+                    let bdy = (phys3d_y(ghh) + 0.5) - ex_y
+                    let bdz = phys3d_z(ghh) - ex_z
+                    let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
+                    if bdd < rad {
+                        ehp[ej] = ehp[ej] - nade_dmg * gi * (1.0 - bdd / rad)
+                        epop[ej] = 0.15
+                        if ehp[ej] <= 0.0 {
+                            ehp[ej] = 0.0
+                            eresp[ej] = enemy_respawn
+                            dropx[dropcur] = phys3d_x(eh[ej] as i64)
+                            dropy[dropcur] = 0.6
+                            dropz[dropcur] = phys3d_z(eh[ej] as i64)
+                            let mut dsh = 0.0
+                            if drop_count % 4 == 0 { dsh = 1.0 }
+                            drop_count = drop_count + 1
+                            droptype[dropcur] = dsh
+                            droplife[dropcur] = drop_life
+                            dropcur = dropcur + 1
+                            if dropcur >= drop_n { dropcur = 0 }
+                            killmark = 0.35
+                            if round_over == false { kills = kills + 1 }
+                            if oc_active {
+                                oc_timer = oc_timer + 2.5
+                            } else {
+                                oc_meter = oc_meter + 16.0
+                                if oc_meter > 100.0 { oc_meter = 100.0 }
+                                oc_gain_t = 0.0
+                            }
+                            play_sound(12, 110, 0)
+                            play_sound(7, 110, 0)
+                        }
+                    }
+                    if bdd < krad and bdd > 0.01 {
+                        let kf = bot_kb * gi * (1.0 - bdd / krad)
+                        ekx[ej] = ekx[ej] + bdx / bdd * kf
+                        eky[ej] = eky[ej] + kf * 0.7 + 12.0
+                        ekz[ej] = ekz[ej] + bdz / bdd * kf
+                    }
+                }
+                ej = ej + 1
+            }
+            // Fling loose crates (impulse away + a pop up).
+            let mut ck = 0
+            while ck < crate_n {
+                let chh = crates[ck] as i64
+                let cdx = phys3d_x(chh) - ex_x
+                let cdy = phys3d_y(chh) - ex_y
+                let cdz = phys3d_z(chh) - ex_z
+                let cdd = sqrt(cdx * cdx + cdy * cdy + cdz * cdz)
+                if cdd < krad and cdd > 0.01 {
+                    let cf = crate_kb * gi * (1.0 - cdd / krad)
+                    phys3d_apply_impulse(chh, cdx / cdd * cf, cdy / cdd * cf + cf * 0.7, cdz / cdd * cf)
+                }
+                ck = ck + 1
+            }
+            // Player distance -> self-damage, knockback, and shake.
+            let pbx = px - ex_x
+            let pby = py - ex_y
+            let pbz = pz - ex_z
+            let pbd = sqrt(pbx * pbx + pby * pby + pbz * pbz)
+            if pbd < rad and pinvuln <= 0.0 and dead == false {
+                let mut sd = nade_dmg * gi * (1.0 - pbd / rad) * 0.5
+                if psh > 0.0 {
+                    if psh >= sd { psh = psh - sd; sd = 0.0 }
+                    else { sd = sd - psh; psh = 0.0 }
+                }
+                php = php - sd
+                dmg_timer = 0.0
+                hurt_flash = 0.6
+                if php <= 0.0 {
+                    dead = true
+                    respawn_cd = 3.0
+                    deaths = deaths + 1
+                    play_sound(0 - 26, 260, 0)
+                }
+            }
+            if pbd < krad and pbd > 0.01 and dead == false {
+                let pf = player_kb * gi * (1.0 - pbd / krad)
+                blast_ix = pbx / pbd * pf
+                blast_iz = pbz / pbd * pf
+                blast_iy = 5.0 + pf * 0.5
+            }
+            // Spark/debris burst (count + speed scale with intensity).
+            let mut bp = 0
+            while bp < 16 {
+                ppx[pcur] = ex_x
+                ppy[pcur] = ex_y
+                ppz[pcur] = ex_z
+                let bang = (bp as f64) * 0.92
+                pvx[pcur] = cos(bang) * 8.5 * gi
+                pvy[pcur] = 4.0 * gi + sin(bang * 1.7) * 3.5
+                pvz[pcur] = sin(bang) * 8.5 * gi
+                plife[pcur] = 0.5
+                pcur = pcur + 1
+                if pcur >= 28 { pcur = 0 }
+                bp = bp + 1
+            }
+            play_noise(40, 120)
+            play_sound(0 - 30, 150, 0)
+            let shrad = 12.0 * gi
+            if pbd < shrad {
+                let bnear = 1.0 - pbd / shrad
+                let bshake = bnear * bnear * 0.5 * gi
+                if shake < bshake { shake = bshake }
+            }
+        }
+
         // --- Enemy bots: strafe in place and shoot the player on a timer. ---
         etime = etime + dt
         let pchar = (net_local_state(21) as i64) - 1
@@ -1219,14 +1692,25 @@ fn main() {
             let h = eh[ei2] as i64
             epop[ei2] = epop[ei2] - dt
             if epop[ei2] < 0.0 { epop[ei2] = 0.0 }
+            // Decay any blast knockback (a shove that fades back to AI control).
+            ekx[ei2] = ekx[ei2] - ekx[ei2] * 2.8 * dt
+            eky[ei2] = eky[ei2] - eky[ei2] * 2.8 * dt
+            ekz[ei2] = ekz[ei2] - ekz[ei2] * 2.8 * dt
             if ehp[ei2] > 0.0 {
                 // Strafe around the spawn anchor via COLLIDE-AND-SLIDE + gravity, so
                 // the bot respects walls/floor/dome and is a solid character the player
                 // bumps into - not a body teleported straight through the world.
                 let tx = esx[ei2] + sin(etime * 1.5 + (ei2 as f64) * 2.1) * 2.5
-                let bvx = (tx - phys3d_x(h)) * 5.0
-                let bvz = (esz[ei2] - phys3d_z(h)) * 5.0
-                phys3d_move_character(h, bvx * dt, (0.0 - 13.0) * dt, bvz * dt, dt)
+                let mut bvx = (tx - phys3d_x(h)) * 5.0
+                let mut bvz = (esz[ei2] - phys3d_z(h)) * 5.0
+                // While still flying from a blast, stop steering so the launch reads -
+                // the bot tumbles on the knockback + gravity, then AI resumes.
+                let knock = sqrt(ekx[ei2] * ekx[ei2] + eky[ei2] * eky[ei2] + ekz[ei2] * ekz[ei2])
+                if knock > 4.0 {
+                    bvx = 0.0
+                    bvz = 0.0
+                }
+                phys3d_move_character(h, (bvx + ekx[ei2]) * dt, (0.0 - 13.0 + eky[ei2]) * dt, (bvz + ekz[ei2]) * dt, dt)
                 let sx = phys3d_x(h)
                 let sy = phys3d_y(h)
                 let sz = phys3d_z(h)
@@ -1286,19 +1770,89 @@ fn main() {
             ei2 = ei2 + 1
         }
 
-        // Player regen: shields refill first, then health, after a lull out of fire.
+        // NO passive regen: health/shield come only from pickups. Health pads + drops
+        // heal instantly; SHIELD comes from cells you carry and APPLY (Apex-style).
         dmg_timer = dmg_timer + dt
-        if dmg_timer > regen_delay {
-            if psh < psh_max {
-                psh = psh + 30.0 * dt
-                if psh > psh_max { psh = psh_max }
+
+        // Fixed pickup spots: walk over an available one to take it. Health pads heal
+        // instantly (only if hurt, so you don't waste them); shield-cell spots add a
+        // cell to your inventory. Taken spots respawn after a cooldown.
+        let mut pk = 0
+        while pk < pk_n {
+            if pkcd[pk] > 0.0 {
+                pkcd[pk] = pkcd[pk] - dt
+                if pkcd[pk] < 0.0 { pkcd[pk] = 0.0 }
             } else {
-                if php < php_max {
-                    php = php + 18.0 * dt
-                    if php > php_max { php = php_max }
+                let pdx = px - pkx[pk]
+                let pdz = pz - pkz[pk]
+                if dead == false and sqrt(pdx * pdx + pdz * pdz) < 1.4 {
+                    if pktype[pk] < 0.5 {
+                        if php < php_max {
+                            php = php_max   // health pickups fully recharge health
+                            pkcd[pk] = pk_respawn
+                            play_sound(7, 80, 0)
+                        }
+                    } else {
+                        if shield_cells < max_cells {
+                            shield_cells = shield_cells + 1
+                            pkcd[pk] = pk_respawn
+                            play_sound(14, 90, 0)
+                        }
+                    }
+                }
+            }
+            pk = pk + 1
+        }
+        // Enemy drops: count down their life; walk over to take (health heals instantly,
+        // a shield cell goes to inventory).
+        let mut dr = 0
+        while dr < drop_n {
+            if droplife[dr] > 0.0 {
+                droplife[dr] = droplife[dr] - dt
+                let edx = px - dropx[dr]
+                let edz = pz - dropz[dr]
+                if dead == false and sqrt(edx * edx + edz * edz) < 1.4 {
+                    if droptype[dr] < 0.5 {
+                        if php < php_max {
+                            php = php_max   // health pickups fully recharge health
+                            droplife[dr] = 0.0
+                            play_sound(7, 80, 0)
+                        }
+                    } else {
+                        if shield_cells < max_cells {
+                            shield_cells = shield_cells + 1
+                            droplife[dr] = 0.0
+                            play_sound(14, 90, 0)
+                        }
+                    }
+                }
+            }
+            dr = dr + 1
+        }
+        // Apply a shield cell (Apex-style): HOLD Q to channel. You must keep holding the
+        // whole time - releasing (or dying) cancels it with no cell spent; taking damage
+        // does NOT interrupt it. On completion it consumes a cell and tops up your shield.
+        // You walk slowly and can't slide/dash/fire while channeling.
+        let qheld = input_down(act_heal) > 0
+        if healing <= 0.0 {
+            if qheld and shield_cells > 0 and psh < psh_max and dead == false {
+                healing = heal_channel
+            }
+        } else {
+            if qheld == false or dead {
+                healing = 0.0   // released or died: cancel, cell NOT spent
+            } else {
+                healing = healing - dt
+                if healing <= 0.0 {
+                    healing = 0.0
+                    shield_cells = shield_cells - 1
+                    psh = psh + cell_shield
+                    if psh > psh_max { psh = psh_max }
+                    play_sound(16, 120, 0)
                 }
             }
         }
+
         pinvuln = pinvuln - dt
         if pinvuln < 0.0 { pinvuln = 0.0 }
         hurt_flash = hurt_flash - dt
@@ -1306,17 +1860,39 @@ fn main() {
 
         // Death respawn cooldown: restore + teleport to spawn when it elapses.
         if dead {
+            // The frame you die: drop your UNUSED shield cells at the body (others - or
+            // you, after respawn - can loot them). Shields are scarce, so they recycle.
+            if prev_dead == false {
+                let mut dcd = 0
+                while dcd < shield_cells {
+                    dropx[dropcur] = px
+                    dropy[dropcur] = py - 0.3
+                    dropz[dropcur] = pz
+                    droptype[dropcur] = 1.0
+                    droplife[dropcur] = drop_life
+                    dropcur = dropcur + 1
+                    if dropcur >= drop_n { dropcur = 0 }
+                    dcd = dcd + 1
+                }
+                shield_cells = 0
+            }
+            // Death wipes Overclock - the bar AND the active state. No banking a meter
+            // through deaths; you start every life fresh.
+            oc_meter = 0.0
+            oc_active = false
+            oc_timer = 0.0
             respawn_cd = respawn_cd - dt
             if respawn_cd <= 0.0 {
                 dead = false
                 php = php_max
-                psh = psh_max
+                psh = 0.0   // respawn SHIELDLESS - shields are scarce; find/loot cells
                 ammo = mag_size
                 reload_t = 0.0
                 pinvuln = 2.0
                 respawn_req = 1.0
             }
         }
+        prev_dead = dead
         // --- OVERCLOCK meter + state (the signature mechanic) ---
         // Style trickle fills the meter while doing movement (no fill while active).
         let mut oc_gained = false
@@ -1337,6 +1913,11 @@ fn main() {
             oc_active = true
             oc_timer = 10.0
             oc_meter = 0.0
+            // GDD perks: reset the tactical cooldowns (grapple + frag) so you enter the
+            // window loaded, and grant a small overshield on top of your shield.
+            g_cd = 0.0
+            nade_cd = 0.0
+            psh = psh_max + 25.0
             play_sound(7, 90, 0)
             play_sound(14, 150, 0)
             play_sound(21, 220, 0)
@@ -1394,13 +1975,46 @@ fn main() {
             }
         }
 
-        // World (visuals aligned with the physics colliders).
+        // World: ground plane + the arena boxes (each at its collider position) + dome.
         r3d_draw(ground_vis, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(side_vis, 0.0 - 6.0, 3.0, 0.0 - 10.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(side_vis, 6.0, 3.0, 0.0 - 10.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(back_vis, 0.0, 3.0, 0.0 - 19.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(box_vis, 3.0, 1.0, 0.0 - 4.0, 0.0, 0.0, 0.0, 1.0)
-        r3d_draw(dome_vis, 0.0, 3.0, 0.0 - 13.0, 0.0, 0.0, 0.0, 4.0)
+        let mut gd = 0
+        while gd < geo_n {
+            r3d_draw(gmesh[gd], gcx[gd], gcy[gd], gcz[gd], 0.0, 0.0, 0.0, 1.0)
+            gd = gd + 1
+        }
+        // Loose crates at their live (blast-flung) physics positions.
+        let mut cd2 = 0
+        while cd2 < crate_n {
+            let chh2 = crates[cd2] as i64
+            r3d_draw(crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), 0.0, 0.0, 0.0, 1.0)
+            cd2 = cd2 + 1
+        }
+        // Pickups: available fixed spots (green heal / blue shield), spinning + bobbing.
+        let mut pkd = 0
+        while pkd < pk_n {
+            if pkcd[pkd] <= 0.0 {
+                let bob = sin(etime * 2.0 + (pkd as f64)) * 0.12
+                if pktype[pkd] < 0.5 {
+                    r3d_draw(heal_vis, pkx[pkd], pky[pkd] + bob, pkz[pkd], 0.0, etime * 2.0, 0.0, 1.0)
+                } else {
+                    r3d_draw(shield_vis, pkx[pkd], pky[pkd] + bob, pkz[pkd], 0.0, etime * 2.0, 0.0, 1.0)
+                }
+            }
+            pkd = pkd + 1
+        }
+        // Enemy drops (smaller orbs) while alive.
+        let mut drd = 0
+        while drd < drop_n {
+            if droplife[drd] > 0.0 {
+                let bob2 = sin(etime * 3.0 + (drd as f64)) * 0.1
+                if droptype[drd] < 0.5 {
+                    r3d_draw(heal_vis, dropx[drd], dropy[drd] + bob2, dropz[drd], 0.0, etime * 3.0, 0.0, 0.7)
+                } else {
+                    r3d_draw(shield_vis, dropx[drd], dropy[drd] + bob2, dropz[drd], 0.0, etime * 3.0, 0.0, 0.7)
+                }
+            }
+            drd = drd + 1
+        }
 
         // Live enemy bots at their physics positions (dead ones are hidden).
         let mut ed = 0
@@ -1466,6 +2080,59 @@ fn main() {
                 }
             }
             pp = pp + 1
+        }
+
+        // Grenade explosion: a brief white flash, a lumpy cluster of orange fireball
+        // puffs that bloom then dissipate, and dark smoke that rises and lingers - all
+        // driven off boom_t. Billboards have no alpha, so each element fades by easing
+        // its size to zero on a sin "bell" (0 -> peak -> 0); the offset cluster of
+        // puffs reads as an irregular cloud instead of one growing quad. Drawn here
+        // (late, with the other billboards) for correct transparency.
+        if boom_t > 0.0 {
+            boom_t = boom_t - dt
+            let age = 0.6 - boom_t
+            let bi = boom_int   // intensity scales every billboard's size + spread
+            // White-hot flash: large and gone fast.
+            if age < 0.12 {
+                r3d_draw_billboard(flash_vis, boomx, boomy, boomz, 3.6 * bi * (1.0 - age / 0.12))
+            }
+            // Core fireball: blooms then collapses.
+            if age < 0.32 {
+                r3d_draw_billboard(fire_vis, boomx, boomy, boomz, 2.6 * bi * sin(age / 0.32 * 3.14159))
+            }
+            // Fireball puffs: fixed angles, pushed outward as they age, lumpy sizes.
+            let mut fp = 0
+            while fp < 7 {
+                let fa = (fp as f64) * 0.8976
+                let pr = 0.5 + ((fp % 3) as f64) * 0.35
+                let spread = pr * (0.5 + age * 2.2) * bi
+                let pufx = boomx + cos(fa) * spread
+                let pufy = boomy + (((fp % 2) as f64) - 0.3) * 0.5 + age * 0.6
+                let pufz = boomz + sin(fa) * spread
+                let pl = 0.34 + ((fp % 2) as f64) * 0.08
+                if age < pl {
+                    let psz = (0.9 + ((fp % 3) as f64) * 0.35) * bi * sin(age / pl * 3.14159)
+                    if (fp % 2) == 0 {
+                        r3d_draw_billboard(fire_vis, pufx, pufy, pufz, psz)
+                    } else {
+                        r3d_draw_billboard(fire2_vis, pufx, pufy, pufz, psz)
+                    }
+                }
+                fp = fp + 1
+            }
+            // Smoke: a few dark puffs that rise and linger the full duration.
+            let st = age / 0.6
+            if st < 1.0 {
+                let mut sp2 = 0
+                while sp2 < 4 {
+                    let sa = (sp2 as f64) * 1.57
+                    let smx = boomx + cos(sa) * (0.4 + age * 1.0) * bi
+                    let smy = boomy + 0.3 + age * 2.0
+                    let smz = boomz + sin(sa) * (0.4 + age * 1.0) * bi
+                    r3d_draw_billboard(smoke_vis, smx, smy, smz, (0.7 + ((sp2 % 2) as f64) * 0.5) * bi * sin(st * 3.14159))
+                    sp2 = sp2 + 1
+                }
+            }
         }
 
         // HUD: crosshair + a horizontal speed bar; turns gold while wallrunning.
@@ -1565,12 +2232,54 @@ fn main() {
         }
         let mut swi = (psh / psh_max * 240.0) as i64
         if swi < 0 { swi = 0 }
+        if swi > 240 { swi = 240 }   // overshield reads as a full bar
         let mut sb2 = 0
         while sb2 < swi {
             pixel(40 + sb2, fbh - 30, 120, 200, 255)
             pixel(40 + sb2, fbh - 29, 120, 200, 255)
             pixel(40 + sb2, fbh - 28, 120, 200, 255)
             sb2 = sb2 + 1
+        }
+        // Shield CELLS carried (Apex-style): cyan pips right of the shield bar.
+        let mut cc = 0
+        while cc < shield_cells {
+            let cpx = 290 + cc * 14
+            let mut cpy = 0
+            while cpy < 9 {
+                let mut cpw = 0
+                while cpw < 10 {
+                    pixel(cpx + cpw, fbh - 31 + cpy, 90, 215, 255)
+                    cpw = cpw + 1
+                }
+                cpy = cpy + 1
+            }
+            cc = cc + 1
+        }
+        // Shield-apply channel: a progress bar under the crosshair while channeling.
+        if healing > 0.0 {
+            let hw = ((1.0 - healing / heal_channel) * 120.0) as i64
+            let mut hbi = 0
+            while hbi < hw {
+                pixel(cx - 60 + hbi, cy + 44, 120, 220, 255)
+                pixel(cx - 60 + hbi, cy + 45, 120, 220, 255)
+                pixel(cx - 60 + hbi, cy + 46, 120, 220, 255)
+                hbi = hbi + 1
+            }
+        }
+
+        // Frag grenade readiness (bottom-left, above the bars): a label that is green
+        // when ready, grey while busy, with a fill bar as the cooldown recharges.
+        let mut fragcol = 70 * 65536 + 220 * 256 + 110
+        if nade_cd > 0.0 or nade_live { fragcol = 110 * 65536 + 110 * 256 + 120 }
+        draw_text(40, fbh - 78, "FRAG", 20, fragcol)
+        if nade_cd > 0.0 {
+            let fcw = ((1.0 - nade_cd / nade_cooldown) * 80.0) as i64
+            let mut fcb = 0
+            while fcb < fcw {
+                pixel(40 + fcb, fbh - 52, 80, 200, 120)
+                pixel(40 + fcb, fbh - 51, 80, 200, 120)
+                fcb = fcb + 1
+            }
         }
 
         // FFA HUD: round timer (big, top-centre) + kills / target below it.
@@ -1610,6 +2319,12 @@ fn main() {
         let col_ammo = 230 * 65536 + 230 * 256 + 235
         let mut ammo_col = col_ammo
         if ammo == 0 { ammo_col = 230 * 65536 + 70 * 256 + 60 }
+        // Current weapon name above the ammo (rifle gold-ish, launcher magenta).
+        if weapon == 0 {
+            draw_text(fbw - 150, fbh - 84, "RIFLE", 22, 230 * 65536 + 220 * 256 + 150)
+        } else {
+            draw_text(fbw - 175, fbh - 84, "LAUNCHER", 22, 255 * 65536 + 120 * 256 + 230)
+        }
         draw_int(fbw - 150, fbh - 56, ammo, 36, ammo_col)
         draw_text(fbw - 96, fbh - 50, "/", 26, col_white)
         draw_int(fbw - 78, fbh - 50, mag_size, 26, col_white)
