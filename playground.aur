@@ -1076,16 +1076,17 @@ fn main() {
         phys3d_add_box(8.0, 0.45, 0.0 - 8.0, 0.4, 0.4, 0.4, 1) as f64,
         phys3d_add_box(0.0 - 8.0, 0.45, 8.0, 0.4, 0.4, 0.4, 1) as f64
     ]
-    // Fixed pickup spots that respawn on a timer. type 0 = HEALTH pad (instant heal on
-    // touch); type 1 = SHIELD CELL (adds a cell to your inventory; you APPLY it later).
-    let pk_n = 4
-    // 0 heal pad on the central high-ground block (risky); 1 heal pad in a corner;
-    // 2 shield cell on building A's roof (reward for getting up); 3 shield cell open.
-    let pkx = [0.0, 0.0 - 45.0, 38.0, 40.0]
-    let pky = [10.3, 0.5, 10.3, 0.5]
-    let pkz = [0.0, 45.0, 0.0, 0.0 - 40.0]
-    let pktype = [0.0, 0.0, 1.0, 0.0]   // only ONE fixed shield-cell spot (scarce)
-    let mut pkcd = [0.0, 0.0, 0.0, 0.0]   // respawn cooldown; 0 = available
+    // Fixed pickup spots that respawn on a timer, scattered across the map. type 0 =
+    // HEALTH pad (instant heal); type 1 = SHIELD CELL (inventory; applied later); type 2 =
+    // AMMO box (refills the equipped weapon's reserve). Plenty of ammo + heal, scarce shields.
+    let pk_n = 11
+    let pkx = [0.0, 0.0 - 45.0, 38.0, 40.0, 0.0 - 40.0, 40.0, 0.0 - 40.0, 0.0, 0.0, 20.0, 0.0 - 20.0]
+    let pky = [10.3, 0.5, 10.3, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    let pkz = [0.0, 45.0, 0.0, 0.0 - 40.0, 0.0 - 40.0, 40.0, 40.0, 42.0, 0.0 - 42.0, 0.0, 0.0]
+    // 0 heal (centre tower), 1 heal (corner), 2 shield (roof, scarce), 3-6 ammo (quadrants),
+    // 7 heal, 8 ammo, 9 ammo, 10 heal - ammo + heal are common, shields rare.
+    let pktype = [0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 0.0, 0.0, 2.0, 2.0, 0.0]
+    let mut pkcd = [0.0; 11]   // respawn cooldown; 0 = available
     let pk_respawn = 8.0
 
     // Enemy bots: kinematic characters (like players) that HUNT the player - chase,
@@ -2116,23 +2117,10 @@ fn main() {
                 let tdx = tmx - bx0
                 let tdz = tmz - bz0
                 let tdist = sqrt(tdx * tdx + tdz * tdz)
-                // Shield up ONLY when disengaged - like the player, a channeling actor can't
-                // fight: it must stop moving AND hold fire. A bot only starts a channel when
-                // hurt + has a cell + the player is far (tdist > 14); a closer threat cancels
-                // it. So bots can NEVER pop a shield while shooting or moving.
-                let mut bheal = false
-                if actors[ei2].cells > 0 and actors[ei2].sh < actors[ei2].shmax and tdist > 14.0 {
-                    bheal = true
-                    actors[ei2].heal = actors[ei2].heal + dt
-                    if actors[ei2].heal >= heal_channel {
-                        actors[ei2].heal = 0.0
-                        actors[ei2].cells = actors[ei2].cells - 1
-                        actors[ei2].sh = actors[ei2].sh + cell_shield
-                        if actors[ei2].sh > actors[ei2].shmax { actors[ei2].sh = actors[ei2].shmax }
-                    }
-                } else {
-                    actors[ei2].heal = 0.0
-                }
+                // A bot that is channelling a shield (the combat loop starts/runs the channel
+                // when it is disengaged) must STAND STILL while doing it - so it can never
+                // shield while moving. We just read its heal state set by the combat loop.
+                let bheal = actors[ei2].heal > 0.0
                 let mut mdx = 0.0
                 let mut mdz = 0.0
                 if tdist > 0.001 {
@@ -2180,35 +2168,8 @@ fn main() {
                     bvz = 0.0
                 }
                 phys3d_move_character(h, (bvx + brains[ei2].kx) * dt, (brains[ei2].vy + brains[ei2].ky) * dt, (bvz + brains[ei2].kz) * dt, dt)
-                let sx = phys3d_x(h)
-                let sy = phys3d_y(h)
-                let sz = phys3d_z(h)
-                // Collect nearby drops - SAME pickups the player gets: health restores,
-                // shield cells go to inventory, ammo refills the equipped weapon's reserve.
-                let mut bdp = 0
-                while bdp < drop_n {
-                    if droplife[bdp] > 0.0 {
-                        let pdx = sx - dropx[bdp]
-                        let pdz = sz - dropz[bdp]
-                        if sqrt(pdx * pdx + pdz * pdz) < 1.4 {
-                            if droptype[bdp] < 0.5 {
-                                if actors[ei2].hp < enemy_hp_max { actors[ei2].hp = enemy_hp_max; droplife[bdp] = 0.0 }
-                            } else { if droptype[bdp] < 1.5 {
-                                if actors[ei2].cells < max_cells { actors[ei2].cells = actors[ei2].cells + 1; droplife[bdp] = 0.0 }
-                            } else {
-                                let bwp = actors[ei2].wpn
-                                if actors[ei2].res[bwp] < res_max[bwp] {
-                                    actors[ei2].res[bwp] = actors[ei2].res[bwp] + res_refill[bwp]
-                                    if actors[ei2].res[bwp] > res_max[bwp] { actors[ei2].res[bwp] = res_max[bwp] }
-                                    droplife[bdp] = 0.0
-                                }
-                            } }
-                        }
-                    }
-                    bdp = bdp + 1
-                }
-                // (Shield-up is handled above, BEFORE movement/fire, so a channeling bot is
-                // stopped + holds fire - it can never shield while shooting or moving.)
+                // (Combat - firing, reloading, pickups and the shield channel - all run in
+                // the one unified combat loop below, the SAME path the player uses.)
             } else {
                 // Dead: park below the map; on respawn, pop back to the spawn point.
                 phys3d_set_pos(h, esx[ei2], 0.0 - 50.0, esz[ei2])
@@ -2267,6 +2228,7 @@ fn main() {
                 let mut soy = 0.0
                 let mut soz = 0.0
                 let mut mine = 0
+                let mut nearest = 100000.0   // distance to this actor's nearest enemy (bots)
                 if ci == pl_i {
                     mine = 1
                     sox = px; soy = eye; soz = pz
@@ -2276,67 +2238,86 @@ fn main() {
                     if input_down(act_reload) > 0 and actors[ci].rl <= 0.0 and actors[ci].mag[actors[ci].wpn] < mag_size_w[actors[ci].wpn] and actors[ci].res[actors[ci].wpn] > 0 and dead == false { actors[ci].rl = crl; actors[ci].rlw = actors[ci].wpn }
                     if input_down(act_fire) > 0 and dead == false { want = 1 }
                 } else {
-                    // Bot: pick the nearest enemy + a weapon + an aim (with spread). A bot
-                    // that is channelling a shield (heal > 0) holds fire.
-                    if actors[ci].heal <= 0.0 {
-                        let bsx = phys3d_x(actors[ci].hdl as i64)
-                        let bsy = phys3d_y(actors[ci].hdl as i64)
-                        let bsz = phys3d_z(actors[ci].hdl as i64)
-                        sox = bsx; soy = bsy + 0.5; soz = bsz
-                        let mut tgx = 0.0
-                        let mut tgy = 0.0
-                        let mut tgz = 0.0
-                        let mut tgi = 0 - 2
-                        let mut bestd = 200.0
-                        if dead == false {
-                            let dp = sqrt((px - bsx) * (px - bsx) + (pz - bsz) * (pz - bsz))
-                            if dp < bestd { bestd = dp; tgx = px; tgy = py + 0.3; tgz = pz; tgi = pl_i }
+                    // Bot: nearest enemy + weapon + aim (with spread). Fire is blocked while
+                    // channelling a shield (the heal gate in the shot below).
+                    let bsx = phys3d_x(actors[ci].hdl as i64)
+                    let bsy = phys3d_y(actors[ci].hdl as i64)
+                    let bsz = phys3d_z(actors[ci].hdl as i64)
+                    sox = bsx; soy = bsy + 0.5; soz = bsz
+                    let mut tgx = 0.0
+                    let mut tgy = 0.0
+                    let mut tgz = 0.0
+                    let mut tgi = 0 - 2
+                    let mut bestd = 200.0
+                    if dead == false {
+                        let dp = sqrt((px - bsx) * (px - bsx) + (pz - bsz) * (pz - bsz))
+                        if dp < bestd { bestd = dp; tgx = px; tgy = py + 0.3; tgz = pz; tgi = pl_i }
+                    }
+                    let mut tk = 0
+                    while tk < bot_n {
+                        if tk != ci and actors[tk].hp > 0.0 {
+                            let ek = actors[tk].hdl as i64
+                            let exb = phys3d_x(ek) - bsx
+                            let ezb = phys3d_z(ek) - bsz
+                            let dd2 = sqrt(exb * exb + ezb * ezb)
+                            if dd2 < bestd { bestd = dd2; tgx = phys3d_x(ek); tgy = phys3d_y(ek) + 0.5; tgz = phys3d_z(ek); tgi = tk }
                         }
-                        let mut tk = 0
-                        while tk < bot_n {
-                            if tk != ci and actors[tk].hp > 0.0 {
-                                let ek = actors[tk].hdl as i64
-                                let exb = phys3d_x(ek) - bsx
-                                let ezb = phys3d_z(ek) - bsz
-                                let dd2 = sqrt(exb * exb + ezb * ezb)
-                                if dd2 < bestd { bestd = dd2; tgx = phys3d_x(ek); tgy = phys3d_y(ek) + 0.5; tgz = phys3d_z(ek); tgi = tk }
+                        tk = tk + 1
+                    }
+                    nearest = bestd
+                    let mut bw = 0
+                    if bestd > 22.0 and actors[ci].mag[1] > 0 and sin(etime * 1.3 + (ci as f64) * 2.3) > 0.6 { bw = 1 }
+                    actors[ci].wpn = bw
+                    if tgi > (0 - 2) {
+                        let ddx = tgx - sox
+                        let ddy = tgy - soy
+                        let ddz = tgz - soz
+                        let dl = sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
+                        if dl > 0.1 {
+                            let bnx = ddx / dl
+                            let bny = ddy / dl
+                            let bnz = ddz / dl
+                            if bw == 1 {
+                                ax = bnx; ay = bny; az = bnz
+                            } else {
+                                // spread = aim skill + distance + the TARGET's speed
+                                let mut spr = brains[ci].aim + bestd * 0.004
+                                if tgi == pl_i { spr = spr + pspd * 0.02 }
+                                let mut snx = bnx + sin(etime * 57.0 + (ci as f64) * 11.0) * spr
+                                let mut sny = bny + sin(etime * 43.0 + (ci as f64) * 5.0) * spr * 0.7
+                                let mut snz = bnz + sin(etime * 67.0 + (ci as f64) * 9.0) * spr
+                                let snl = sqrt(snx * snx + sny * sny + snz * snz)
+                                if snl > 0.001 { snx = snx / snl; sny = sny / snl; snz = snz / snl }
+                                ax = snx; ay = sny; az = snz
                             }
-                            tk = tk + 1
-                        }
-                        let mut bw = 0
-                        if bestd > 22.0 and actors[ci].mag[1] > 0 and sin(etime * 1.3 + (ci as f64) * 2.3) > 0.6 { bw = 1 }
-                        actors[ci].wpn = bw
-                        if tgi > (0 - 2) {
-                            let ddx = tgx - sox
-                            let ddy = tgy - soy
-                            let ddz = tgz - soz
-                            let dl = sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
-                            if dl > 0.1 {
-                                let bnx = ddx / dl
-                                let bny = ddy / dl
-                                let bnz = ddz / dl
-                                if bw == 1 {
-                                    ax = bnx; ay = bny; az = bnz
-                                } else {
-                                    // spread = aim skill + distance + the TARGET's speed
-                                    let mut spr = brains[ci].aim + bestd * 0.004
-                                    if tgi == pl_i { spr = spr + pspd * 0.02 }
-                                    let mut snx = bnx + sin(etime * 57.0 + (ci as f64) * 11.0) * spr
-                                    let mut sny = bny + sin(etime * 43.0 + (ci as f64) * 5.0) * spr * 0.7
-                                    let mut snz = bnz + sin(etime * 67.0 + (ci as f64) * 9.0) * spr
-                                    let snl = sqrt(snx * snx + sny * sny + snz * snz)
-                                    if snl > 0.001 { snx = snx / snl; sny = sny / snl; snz = snz / snl }
-                                    ax = snx; ay = sny; az = snz
-                                }
-                                want = 1
-                                if actors[ci].mag[bw] <= 0 {
-                                    if actors[ci].res[bw] > 0 { actors[ci].rl = reload_w[bw]; actors[ci].rlw = bw }
-                                    want = 0
-                                    actors[ci].fcd = 0.4
-                                }
+                            want = 1
+                            if actors[ci].mag[bw] <= 0 {
+                                if actors[ci].res[bw] > 0 { actors[ci].rl = reload_w[bw]; actors[ci].rlw = bw }
+                                want = 0
+                                actors[ci].fcd = 0.4
                             }
                         }
                     }
+                }
+                // ---- SHIELD CHANNEL (folded in, one path): you can only shield when
+                // DISENGAGED, and you can't fire while doing it. Player holds Q; a bot does it
+                // when its nearest enemy is far (>14). A closer threat cancels it (no cell spent).
+                let mut heal_want = false
+                if ci == pl_i {
+                    if input_down(act_heal) > 0 and dead == false { heal_want = true }
+                } else {
+                    if nearest > 14.0 { heal_want = true }
+                }
+                if heal_want and actors[ci].cells > 0 and actors[ci].sh < actors[ci].shmax {
+                    actors[ci].heal = actors[ci].heal + dt
+                    if actors[ci].heal >= heal_channel {
+                        actors[ci].heal = 0.0
+                        actors[ci].cells = actors[ci].cells - 1
+                        actors[ci].sh = actors[ci].sh + cell_shield
+                        if actors[ci].sh > actors[ci].shmax { actors[ci].sh = actors[ci].shmax }
+                    }
+                } else {
+                    actors[ci].heal = 0.0
                 }
                 // ---- THE SHOT (identical mechanics for everyone) ----
                 let wp = actors[ci].wpn
@@ -2453,6 +2434,46 @@ fn main() {
                     actors[ci].fcd = fire_w[wp]
                     if mine == 1 and oc_active { actors[ci].fcd = actors[ci].fcd * 0.55 }
                 }
+                // ---- PICKUPS (folded in, one path): every actor collects fixed spots AND
+                // enemy drops it walks over - health pad -> full heal, shield cell -> inventory,
+                // ammo -> refill the equipped weapon's reserve. Bots scavenge just like you.
+                let apx = phys3d_x(actors[ci].hdl as i64)
+                let apz = phys3d_z(actors[ci].hdl as i64)
+                let cwp = actors[ci].wpn
+                let mut fp = 0
+                while fp < pk_n {
+                    if pkcd[fp] <= 0.0 {
+                        let fdx = apx - pkx[fp]
+                        let fdz = apz - pkz[fp]
+                        if sqrt(fdx * fdx + fdz * fdz) < 1.4 {
+                            if pktype[fp] < 0.5 {
+                                if actors[ci].hp < php_max { actors[ci].hp = php_max; pkcd[fp] = pk_respawn; if mine == 1 { play_sound(7, 80, 0) } }
+                            } else { if pktype[fp] < 1.5 {
+                                if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; pkcd[fp] = pk_respawn; if mine == 1 { play_sound(14, 90, 0) } }
+                            } else {
+                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } pkcd[fp] = pk_respawn; if mine == 1 { play_sound(10, 80, 0) } }
+                            } }
+                        }
+                    }
+                    fp = fp + 1
+                }
+                let mut gp = 0
+                while gp < drop_n {
+                    if droplife[gp] > 0.0 {
+                        let gdx = apx - dropx[gp]
+                        let gdz = apz - dropz[gp]
+                        if sqrt(gdx * gdx + gdz * gdz) < 1.4 {
+                            if droptype[gp] < 0.5 {
+                                if actors[ci].hp < php_max { actors[ci].hp = php_max; droplife[gp] = 0.0; if mine == 1 { play_sound(7, 80, 0) } }
+                            } else { if droptype[gp] < 1.5 {
+                                if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; droplife[gp] = 0.0; if mine == 1 { play_sound(14, 90, 0) } }
+                            } else {
+                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
+                            } }
+                        }
+                    }
+                    gp = gp + 1
+                }
             }
             ci = ci + 1
         }
@@ -2461,93 +2482,17 @@ fn main() {
         // heal instantly; SHIELD comes from cells you carry and APPLY (Apex-style).
         dmg_timer = dmg_timer + dt
 
-        // Fixed pickup spots: walk over an available one to take it. Health pads heal
-        // instantly (only if hurt, so you don't waste them); shield-cell spots add a
-        // cell to your inventory. Taken spots respawn after a cooldown.
+        // Tick fixed-spot respawn timers + enemy-drop lifetimes. Collection (and the shield
+        // channel) is done in the one unified combat loop above - the same path for everyone.
         let mut pk = 0
         while pk < pk_n {
-            if pkcd[pk] > 0.0 {
-                pkcd[pk] = pkcd[pk] - dt
-                if pkcd[pk] < 0.0 { pkcd[pk] = 0.0 }
-            } else {
-                let pdx = px - pkx[pk]
-                let pdz = pz - pkz[pk]
-                if dead == false and sqrt(pdx * pdx + pdz * pdz) < 1.4 {
-                    if pktype[pk] < 0.5 {
-                        if actors[5].hp < php_max {
-                            actors[5].hp = php_max   // health pickups fully recharge health
-                            pkcd[pk] = pk_respawn
-                            play_sound(7, 80, 0)
-                        }
-                    } else {
-                        if actors[5].cells < max_cells {
-                            actors[5].cells = actors[5].cells + 1
-                            pkcd[pk] = pk_respawn
-                            play_sound(14, 90, 0)
-                        }
-                    }
-                }
-            }
+            if pkcd[pk] > 0.0 { pkcd[pk] = pkcd[pk] - dt; if pkcd[pk] < 0.0 { pkcd[pk] = 0.0 } }
             pk = pk + 1
         }
-        // Enemy drops: count down their life; walk over to take (health heals instantly,
-        // a shield cell goes to inventory).
         let mut dr = 0
         while dr < drop_n {
-            if droplife[dr] > 0.0 {
-                droplife[dr] = droplife[dr] - dt
-                let edx = px - dropx[dr]
-                let edz = pz - dropz[dr]
-                if dead == false and sqrt(edx * edx + edz * edz) < 1.4 {
-                    if droptype[dr] < 0.5 {
-                        if actors[5].hp < php_max {
-                            actors[5].hp = php_max   // health pickups fully recharge health
-                            droplife[dr] = 0.0
-                            play_sound(7, 80, 0)
-                        }
-                    } else {
-                        if droptype[dr] < 1.5 {
-                            if actors[5].cells < max_cells {
-                                actors[5].cells = actors[5].cells + 1
-                                droplife[dr] = 0.0
-                                play_sound(14, 90, 0)
-                            }
-                        } else {
-                            // Ammo: refill the EQUIPPED actors[5].wpn's reserve (capped).
-                            if actors[5].res[actors[5].wpn] < res_max[actors[5].wpn] {
-                                actors[5].res[actors[5].wpn] = actors[5].res[actors[5].wpn] + res_refill[actors[5].wpn]
-                                if actors[5].res[actors[5].wpn] > res_max[actors[5].wpn] { actors[5].res[actors[5].wpn] = res_max[actors[5].wpn] }
-                                droplife[dr] = 0.0
-                                play_sound(10, 80, 0)
-                            }
-                        }
-                    }
-                }
-            }
+            if droplife[dr] > 0.0 { droplife[dr] = droplife[dr] - dt }
             dr = dr + 1
-        }
-        // Apply a shield cell (Apex-style): HOLD Q to channel. You must keep holding the
-        // whole time - releasing (or dying) cancels it with no cell spent; taking damage
-        // does NOT interrupt it. On completion it consumes a cell and tops up your shield.
-        // You walk slowly and can't slide/dash/fire while channeling.
-        let qheld = input_down(act_heal) > 0
-        if actors[5].heal <= 0.0 {
-            if qheld and actors[5].cells > 0 and actors[5].sh < psh_max and dead == false {
-                actors[5].heal = heal_channel
-            }
-        } else {
-            if qheld == false or dead {
-                actors[5].heal = 0.0   // released or died: cancel, cell NOT spent
-            } else {
-                actors[5].heal = actors[5].heal - dt
-                if actors[5].heal <= 0.0 {
-                    actors[5].heal = 0.0
-                    actors[5].cells = actors[5].cells - 1
-                    actors[5].sh = actors[5].sh + cell_shield
-                    if actors[5].sh > psh_max { actors[5].sh = psh_max }
-                    play_sound(16, 120, 0)
-                }
-            }
         }
 
         pinvuln = pinvuln - dt
@@ -2701,16 +2646,18 @@ fn main() {
             r3d_draw(crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), 0.0, 0.0, 0.0, 1.0)
             cd2 = cd2 + 1
         }
-        // Pickups: available fixed spots (green heal / blue shield), spinning + bobbing.
+        // Pickups: available fixed spots (green heal / blue shield / yellow ammo), bobbing.
         let mut pkd = 0
         while pkd < pk_n {
             if pkcd[pkd] <= 0.0 {
                 let bob = sin(etime * 2.0 + (pkd as f64)) * 0.12
                 if pktype[pkd] < 0.5 {
                     r3d_draw(heal_vis, pkx[pkd], pky[pkd] + bob, pkz[pkd], 0.0, etime * 2.0, 0.0, 1.0)
-                } else {
+                } else { if pktype[pkd] < 1.5 {
                     r3d_draw(shield_vis, pkx[pkd], pky[pkd] + bob, pkz[pkd], 0.0, etime * 2.0, 0.0, 1.0)
-                }
+                } else {
+                    r3d_draw(ammo_vis, pkx[pkd], pky[pkd] + bob, pkz[pkd], 0.0, etime * 2.0, 0.0, 1.0)
+                } }
             }
             pkd = pkd + 1
         }
