@@ -774,6 +774,18 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     if landed or grounded {
         if vy < 0.0 { f32_store(state, 5, 0.0) }
     }
+    // CEILING: if we were moving UP meaningfully but rose far LESS than we should have, we
+    // hit the roof/ceiling. Kill the upward velocity so we drop right away instead of hanging
+    // against it, and flag it (slot 30) so a grapple reeling us into the ceiling releases.
+    // (Compared as expected-vs-actual rise so it's frame-rate independent and a swing's slow
+    // apex - where vy is small - never trips it.)
+    let crise = phys3d_y(player) - py
+    if vy > 3.0 and crise < vy * dt * 0.5 {
+        f32_store(state, 5, 0.0)
+        f32_store(state, 30, 1.0)
+    } else {
+        f32_store(state, 30, 0.0)
+    }
     // Kill-plane OR a combat-death respawn request from the main loop (input[8]):
     // teleport back to spawn and clear momentum. The sim owns the position, so a
     // respawn has to flow through here.
@@ -1801,12 +1813,9 @@ fn main() {
             let gddy = gy - (py + 0.7)
             let gddz = gz - pz
             let gdd = sqrt(gddx * gddx + gddy * gddy + gddz * gddz)
-            // BLOCKED: if the pull is on but you've barely moved (jammed against the surface
-            // the hook is on - e.g. pinned under the roof, short of the anchor), let go so you
-            // don't hang there. A real swing keeps moving, so it isn't caught by this.
-            let gmoved = sqrt((px - g_lx) * (px - g_lx) + (py - g_ly) * (py - g_ly) + (pz - g_lz) * (pz - g_lz))
-            g_lx = px; g_ly = py; g_lz = pz
-            if gkey < 1 or gdd < 2.2 or g_time > 2.5 or (g_time > 0.35 and gmoved < 0.05) {
+            // Release on: key up / reached the anchor / timeout / OR the sim says we just hit
+            // a ceiling (slot 30) - so reeling into the roof drops you instead of pinning you.
+            if gkey < 1 or gdd < 2.2 or g_time > 2.5 or net_local_state(30) > 0.5 {
                 grapple_on = false
                 g_cd = 1.2
             }
@@ -2163,9 +2172,9 @@ fn main() {
                 let mut tmy = eny
                 let mut tmz = enz
                 let mut hunting = 1
-                if rifleammo < 8 and amd < 60.0 {
+                if rifleammo < 20 and amd < 200.0 {
                     tmx = amx; tmz = amz; tmy = by0; hunting = 0
-                } else { if actors[ei2].hp < 45.0 and hld < 60.0 {
+                } else { if actors[ei2].hp < 45.0 and hld < 200.0 {
                     tmx = hlx; tmz = hlz; tmy = by0; hunting = 0
                 } else { if actors[ei2].cells > 0 and actors[ei2].sh < actors[ei2].shmax and edist < 16.0 {
                     tmx = bx0 - (enx - bx0); tmz = bz0 - (enz - bz0); tmy = by0; hunting = 0
@@ -2355,6 +2364,9 @@ fn main() {
                     nearest = bestd
                     let mut bw = 0
                     if bestd > 22.0 and actors[ci].mag[1] > 0 and sin(etime * 1.3 + (ci as f64) * 2.3) > 0.6 { bw = 1 }
+                    // Smart fallback: if the rifle is completely out but the launcher has ammo,
+                    // switch to the launcher instead of standing there with an empty gun.
+                    if actors[ci].mag[0] + actors[ci].res[0] <= 0 and actors[ci].mag[1] + actors[ci].res[1] > 0 { bw = 1 }
                     actors[ci].wpn = bw
                     if tgi > (0 - 2) {
                         let ddx = tgx - sox
@@ -2539,7 +2551,15 @@ fn main() {
                             } else { if pktype[fp] < 1.5 {
                                 if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; pkcd[fp] = pk_respawn; if mine == 1 { play_sound(14, 90, 0) } }
                             } else {
-                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } pkcd[fp] = pk_respawn; if mine == 1 { play_sound(10, 80, 0) } }
+                                // Ammo: the player tops up the EQUIPPED weapon; a bot smartly
+                                // tops up whichever weapon it is LOWEST on (so it never refills a
+                                // launcher while its rifle is empty).
+                                let mut rw3 = cwp
+                                if mine == 0 {
+                                    rw3 = 0
+                                    if actors[ci].mag[1] + actors[ci].res[1] < actors[ci].mag[0] + actors[ci].res[0] { rw3 = 1 }
+                                }
+                                if actors[ci].res[rw3] < res_max[rw3] { actors[ci].res[rw3] = actors[ci].res[rw3] + res_refill[rw3]; if actors[ci].res[rw3] > res_max[rw3] { actors[ci].res[rw3] = res_max[rw3] } pkcd[fp] = pk_respawn; if mine == 1 { play_sound(10, 80, 0) } }
                             } }
                         }
                     }
@@ -2556,7 +2576,12 @@ fn main() {
                             } else { if droptype[gp] < 1.5 {
                                 if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; droplife[gp] = 0.0; if mine == 1 { play_sound(14, 90, 0) } }
                             } else {
-                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
+                                let mut rw4 = cwp
+                                if mine == 0 {
+                                    rw4 = 0
+                                    if actors[ci].mag[1] + actors[ci].res[1] < actors[ci].mag[0] + actors[ci].res[0] { rw4 = 1 }
+                                }
+                                if actors[ci].res[rw4] < res_max[rw4] { actors[ci].res[rw4] = actors[ci].res[rw4] + res_refill[rw4]; if actors[ci].res[rw4] > res_max[rw4] { actors[ci].res[rw4] = res_max[rw4] } droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
                             } }
                         }
                     }
