@@ -1108,9 +1108,9 @@ fn main() {
         Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0 },
         Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0 },
         Actor { hdl: 0 - 1, hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [24, 1], res: [48, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
-        Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
-        Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
-        Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 }
+        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 },
+        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0 }
     ]
     // Per-actor AI/behaviour, parallel to actors[]. Only the bots (0..bot_n-1) use a real
     // Brain; the player + remote slots get a dummy (aim 0, unused). `aim` (shot spread) is a
@@ -2811,20 +2811,36 @@ fn main() {
             ed = ed + 1
         }
 
-        // Other players: draw a body + head at each remote's interpolated pos
-        // (skip ourselves - first person). Positions come from the netcode.
+        // Remote players are ACTORS too (the slots after the local player). Each frame we
+        // sync their kinematic body to the netcode's interpolated position + mark them
+        // active, then draw them. Their COMBAT is server-authoritative (the server owns
+        // their health/ammo and validates hits), so locally these are transform + body
+        // actors - they share the Actor type, they just aren't simulated client-side.
         let myid = net_my_id()
         let pcount = net_player_count()
+        // Park + deactivate all remote slots first; the live ones get re-activated below.
+        let mut rs = 0
+        while rs < max_remote {
+            let ai = bot_n + 1 + rs
+            actors[ai].hp = 0.0
+            phys3d_set_pos(actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0)
+            rs = rs + 1
+        }
         let mut pi = 0
+        let mut slot = 0
         while pi < pcount {
             let pid = net_player_id_at(pi)
-            if pid != myid {
+            if pid != myid and slot < max_remote {
+                let ai = bot_n + 1 + slot
                 let ex = net_player_x(pid)
                 let ey = net_player_y(pid)
                 let ez = net_player_z(pid)
                 let eyaw = net_player_yaw(pid)
+                phys3d_set_pos(actors[ai].hdl, ex, ey, ez)
+                actors[ai].hp = 100.0   // active (transform mirror; server owns real combat)
                 r3d_draw(body_vis, ex, ey, ez, eyaw, 0.0, 0.0, 1.0)
                 r3d_draw(head_vis, ex, ey + 0.85, ez, eyaw, 0.0, 0.0, 1.0)
+                slot = slot + 1
             }
             pi = pi + 1
         }
