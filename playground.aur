@@ -1028,6 +1028,8 @@ fn main() {
     let mut aprevx = [0.0; 9]       // last-frame draw pos -> movement speed -> idle vs run
     let mut aprevz = [0.0; 9]
     let mut ashoot = [0.0; 9]       // >0 = recently fired, hold the shoot animation
+    let mut ushoot = [0; 9]         // 1 = upper-body shoot overlay currently active
+    let upper_mask_root = 3         // DEF-spine.002: overlay torso+arms, hips+legs keep locomotion
     let actor_scale = 1.0           // mannequin bind height 1.83m = real human scale
     let actor_yoff = 0.0 - 0.9      // model origin is at the feet; actor pos is the capsule centre
     let actor_yaw_off = 0.0         // set to 3.14159 if the mannequin faces AWAY from you
@@ -2977,19 +2979,25 @@ fn main() {
                     let spd = sqrt(svx * svx + svz * svz) / dt
                     ashoot[ed] = ashoot[ed] - dt
                     if ashoot[ed] < 0.0 { ashoot[ed] = 0.0 }
-                    // Clip from real state: firing -> shoot (overrides locomotion), airborne ->
-                    // jump (from the bot's OWN vertical + knockback velocity, which doesn't flicker
-                    // like a ground raycast), running -> jog, else idle (speed deadband vs jitter).
+                    // BASE layer = pure locomotion: airborne -> jump (from the bot's OWN vertical +
+                    // knockback velocity, no ground-raycast flicker), running -> jog, else idle.
                     let knock = sqrt(brains[ed].kx * brains[ed].kx + brains[ed].ky * brains[ed].ky + brains[ed].kz * brains[ed].kz)
                     let mut want_clip = astate[ed]
                     if want_clip < 0 { want_clip = anim_idle }
                     if spd < 1.5 { want_clip = anim_idle }
                     if spd > 3.0 { want_clip = anim_run }
-                    if ashoot[ed] > 0.0 { want_clip = anim_shoot }
                     if brains[ed].vy > 1.5 or brains[ed].vy < (0.0 - 1.5) or knock > 4.0 { want_clip = anim_jump }
                     if astate[ed] != want_clip { r3d_anim_play(actor_models[ed], want_clip, 1, 1.0, 0.12); astate[ed] = want_clip }
+                    // UPPER-BODY overlay = the shoot pose on the torso/arms while the legs keep
+                    // running or jumping (Aurora's animation-layering feature). So a bot can now
+                    // run-and-gun or shoot midair, not freeze to one full-body clip.
+                    if ashoot[ed] > 0.0 {
+                        if ushoot[ed] == 0 { r3d_anim_play_upper(actor_models[ed], anim_shoot, 1, 1.0, 0.08, upper_mask_root); ushoot[ed] = 1 }
+                    } else {
+                        if ushoot[ed] == 1 { r3d_anim_stop_upper(actor_models[ed], 0.18); ushoot[ed] = 0 }
+                    }
                     r3d_anim_update(actor_models[ed], dt)
-                    // Face the aim target; swing to the run direction only while sprinting AND not firing.
+                    // Face the aim target while firing; otherwise the run direction when sprinting.
                     let mut fyaw = brains[ed].face + actor_yaw_off
                     if spd > 3.0 and ashoot[ed] <= 0.0 { fyaw = atan2(svx, svz) + actor_yaw_off }
                     r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, fyaw, 0.0, 0.0, actor_scale * psc)
