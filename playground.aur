@@ -2241,6 +2241,23 @@ fn main() {
                 let tdx = px - bx0
                 let tdz = pz - bz0
                 let tdist = sqrt(tdx * tdx + tdz * tdz)
+                // Shield up ONLY when disengaged - like the player, a channeling actor can't
+                // fight: it must stop moving AND hold fire. A bot only starts a channel when
+                // hurt + has a cell + the player is far (tdist > 14); a closer threat cancels
+                // it. So bots can NEVER pop a shield while shooting or moving.
+                let mut bheal = false
+                if actors[ei2].cells > 0 and actors[ei2].sh < actors[ei2].shmax and tdist > 14.0 {
+                    bheal = true
+                    actors[ei2].heal = actors[ei2].heal + dt
+                    if actors[ei2].heal >= heal_channel {
+                        actors[ei2].heal = 0.0
+                        actors[ei2].cells = actors[ei2].cells - 1
+                        actors[ei2].sh = actors[ei2].sh + cell_shield
+                        if actors[ei2].sh > actors[ei2].shmax { actors[ei2].sh = actors[ei2].shmax }
+                    }
+                } else {
+                    actors[ei2].heal = 0.0
+                }
                 let mut mdx = 0.0
                 let mut mdz = 0.0
                 if tdist > 0.001 {
@@ -2261,6 +2278,7 @@ fn main() {
                 if by0 - py > 0.4 and tdist < 2.5 { adv = 0.0 - 1.5 }   // get off the player
                 let mut bvx = (mdx * adv + perpx * juke) * runsp
                 let mut bvz = (mdz * adv + perpz * juke) * runsp
+                if bheal { bvx = 0.0; bvz = 0.0 }   // stand still while channeling a shield
                 // Gravity + jump.
                 brains[ei2].vy = brains[ei2].vy - 16.0 * dt
                 if grnd and brains[ei2].vy < 0.0 { brains[ei2].vy = 0.0 }
@@ -2314,19 +2332,8 @@ fn main() {
                     }
                     bdp = bdp + 1
                 }
-                // Shield up when hurt: auto-apply a carried cell over a channel - the AI's
-                // version of the player holding Q. Same heal_channel + cell_shield.
-                if actors[ei2].cells > 0 and actors[ei2].sh < actors[ei2].shmax {
-                    actors[ei2].heal = actors[ei2].heal + dt
-                    if actors[ei2].heal >= heal_channel {
-                        actors[ei2].heal = 0.0
-                        actors[ei2].cells = actors[ei2].cells - 1
-                        actors[ei2].sh = actors[ei2].sh + cell_shield
-                        if actors[ei2].sh > actors[ei2].shmax { actors[ei2].sh = actors[ei2].shmax }
-                    }
-                } else {
-                    actors[ei2].heal = 0.0
-                }
+                // (Shield-up is handled above, BEFORE movement/fire, so a channeling bot is
+                // stopped + holds fire - it can never shield while shooting or moving.)
                 // Reload ticks every frame (pulls reserve into the mag) - SAME as the
                 // player's reload, using the same reload_w / mag_size_w.
                 if actors[ei2].rl > 0.0 {
@@ -2341,7 +2348,7 @@ fn main() {
                     }
                 }
                 actors[ei2].fcd = actors[ei2].fcd - dt
-                if actors[ei2].fcd <= 0.0 and actors[ei2].rl <= 0.0 {
+                if actors[ei2].fcd <= 0.0 and actors[ei2].rl <= 0.0 and bheal == false {
                     let aey = sy + 0.5
                     // FFA: target the NEAREST enemy - the player OR another bot.
                     let mut tgx = 0.0
