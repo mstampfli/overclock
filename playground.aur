@@ -2526,7 +2526,7 @@ fn main() {
                     nearest = bestd
                     // Face the body toward whatever it's aiming at (so the model + its shoot
                     // animation point at the actual target, not hardcoded at the player).
-                    if tgi > (0 - 2) { brains[ci].face = atan2(tgx - bsx, 0.0 - (tgz - bsz)) }
+                    if tgi > (0 - 2) { brains[ci].face = atan2(tgx - bsx, tgz - bsz) }
                     // Launcher at range whenever it has a rocket (you can rocket from afar even
                     // with rifle ammo). OR when the rifle is fully dry but the launcher has ammo
                     // (only option) - that case only FIRES at range (gated below) + backs off.
@@ -2977,19 +2977,21 @@ fn main() {
                     let spd = sqrt(svx * svx + svz * svz) / dt
                     ashoot[ed] = ashoot[ed] - dt
                     if ashoot[ed] < 0.0 { ashoot[ed] = 0.0 }
-                    // Clip from real state: airborne -> jump, firing (and not sprinting) -> shoot,
-                    // running -> jog, else idle (with a speed deadband so it doesn't flicker).
+                    // Clip from real state: firing -> shoot (overrides locomotion), airborne ->
+                    // jump (from the bot's OWN vertical + knockback velocity, which doesn't flicker
+                    // like a ground raycast), running -> jog, else idle (speed deadband vs jitter).
+                    let knock = sqrt(brains[ed].kx * brains[ed].kx + brains[ed].ky * brains[ed].ky + brains[ed].kz * brains[ed].kz)
                     let mut want_clip = astate[ed]
                     if want_clip < 0 { want_clip = anim_idle }
                     if spd < 1.5 { want_clip = anim_idle }
                     if spd > 3.0 { want_clip = anim_run }
-                    if ashoot[ed] > 0.0 and spd < 3.0 { want_clip = anim_shoot }
-                    if phys3d_grounded(h) < 1 { want_clip = anim_jump }
+                    if ashoot[ed] > 0.0 { want_clip = anim_shoot }
+                    if brains[ed].vy > 1.5 or brains[ed].vy < (0.0 - 1.5) or knock > 4.0 { want_clip = anim_jump }
                     if astate[ed] != want_clip { r3d_anim_play(actor_models[ed], want_clip, 1, 1.0, 0.12); astate[ed] = want_clip }
                     r3d_anim_update(actor_models[ed], dt)
-                    // Face the run direction when sprinting, otherwise the aim target.
+                    // Face the aim target; swing to the run direction only while sprinting AND not firing.
                     let mut fyaw = brains[ed].face + actor_yaw_off
-                    if spd > 3.0 { fyaw = atan2(svx, 0.0 - svz) + actor_yaw_off }
+                    if spd > 3.0 and ashoot[ed] <= 0.0 { fyaw = atan2(svx, svz) + actor_yaw_off }
                     r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, fyaw, 0.0, 0.0, actor_scale * psc)
                     aprevx[ed] = bx
                     aprevz[ed] = bz
