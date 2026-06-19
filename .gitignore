@@ -5,3 +5,6 @@
 /overclock
 /out.txt
 /err.txt
+
+# Runtime-generated player settings (per-machine)
+overclock_settings.txt
