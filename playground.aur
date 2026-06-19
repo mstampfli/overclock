@@ -1020,10 +1020,11 @@ fn main() {
     let proj_vis = r3d_make_box_emissive(0.12, 0.12, 0.12, 1.0, 0.4, 1.0)
     // Downloaded CC0 low-poly character (three.js RobotExpressive, CC0 by Quaternius). If it
     // fails to load (missing file / no GPU yet) the handle is -1 and actors fall back to boxes.
-    let actor_model = r3d_load_model("models/robot.glb")
-    let actor_scale = 0.9        // TUNE: scale to roughly the ~1.8m actor height
-    let actor_yoff = 0.0 - 0.9   // model origin is at its feet; actor pos is the capsule centre
-    let mut actor_clip = 2       // TUNE: which looping clip to play (idle/move)
+    let actor_model = r3d_load_model("models/Rogue.glb")
+    let actor_scale = 0.55       // measured glb bind height ~3.3 units -> ~1.8m actor
+    let actor_yoff = 0.0 - 0.3   // lift so the feet sit on the ground (TUNE if floating/sunk)
+    let actor_yaw_off = 0.0      // set to 3.14159 if the character faces AWAY from you
+    let mut actor_clip = 36      // 36 = "Idle" (parsed straight from the glb's clip list)
     if actor_model >= 0 {
         let acc = r3d_clip_count(actor_model)
         if actor_clip >= acc { actor_clip = 0 }
@@ -2959,7 +2960,7 @@ fn main() {
                 if actor_model >= 0 {
                     // Downloaded character model, turned to face the player (TUNE the scale /
                     // y-offset / clip / facing constants above if it looks off).
-                    let fyaw = atan2(px - bx, 0.0 - (pz - bz))
+                    let fyaw = atan2(px - bx, 0.0 - (pz - bz)) + actor_yaw_off
                     r3d_draw(actor_model, bx, by + actor_yoff, bz, fyaw, 0.0, 0.0, actor_scale * psc)
                 } else {
                     // Fallback: the original box body + head (glow while overclocked, cyan if shielded).
