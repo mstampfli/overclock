@@ -814,8 +814,9 @@ struct Brain {
     jcd: f64,        // jump cooldown
     kx: f64,
     ky: f64,
-    kz: f64,         // blast knockback velocity (decays)
-    pop: f64         // hit-flinch scale pop (draw)
+    kz: f64,         // blast knockback velocity (decays) - also reused for a grapple-leap
+    pop: f64,        // hit-flinch scale pop (draw)
+    gcd: f64         // grapple cooldown (a bot grapple-leaps to close big gaps, like a player)
 }
 
 fn menu_btn(x: i64, y: i64, w: i64, h: i64, mx: i64, my: i64) -> i64 {
@@ -1117,15 +1118,15 @@ fn main() {
     // Brain; the player + remote slots get a dummy (aim 0, unused). `aim` (shot spread) is a
     // bot's skill - the ONLY thing distinguishing a bot from the player in a fight.
     let mut brains = [
-        Brain { aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Brain { aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Brain { aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Brain { aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Brain { aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0 }
+        Brain { aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
+        Brain { aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
+        Brain { aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
+        Brain { aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
+        Brain { aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 },
+        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0 }
     ]
     // Per-player characters are created lazily by the sim (see sim_step).
 
@@ -2158,6 +2159,35 @@ fn main() {
                 // up it (reach rooftops like a wallrun).
                 if grnd == false and stuck and (tmy - by0) > 0.5 and brains[ei2].vy < 7.0 {
                     brains[ei2].vy = 7.0
+                }
+                // GRAPPLE: when far from its target a bot grapple-leaps to close the gap, the
+                // way a player would - raycast toward the target, anchor on a surface, and
+                // reel in (the leap is carried by the knockback-velocity decay).
+                brains[ei2].gcd = brains[ei2].gcd - dt
+                if grnd and brains[ei2].gcd <= 0.0 and tdist > 24.0 and bheal == false {
+                    let aimx = tmx - bx0
+                    let aimy = (tmy + 1.5) - (by0 + 0.5)
+                    let aimz = tmz - bz0
+                    let aiml = sqrt(aimx * aimx + aimy * aimy + aimz * aimz)
+                    if aiml > 0.1 {
+                        let gnx = aimx / aiml
+                        let gny = aimy / aiml
+                        let gnz = aimz / aiml
+                        let gh = phys3d_raycast_ex(h, bx0, by0 + 0.5, bz0, gnx, gny, gnz, 55.0)
+                        if gh >= 0 {
+                            let lx = phys3d_hit_x() - bx0
+                            let ly = phys3d_hit_y() - (by0 + 0.5)
+                            let lz = phys3d_hit_z() - bz0
+                            let ll = sqrt(lx * lx + ly * ly + lz * lz)
+                            if ll > 3.0 {
+                                brains[ei2].kx = lx / ll * 22.0
+                                brains[ei2].ky = ly / ll * 16.0 + 4.0
+                                brains[ei2].kz = lz / ll * 22.0
+                                brains[ei2].gcd = 3.5
+                                play_sound_at(0 - 6, 55, 7, bx0, by0, bz0)   // grapple thunk (3D)
+                            }
+                        }
+                    }
                 }
                 brains[ei2].px0 = bx0
                 brains[ei2].pz0 = bz0
