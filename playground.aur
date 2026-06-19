@@ -810,6 +810,8 @@ fn main() {
     // Enemy bots (red body so they read as hostile at a glance).
     let enemy_vis = r3d_make_box_sized(0.3, 0.9, 0.3, 0.9, 0.28, 0.28)
     let enemy_head = r3d_make_box_sized(0.18, 0.18, 0.18, 1.0, 0.55, 0.2)
+    // Shielded bot body: cyan tint while its shield is still up (drops a cell on death).
+    let enemy_vis_sh = r3d_make_box_sized(0.3, 0.9, 0.3, 0.4, 0.65, 1.0)
     // Glowing (emissive, self-lit) enemy meshes - drawn while OVERCLOCKED so the bots
     // themselves light up against the dimmed world.
     let enemy_glow_body = r3d_make_box_emissive(0.3, 0.9, 0.3, 1.0, 0.12, 0.18)
@@ -885,6 +887,11 @@ fn main() {
         phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3) as f64
     ]
     let mut ehp = [100.0, 100.0, 100.0]      // current health
+    // Per-bot shield: esh_max 0 = unshielded, >0 = carries a shield (depletes before
+    // health, makes them tankier, drawn tinted). On death a shielded bot ALSO drops a
+    // shield cell; an unshielded one never does. Only some bots carry one (scarce).
+    let esh_max = [0.0, 50.0, 0.0]
+    let mut esh = [0.0, 50.0, 0.0]
     let mut eresp = [0.0, 0.0, 0.0]          // respawn countdown while dead
     let mut efire = [0.4, 0.9, 1.4]          // staggered shot timers
     // Per-bot blast knockback velocity (added to their move, decays). Bots are
@@ -995,7 +1002,6 @@ fn main() {
     let mut dmg_dir = 0.0     // screen angle the last hit came from (for the indicator)
     let mut dead = false      // dead, waiting to respawn
     let mut prev_dead = false  // detect the death transition (to drop cells once)
-    let mut drop_count = 0     // enemy-drop counter (makes shield drops scarce)
     let mut respawn_cd = 0.0  // seconds until respawn
     // Two weapons: 0 = hitscan rifle, 1 = travel-time projectile launcher. `ammo` and
     // `mag_size` are the CURRENT weapon's live values; the other weapon's ammo waits in
@@ -1330,7 +1336,12 @@ fn main() {
                     let mut ei = 0
                     while ei < 3 {
                         if body == (eh[ei] as i64) and ehp[ei] > 0.0 {
-                            ehp[ei] = ehp[ei] - gun_dmg
+                            let mut gdmg = gun_dmg
+                            if esh[ei] > 0.0 {
+                                if esh[ei] >= gdmg { esh[ei] = esh[ei] - gdmg; gdmg = 0.0 }
+                                else { gdmg = gdmg - esh[ei]; esh[ei] = 0.0 }
+                            }
+                            ehp[ei] = ehp[ei] - gdmg
                             hitmark = 0.18
                             epop[ei] = 0.1
                             // Spark burst at the impact: a few particles flung back
@@ -1353,17 +1364,23 @@ fn main() {
                             if ehp[ei] <= 0.0 {
                                 ehp[ei] = 0.0
                                 eresp[ei] = enemy_respawn
-                                // Drop a collectable at the body (alternate hp / cell).
+                                // Always drop HEALTH; a shielded bot ALSO drops a cell.
                                 dropx[dropcur] = phys3d_x(eh[ei] as i64)
                                 dropy[dropcur] = 0.6
                                 dropz[dropcur] = phys3d_z(eh[ei] as i64)
-                                let mut dsh = 0.0
-                                if drop_count % 4 == 0 { dsh = 1.0 }
-                                drop_count = drop_count + 1
-                                droptype[dropcur] = dsh
+                                droptype[dropcur] = 0.0
                                 droplife[dropcur] = drop_life
                                 dropcur = dropcur + 1
                                 if dropcur >= drop_n { dropcur = 0 }
+                                if esh_max[ei] > 0.0 {
+                                    dropx[dropcur] = phys3d_x(eh[ei] as i64) + 0.6
+                                    dropy[dropcur] = 0.6
+                                    dropz[dropcur] = phys3d_z(eh[ei] as i64)
+                                    droptype[dropcur] = 1.0
+                                    droplife[dropcur] = drop_life
+                                    dropcur = dropcur + 1
+                                    if dropcur >= drop_n { dropcur = 0 }
+                                }
                                 killmark = 0.35
                                 if round_over == false { kills = kills + 1 }
                                 // Overclock: a kill refills the meter a LITTLE (airborne
@@ -1581,7 +1598,12 @@ fn main() {
                     let bdz = phys3d_z(ghh) - ex_z
                     let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
                     if bdd < rad {
-                        ehp[ej] = ehp[ej] - nade_dmg * gi * (1.0 - bdd / rad)
+                        let mut edmg = nade_dmg * gi * (1.0 - bdd / rad)
+                        if esh[ej] > 0.0 {
+                            if esh[ej] >= edmg { esh[ej] = esh[ej] - edmg; edmg = 0.0 }
+                            else { edmg = edmg - esh[ej]; esh[ej] = 0.0 }
+                        }
+                        ehp[ej] = ehp[ej] - edmg
                         epop[ej] = 0.15
                         if ehp[ej] <= 0.0 {
                             ehp[ej] = 0.0
@@ -1589,13 +1611,19 @@ fn main() {
                             dropx[dropcur] = phys3d_x(eh[ej] as i64)
                             dropy[dropcur] = 0.6
                             dropz[dropcur] = phys3d_z(eh[ej] as i64)
-                            let mut dsh = 0.0
-                            if drop_count % 4 == 0 { dsh = 1.0 }
-                            drop_count = drop_count + 1
-                            droptype[dropcur] = dsh
+                            droptype[dropcur] = 0.0
                             droplife[dropcur] = drop_life
                             dropcur = dropcur + 1
                             if dropcur >= drop_n { dropcur = 0 }
+                            if esh_max[ej] > 0.0 {
+                                dropx[dropcur] = phys3d_x(eh[ej] as i64) + 0.6
+                                dropy[dropcur] = 0.6
+                                dropz[dropcur] = phys3d_z(eh[ej] as i64)
+                                droptype[dropcur] = 1.0
+                                droplife[dropcur] = drop_life
+                                dropcur = dropcur + 1
+                                if dropcur >= drop_n { dropcur = 0 }
+                            }
                             killmark = 0.35
                             if round_over == false { kills = kills + 1 }
                             if oc_active {
@@ -1764,6 +1792,7 @@ fn main() {
                 eresp[ei2] = eresp[ei2] - dt
                 if eresp[ei2] <= 0.0 {
                     ehp[ei2] = enemy_hp_max
+                    esh[ei2] = esh_max[ei2]   // shielded bots respawn with their shield
                     phys3d_set_pos(h, esx[ei2], 0.9, esz[ei2])
                 }
             }
@@ -2031,7 +2060,12 @@ fn main() {
                     r3d_draw(enemy_glow_body, bx, by, bz, 0.0, 0.0, 0.0, psc)
                     r3d_draw(enemy_glow_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
                 } else {
-                    r3d_draw(enemy_vis, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                    // Cyan tint while the shield is up so you can read who is shielded.
+                    if esh[ed] > 0.0 {
+                        r3d_draw(enemy_vis_sh, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                    } else {
+                        r3d_draw(enemy_vis, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                    }
                     r3d_draw(enemy_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
                 }
             }
