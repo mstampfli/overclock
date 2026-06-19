@@ -963,6 +963,16 @@ fn draw_action_name(i: i64, x: i64, y: i64, col: i64) {
     if i == 15 { draw_text(x, y, "Melee", 18, col) }
 }
 
+// Draw a viewmodel box at a camera-relative offset. (lr,lu,lf) = offset along the camera's
+// right/up/forward; (ex,ey,ez) eye pos; (rx,rz)/(ux,uy,uz)/(fx,fy,fz) the camera basis; the
+// box is oriented (byaw,bpitch) so its local +Z runs along the camera forward.
+fn vm_box(m: i64, lr: f64, lu: f64, lf: f64, ex: f64, ey: f64, ez: f64, rx: f64, rz: f64, ux: f64, uy: f64, uz: f64, fx: f64, fy: f64, fz: f64, byaw: f64, bpitch: f64) {
+    let wx = ex + rx * lr + ux * lu + fx * lf
+    let wy = ey + uy * lu + fy * lf
+    let wz = ez + rz * lr + uz * lu + fz * lf
+    r3d_draw(m, wx, wy, wz, byaw, bpitch, 0.0, 1.0)
+}
+
 fn main() {
     window_open(1280, 720)
     grab_mouse(1)
@@ -1019,6 +1029,18 @@ fn main() {
     let ammo_vis = r3d_make_box_emissive(0.2, 0.2, 0.2, 1.0, 0.85, 0.2)   // yellow ammo box
     // Projectile bolt for the launcher (self-lit magenta so it reads in flight).
     let proj_vis = r3d_make_box_emissive(0.12, 0.12, 0.12, 1.0, 0.4, 1.0)
+    // First-person weapon viewmodels: flat-shaded boxes (matching the game look), laid out in a
+    // local right/up/forward frame and drawn attached to the camera each frame (see the render).
+    let vm_rifle_body = r3d_make_box_sized(0.028, 0.05, 0.15, 0.17, 0.18, 0.21)
+    let vm_rifle_barrel = r3d_make_box_sized(0.012, 0.012, 0.13, 0.11, 0.11, 0.13)
+    let vm_rifle_grip = r3d_make_box_sized(0.02, 0.055, 0.028, 0.10, 0.10, 0.12)
+    let vm_rifle_mag = r3d_make_box_sized(0.016, 0.05, 0.03, 0.13, 0.13, 0.15)
+    let vm_lnch_body = r3d_make_box_sized(0.05, 0.055, 0.16, 0.26, 0.17, 0.10)
+    let vm_lnch_muzzle = r3d_make_box_sized(0.065, 0.065, 0.045, 0.14, 0.10, 0.07)
+    let vm_lnch_grip = r3d_make_box_sized(0.02, 0.055, 0.028, 0.10, 0.10, 0.12)
+    let vm_kat_blade = r3d_make_box_sized(0.006, 0.028, 0.32, 0.72, 0.78, 0.85)
+    let vm_kat_guard = r3d_make_box_sized(0.05, 0.014, 0.014, 0.22, 0.18, 0.10)
+    let vm_kat_handle = r3d_make_box_sized(0.013, 0.013, 0.085, 0.10, 0.07, 0.05)
     // Downloaded CC0 MANNEQUIN + 46-clip animation library (Quaternius Universal Animation
     // Library, glTF mirror). One model instance PER actor so each animates independently
     // (idle / run / jump from its real motion). Any actor whose load fails (-1) falls back to
@@ -3098,6 +3120,45 @@ fn main() {
                 slot = slot + 1
             }
             pi = pi + 1
+        }
+
+        // ---- First-person weapon viewmodel: the equipped gun (or the katana mid-swing),
+        // built from boxes and pinned to the camera. Master offset bor/bou/bof = right/down/fwd.
+        if dead == false {
+            let vex = px + sjx
+            let vey = eye + sjy
+            let vez = pz + sjz
+            let vrgt = sqrt(fx * fx + fz * fz)
+            let mut vrx = 1.0
+            let mut vrz = 0.0
+            if vrgt > 0.001 { vrx = (0.0 - fz) / vrgt; vrz = fx / vrgt }
+            let vux = 0.0 - vrz * fy
+            let vuy = vrgt
+            let vuz = vrx * fy
+            let byaw = atan2(fx, fz)
+            let bpitch = 0.0 - eff_pitch
+            let recoil = actors[5].fcd * 0.5         // gun kicks back briefly after each shot
+            let bor = 0.16                            // right
+            let bou = 0.0 - 0.15                      // down
+            let bof = 0.40 - recoil                   // forward
+            let katana_on = melee_cd > melee_cooldown - 0.35
+            if katana_on {
+                let sp = (melee_cd - (melee_cooldown - 0.35)) / 0.35   // 1 -> 0 over the swing
+                let swr = bor + 0.14 - sp * 0.38                       // sweep diagonally...
+                let swu = bou + 0.18 - sp * 0.32                       // ...across the view
+                vm_box(vm_kat_handle, swr, swu, bof - 0.04, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+                vm_box(vm_kat_guard, swr, swu, bof + 0.04, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+                vm_box(vm_kat_blade, swr, swu + 0.02, bof + 0.30, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+            } else { if actors[5].wpn == 0 {
+                vm_box(vm_rifle_body, bor, bou, bof + 0.04, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+                vm_box(vm_rifle_barrel, bor, bou + 0.02, bof + 0.20, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+                vm_box(vm_rifle_grip, bor, bou - 0.06, bof - 0.02, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+                vm_box(vm_rifle_mag, bor, bou - 0.05, bof + 0.04, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+            } else {
+                vm_box(vm_lnch_body, bor, bou, bof + 0.04, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+                vm_box(vm_lnch_muzzle, bor, bou, bof + 0.22, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+                vm_box(vm_lnch_grip, bor, bou - 0.06, bof - 0.02, vex, vey, vez, vrx, vrz, vux, vuy, vuz, fx, fy, fz, byaw, bpitch)
+            } }
         }
 
         // Tracer + impact spark for a few frames after a shot.
