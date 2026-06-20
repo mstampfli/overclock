@@ -893,6 +893,8 @@ fn key_name(code: i64) -> str {
     if code == 100 { return "LMB" }
     if code == 101 { return "RMB" }
     if code == 102 { return "MMB" }
+    if code == 103 { return "M4" }
+    if code == 104 { return "M5" }
     if code == 4 { return "SPACE" }
     if code == 9 { return "ENTER" }
     if code == 10 { return "LSHIFT" }
@@ -1696,7 +1698,7 @@ fn main() {
             if rebind > (0 - 1) {
                 // Arm only once the box-click LMB is released, then the next key OR mouse button
                 // (LMB 100 / RMB 101 / MMB 102) becomes the bind.
-                if mouse_button(0) < 1 and mouse_button(1) < 1 and mouse_button(2) < 1 { rebind_armed = 1 }
+                if mouse_button(0) < 1 and mouse_button(1) < 1 and mouse_button(2) < 1 and mouse_button(3) < 1 and mouse_button(4) < 1 { rebind_armed = 1 }
                 let mut kc2 = 0
                 let mut found = 0 - 1
                 if rebind_armed == 1 {
@@ -1707,6 +1709,8 @@ fn main() {
                     if mouse_button(0) > 0 { found = 100 }
                     if mouse_button(1) > 0 { found = 101 }
                     if mouse_button(2) > 0 { found = 102 }
+                    if mouse_button(3) > 0 { found = 103 }
+                    if mouse_button(4) > 0 { found = 104 }
                 }
                 if found > (0 - 1) {
                     bind_code[rebind] = found as f64
