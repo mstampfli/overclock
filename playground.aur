@@ -1039,6 +1039,28 @@ fn slot_name(slot: i64, pli: i64, uname: str, ulen: i64, apid: [i64; 9]) -> str 
     return "GUEST"
 }
 
+// Build a display name directly from a NET id (for kill-feed entries that arrive as net kill
+// events, where we have ids not local actor slots). myid -> our own name; else the replicated name.
+fn name_from_pid(pid: i64, myid: i64, uname: str, ulen: i64) -> str {
+    if pid == myid { if ulen > 0 { return uname } return "PLAYER" }
+    let nl = net_player_name_len(pid)
+    if nl > 0 {
+        let mut nm = ""
+        let mut ci = 0
+        while ci < nl { nm = nm + code_char(net_player_name_char(pid, ci)); ci = ci + 1 }
+        return nm
+    }
+    return "GUEST"
+}
+
+// Map a local actor SLOT to its NET id, for announcing host-authoritative kills: the host
+// player is id 0, bots are ids 1000+slot, and remote humans use their apid mapping.
+fn actor_netid(slot: i64, pli: i64, bot_n: i64, apid: [i64; 9]) -> i64 {
+    if slot == pli { return 0 }
+    if slot < bot_n { return 1000 + slot }
+    return apid[slot]
+}
+
 // A settings slider bar: neon fill over a dark track. Returns 1 if the cursor is over
 // it (so the caller can let a click set the value directly).
 fn draw_bar(x: i64, y: i64, w: i64, h: i64, frac: f64, mx: i64, my: i64) -> i64 {
@@ -1502,9 +1524,13 @@ fn main() {
     let mut death_done = [0; 9]  // 1 once a death's consequences ran (reset on respawn)
     let mut kr_oc = [0.0; 9]     // OC meter gain to grant IF the killer is the player
     let mut kr_mark = [0.0; 9]   // killmark value for a player kill (weapon-specific)
-    let mut kf_killer = [0; 6]  // kill feed ring: killer slot
+    let mut kf_killer = [0; 6]  // kill feed ring: killer slot (local/practice; -1 pid below)
     let mut kf_victim = [0; 6]  // victim slot
     let mut kf_time = [0.0; 6]  // seconds left to show
+    // Parallel NET ids for entries that arrive as host kill events (guest). -1 = use the slot
+    // above (a local host/practice kill); >= 0 = resolve the name from the net id instead.
+    let mut kf_killer_pid = [0 - 1; 6]
+    let mut kf_victim_pid = [0 - 1; 6]
     let mut kf_cur = 0
     let mut kill_target = 15        // lobby-set: kills to win
     let mut round_len = 120.0       // lobby-set: round length (seconds)
@@ -2273,6 +2299,27 @@ fn main() {
                 phys3d_set_pos(crates[gci] as i64, net_object_x(gci), net_object_y(gci), net_object_z(gci))
                 gci = gci + 1
             }
+        }
+        // GUEST: consume the host's authoritative KILL events. This only DISPLAYS them (kill
+        // feed + the killer's red marker/sound/score) - the kill itself was decided host-side,
+        // never simulated here. It deliberately does NOT touch the predicted per-hit hitmarker.
+        if net_mode == 2 {
+            let nkv = net_kill_count()
+            let mut kvi = 0
+            while kvi < nkv {
+                let kpid = net_kill_killer(kvi)
+                let vpid = net_kill_victim(kvi)
+                kf_killer_pid[kf_cur] = kpid; kf_victim_pid[kf_cur] = vpid; kf_time[kf_cur] = 4.5
+                kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
+                if kpid == net_my_id() {
+                    killmark = 0.35
+                    if round_over == false { kills = kills + 1 }
+                    play_sound(12, 110, 0)
+                    play_sound(7, 110, 0)
+                }
+                kvi = kvi + 1
+            }
+            net_kills_clear()
         }
         // Players REPLACE bots: active bots = opponent budget (bot_count) minus connected
         // remotes, so a joining player frees a bot slot and a leaving player gets a bot back.
@@ -3373,7 +3420,10 @@ fn main() {
                 }
                 if kk >= 0 and kk != dv {
                     if round_over == false { akills[kk] = akills[kk] + 1 }
-                    kf_killer[kf_cur] = kk; kf_victim[kf_cur] = dv; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
+                    // HOST: announce this authoritative kill to guests (net ids), so their feed +
+                    // the killer's red marker/sound come from US, never simulated guest-side.
+                    if net_mode == 1 { net_push_kill(actor_netid(kk, pl_i, bot_n, apid), actor_netid(dv, pl_i, bot_n, apid)) }
+                    kf_killer[kf_cur] = kk; kf_victim[kf_cur] = dv; kf_killer_pid[kf_cur] = 0 - 1; kf_victim_pid[kf_cur] = 0 - 1; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
                     if kk == pl_i {
                         killmark = kr_mark[dv]
                         if round_over == false { kills = kills + 1 }
@@ -4130,15 +4180,31 @@ fn main() {
             let ksl = (kf_cur + ko) % 6   // start at the oldest active slot, walk to newest
             if kf_time[ksl] > 0.0 {
                 let kfy = 92 + krow * 24
-                let kn = slot_name(kf_killer[ksl], pl_i, username, uname_len, apid)
-                let vn = slot_name(kf_victim[ksl], pl_i, username, uname_len, apid)
+                // Entries from a host kill event carry NET ids (kf_*_pid >= 0); local/practice
+                // entries carry actor slots. Resolve the name + "is it me" the matching way.
+                let myid = net_my_id()
+                let mut kn = ""
+                let mut vn = ""
+                let mut k_is_me = 0
+                let mut v_is_me = 0
+                if kf_killer_pid[ksl] >= 0 {
+                    kn = name_from_pid(kf_killer_pid[ksl], myid, username, uname_len)
+                    vn = name_from_pid(kf_victim_pid[ksl], myid, username, uname_len)
+                    if kf_killer_pid[ksl] == myid { k_is_me = 1 }
+                    if kf_victim_pid[ksl] == myid { v_is_me = 1 }
+                } else {
+                    kn = slot_name(kf_killer[ksl], pl_i, username, uname_len, apid)
+                    vn = slot_name(kf_victim[ksl], pl_i, username, uname_len, apid)
+                    if kf_killer[ksl] == pl_i { k_is_me = 1 }
+                    if kf_victim[ksl] == pl_i { v_is_me = 1 }
+                }
                 let kw = text_width(kn, 18)
                 // The local player's name is specially highlighted: bright cyan when YOU
                 // got the kill, red when YOU were the victim; everyone else gold/white.
                 let mut kc = col_gold
-                if kf_killer[ksl] == pl_i { kc = 90 * 65536 + 230 * 256 + 255 }
+                if k_is_me == 1 { kc = 90 * 65536 + 230 * 256 + 255 }
                 let mut vc = col_white
-                if kf_victim[ksl] == pl_i { vc = 255 * 65536 + 90 * 256 + 90 }
+                if v_is_me == 1 { vc = 255 * 65536 + 90 * 256 + 90 }
                 draw_text(16, kfy, kn, 18, kc)
                 draw_text(16 + kw, kfy, " > ", 18, col_white)
                 draw_text(16 + kw + text_width(" > ", 18), kfy, vn, 18, vc)
