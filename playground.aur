@@ -1226,12 +1226,13 @@ fn main() {
     let mut tm_prev = 0         // edge: M = next weapon
     let mut tn_prev = 0         // edge: N = next anim clip
     // Eye-tuned katana hand pose (third-person bone attach).
-    let mut kat_hand_ox = 0.0 - 0.03
-    let mut kat_hand_oy = 0.01
-    let mut kat_hand_oz = 0.0 - 0.17
+    let mut kat_hand_ox = 0.0 - 0.05
+    let mut kat_hand_oy = 0.0 - 0.04
+    let mut kat_hand_oz = 0.0 - 0.33
     let mut kat_hand_oyaw = 0.0
     let mut kat_hand_opitch = 4.97
     let mut kat_hand_oroll = 0.0 - 3.05
+    let kat_swing_clip = 41     // the slash animation in the mannequin pack (third-person swing)
     // Downloaded CC0 MANNEQUIN + 46-clip animation library (Quaternius Universal Animation
     // Library, glTF mirror). One model instance PER actor so each animates independently
     // (idle / run / jump from its real motion). Any actor whose load fails (-1) falls back to
@@ -2318,6 +2319,10 @@ fn main() {
         // the host overrides it (it owns my score), so this is just a harmless default.
         net_set_meta(6, akills[pl_i])
         net_set_meta(7, adeaths[pl_i])
+        // Melee swing flag (slot 8): so OTHERS see my third-person katana swing (clip 41).
+        let mut sw_m = 0.0
+        if melee_cd > melee_cooldown - 0.35 { sw_m = 1.0 }
+        net_set_meta(8, sw_m)
         if uname_len > 0 { net_set_name(username) }
         // HOST: replicate authoritative crate positions (boxes are static until shot, so the
         // engine's change-detection keeps this near-zero traffic). Clients snap to these, and
@@ -4170,12 +4175,21 @@ fn main() {
                     if astate[ai] < 0 { rallow = 1 }
                     if astate_t[ai] > 0.15 { rallow = 1 }
                     if rallow == 1 and astate[ai] != rdes { r3d_anim_play(actor_models[ai], rdes, 1, 1.0, 0.15); astate[ai] = rdes; astate_t[ai] = 0.0 }
-                    if ushoot[ai] != anim_aim { r3d_anim_play_upper(actor_models[ai], anim_aim, 1, 1.0, 0.12, upper_mask_root); ushoot[ai] = anim_aim }
+                    // Upper-body overlay: the katana SWING (clip 41) while this remote is meleeing
+                    // (replicated meta 8), else the held weapon pose. Reuses the existing overlay.
+                    let mut ruwant = anim_aim
+                    if net_player_meta(pid, 8) > 0.5 { ruwant = kat_swing_clip }
+                    if ushoot[ai] != ruwant { r3d_anim_play_upper(actor_models[ai], ruwant, 1, 1.0, 0.1, upper_mask_root); ushoot[ai] = ruwant }
                     r3d_anim_update(actor_models[ai], dt)
                     if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 0.95, 0.0 - 0.2, 0.0 - 0.2) } else { if actors[ai].sh > 0.0 { r3d_draw_shield(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale) } }
                     // Third-person weapon ATTACHED to the remote's right-hand bone (joint 29).
                     let ryr = eyaw + actor_yaw_off
-                    r3d_draw_on_joint(vm_rifle, actor_models[ai], hand_joint, ex, ey + actor_yoff, ez, ryr, 0.0, 0.0, actor_scale, hand_ox, hand_oy, hand_oz, hand_oyaw, hand_opitch, hand_oroll, rifle_scale_tp)
+                    // Draw the katana while swinging (its own offset/scale), else the rifle.
+                    if net_player_meta(pid, 8) > 0.5 {
+                        r3d_draw_on_joint(vm_katana, actor_models[ai], hand_joint, ex, ey + actor_yoff, ez, ryr, 0.0, 0.0, actor_scale, kat_hand_ox, kat_hand_oy, kat_hand_oz, kat_hand_oyaw, kat_hand_opitch, kat_hand_oroll, kat_scale_tp)
+                    } else {
+                        r3d_draw_on_joint(vm_rifle, actor_models[ai], hand_joint, ex, ey + actor_yoff, ez, ryr, 0.0, 0.0, actor_scale, hand_ox, hand_oy, hand_oz, hand_oyaw, hand_opitch, hand_oroll, rifle_scale_tp)
+                    }
                     aprevx[ai] = ex
                     aprevz[ai] = ez
                 } else {
@@ -4194,7 +4208,7 @@ fn main() {
         // weapon (rifle/launcher/katana), N cycles the anim clip; current values shown in the HUD.
         if tune_mode > 0 {
             let mdn = key_down(52)
-            if mdn > 0 and tm_prev == 0 { tune_weapon = tune_weapon + 1; if tune_weapon > 2 { tune_weapon = 0 } }
+            if mdn > 0 and tm_prev == 0 { tune_weapon = tune_weapon + 1; if tune_weapon > 2 { tune_weapon = 0 } if tune_weapon == 2 { tune_clip = kat_swing_clip } }
             tm_prev = mdn
             let clipn = r3d_clip_count(preview_model)   // real number of clips in the mannequin
             let ndn = key_down(53)
