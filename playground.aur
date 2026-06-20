@@ -3180,7 +3180,9 @@ fn main() {
                     let tyaw = brains[ed].face + actor_yaw_off
                     let dyaw = atan2(sin(tyaw - ayaw[ed]), cos(tyaw - ayaw[ed]))
                     if dyaw > 2.0 or dyaw < (0.0 - 2.0) { ayaw[ed] = tyaw } else { ayaw[ed] = ayaw[ed] + dyaw * 0.2 }
-                    r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale)
+                    // Tint the actual model: orange while I'm overclocked (enemies pop against the
+                    // dimmed world), blue while shielded, otherwise untinted.
+                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 1.5, 0.7, 0.28) } else { if actors[ed].sh > 0.0 { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 0.5, 0.7, 1.35) } else { r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale) } }
                     // Third-person weapon in the bot's hand (approx offset, aimed where it faces).
                     // Reload = lower it and bring it back up; equipped weapon picks the mesh.
                     let afwx = sin(ayaw[ed])
@@ -3258,7 +3260,7 @@ fn main() {
                     if rallow == 1 and astate[ai] != rdes { r3d_anim_play(actor_models[ai], rdes, 1, 1.0, 0.15); astate[ai] = rdes; astate_t[ai] = 0.0 }
                     if ushoot[ai] != anim_aim { r3d_anim_play_upper(actor_models[ai], anim_aim, 1, 1.0, 0.12, upper_mask_root); ushoot[ai] = anim_aim }
                     r3d_anim_update(actor_models[ai], dt)
-                    r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale)
+                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.5, 0.7, 0.28) } else { r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale) }
                     // Third-person weapon in the remote player's hand (rifle by default).
                     let ryr = eyaw + actor_yaw_off
                     r3d_draw(vm_rifle, ex + sin(ryr) * 0.12 + cos(ryr) * 0.18, ey + actor_yoff + 1.25, ez + cos(ryr) * 0.12 - sin(ryr) * 0.18, ryr + gun_yaw, 0.0, 0.0, rifle_scale)
