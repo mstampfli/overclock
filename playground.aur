@@ -1691,7 +1691,7 @@ fn main() {
                 draw_text(cl + 94, 340, join_addr, 22, hcol)
                 draw_text(cl, 372, "(IP or hostname, e.g. overclock.mstampfli.com)", 14, wht)
             }
-            if net_started { draw_text(cx - 150, fbh - 150, "connected (settings reapply on start)", 16, wht) }
+            if net_started { draw_text(cx - text_width("connected (settings reapply on start)", 16) / 2, fbh - 150, "connected (settings reapply on start)", 16, wht) }
             if menu_btn(cx - 90, fbh - 72, 180, 46, mx, my) == 1 {
                 if clicked == 1 {
                     if net_started == false {
@@ -1719,6 +1719,10 @@ fn main() {
             draw_text(cx - text_width("START", 28) / 2, fbh - 60, "START", 28, wht)
             if menu_btn(cx - 90, fbh - 128, 180, 40, mx, my) == 1 { if clicked == 1 { screen = s_title } }
             draw_text(cx - text_width("BACK", 22) / 2, fbh - 118, "BACK", 22, wht)
+            // Escape backs out of the lobby to the title.
+            let esc_l = key_down(20)
+            if esc_l > 0 and esc_prev == 0 { screen = s_title }
+            esc_prev = esc_l
         } else {
             draw_text(cx - text_width("SETTINGS", 44) / 2, 30, "SETTINGS", 44, gold)
             // Sensitivity: a bar adjusted in steps of EXACTLY 1 (one unit = 0.0001), so it
@@ -1812,6 +1816,18 @@ fn main() {
                 }
             }
             draw_text(cx - text_width("BACK", 24) / 2, fbh - 52, "BACK", 24, wht)
+            // Escape also backs out one level (saves first; ignored mid-rebind).
+            let esc_s = key_down(20)
+            if esc_s > 0 and esc_prev == 0 and rebind < 0 {
+                settings[0] = sens
+                settings[1] = vol as f64
+                let mut wi3 = 0
+                while wi3 < act_n { settings[2 + wi3] = bind_code[wi3]; wi3 = wi3 + 1 }
+                save_settings(settings)
+                rebind = 0 - 1
+                screen = set_back
+            }
+            esc_prev = esc_s
         } } }
             // Leave the menu loop only once a non-menu screen is chosen: PLAY/RESUME ->
             // game, QUIT/window-close -> quit. title/settings/pause keep looping here.
@@ -1874,7 +1890,7 @@ fn main() {
                 while rb < bot_n {
                     actors[rb].hp = enemy_hp_max
                     if rb >= bot_count { actors[rb].hp = 0.0; brains[rb].resp = 1000000.0 }   // inactive bot
-                    actors[rb].sh = actors[rb].shmax
+                    actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
                     actors[rb].mag[0] = mag_size_w[0]; actors[rb].mag[1] = mag_size_w[1]
                     actors[rb].res[0] = 60; actors[rb].res[1] = 2
                     actors[rb].rl = 0.0
@@ -2649,7 +2665,7 @@ fn main() {
                 brains[ei2].resp = brains[ei2].resp - dt
                 if brains[ei2].resp <= 0.0 and ei2 < bot_count {
                     actors[ei2].hp = enemy_hp_max
-                    actors[ei2].sh = actors[ei2].shmax   // respawn with a full shield
+                    actors[ei2].sh = 0.0   // respawn with no shield: must find + pop cells again
                     actors[ei2].mag[0] = mag_size_w[0]; actors[ei2].mag[1] = mag_size_w[1]
                     actors[ei2].res[0] = 60; actors[ei2].res[1] = 2
                     actors[ei2].rl = 0.0
@@ -3144,7 +3160,7 @@ fn main() {
                 while rb < bot_n {
                     actors[rb].hp = enemy_hp_max
                     if rb >= bot_count { actors[rb].hp = 0.0; brains[rb].resp = 1000000.0 }
-                    actors[rb].sh = actors[rb].shmax
+                    actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
                     actors[rb].mag[0] = mag_size_w[0]; actors[rb].mag[1] = mag_size_w[1]
                     actors[rb].res[0] = 60; actors[rb].res[1] = 2
                     actors[rb].rl = 0.0
@@ -3269,7 +3285,7 @@ fn main() {
                     if dyaw > 2.0 or dyaw < (0.0 - 2.0) { ayaw[ed] = tyaw } else { ayaw[ed] = ayaw[ed] + dyaw * 0.2 }
                     // Tint the actual model: orange while I'm overclocked (enemies pop against the
                     // dimmed world), blue while shielded, otherwise untinted.
-                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 2.6, 0.18, 0.15) } else { if actors[ed].sh > 0.0 { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 0.15, 0.35, 2.0) } else { r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale) } }
+                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 0.95, 0.0 - 0.2, 0.0 - 0.2) } else { if actors[ed].sh > 0.0 { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 0.0 - 0.25, 0.0 - 0.05, 0.6) } else { r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale) } }
                     // Third-person weapon in the bot's hand (approx offset, aimed where it faces).
                     // Reload = lower it and bring it back up; equipped weapon picks the mesh.
                     let afwx = sin(ayaw[ed])
@@ -3347,7 +3363,7 @@ fn main() {
                     if rallow == 1 and astate[ai] != rdes { r3d_anim_play(actor_models[ai], rdes, 1, 1.0, 0.15); astate[ai] = rdes; astate_t[ai] = 0.0 }
                     if ushoot[ai] != anim_aim { r3d_anim_play_upper(actor_models[ai], anim_aim, 1, 1.0, 0.12, upper_mask_root); ushoot[ai] = anim_aim }
                     r3d_anim_update(actor_models[ai], dt)
-                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 2.6, 0.18, 0.15) } else { if actors[ai].sh > 0.0 { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 0.15, 0.35, 2.0) } else { r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale) } }
+                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 0.95, 0.0 - 0.2, 0.0 - 0.2) } else { if actors[ai].sh > 0.0 { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 0.0 - 0.25, 0.0 - 0.05, 0.6) } else { r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale) } }
                     // Third-person weapon in the remote player's hand (rifle by default).
                     let ryr = eyaw + actor_yaw_off
                     r3d_draw(vm_rifle, ex + sin(ryr) * 0.12 + cos(ryr) * 0.18, ey + actor_yoff + 1.25, ez + cos(ryr) * 0.12 - sin(ryr) * 0.18, ryr + gun_yaw, 0.0, 0.0, rifle_scale)
@@ -3675,20 +3691,29 @@ fn main() {
         draw_text(cx - 6, 66, "/", 26, col_white)
         draw_int(cx + 14, 66, kill_target, 26, col_white)
 
-        // Kill feed (top-right): recent "KILLER > VICTIM", showing for a few seconds.
-        let mut kfi = 0
-        while kfi < 6 {
-            if kf_time[kfi] > 0.0 {
-                kf_time[kfi] = kf_time[kfi] - dt
-                let kfy = 100 + kfi * 26
-                let kn = slot_name(kf_killer[kfi], pl_i, username, uname_len)
-                let vn = slot_name(kf_victim[kfi], pl_i, username, uname_len)
+        // Kill feed (top-right): "KILLER > VICTIM". Decrement every timer FIRST so expiry
+        // is independent of draw order, then draw the still-active entries packed into
+        // consecutive rows (oldest on top, newest at the bottom) so there are never gaps -
+        // when any entry fades the ones below it shift up. Each row is right-aligned to a
+        // fixed margin so long names can never run off the right edge.
+        let mut kfd = 0
+        while kfd < 6 { if kf_time[kfd] > 0.0 { kf_time[kfd] = kf_time[kfd] - dt } kfd = kfd + 1 }
+        let mut krow = 0
+        let mut ko = 0
+        while ko < 6 {
+            let ksl = (kf_cur + ko) % 6   // start at the oldest active slot, walk to newest
+            if kf_time[ksl] > 0.0 {
+                let kfy = 100 + krow * 24
+                let kn = slot_name(kf_killer[ksl], pl_i, username, uname_len)
+                let vn = slot_name(kf_victim[ksl], pl_i, username, uname_len)
                 let kw = text_width(kn, 18)
-                draw_text(fbw - 300, kfy, kn, 18, col_gold)
-                draw_text(fbw - 300 + kw + 8, kfy, ">", 18, col_white)
-                draw_text(fbw - 300 + kw + 24, kfy, vn, 18, col_white)
+                let fullw = kw + text_width(" > ", 18) + text_width(vn, 18)
+                let kx = fbw - 16 - fullw
+                draw_text(kx, kfy, kn, 18, col_gold)
+                draw_text(kx + kw, kfy, " > " + vn, 18, col_white)
+                krow = krow + 1
             }
-            kfi = kfi + 1
+            ko = ko + 1
         }
 
         // Scoreboard (hold TAB): name | K | D for the player + active bots + remotes, kills desc.
@@ -3797,7 +3822,7 @@ fn main() {
         // Death screen: big "YOU DIED" + a respawn countdown (whole seconds).
         if dead {
             let col_red = 235 * 65536 + 70 * 256 + 60
-            draw_text(cx - 150, cy - 70, "YOU DIED", 56, col_red)
+            draw_text(cx - text_width("YOU DIED", 56) / 2, cy - 70, "YOU DIED", 56, col_red)
             draw_int(cx - 14, cy + 10, (respawn_cd as i64) + 1, 50, col_white)
         }
 
@@ -3830,10 +3855,10 @@ fn main() {
         }
         let col_oc = 255 * 65536 + 210 * 256 + 70
         if oc_active {
-            draw_text(cx - 96, ocy - 28, "OVERCLOCKED", 22, col_oc)
+            draw_text(cx - text_width("OVERCLOCKED", 22) / 2, ocy - 28, "OVERCLOCKED", 22, col_oc)
         } else {
             if oc_meter >= 100.0 {
-                draw_text(cx - 96, ocy - 28, "OVERCLOCK [F]", 22, col_oc)
+                draw_text(cx - text_width("OVERCLOCK [F]", 22) / 2, ocy - 28, "OVERCLOCK [F]", 22, col_oc)
             }
         }
 
