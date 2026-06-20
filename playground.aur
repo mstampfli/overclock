@@ -3526,7 +3526,7 @@ fn main() {
                     if dyaw > 2.0 or dyaw < (0.0 - 2.0) { ayaw[ed] = tyaw } else { ayaw[ed] = ayaw[ed] + dyaw * 0.2 }
                     // Tint the actual model: orange while I'm overclocked (enemies pop against the
                     // dimmed world), blue while shielded, otherwise untinted.
-                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 0.95, 0.0 - 0.2, 0.0 - 0.2) } else { if actors[ed].sh > 0.0 { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 0.0 - 0.25, 0.0 - 0.05, 0.6) } else { r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale) } }
+                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 0.95, 0.0 - 0.2, 0.0 - 0.2) } else { if actors[ed].sh > 0.0 { r3d_draw_shield(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale) } }
                     // Third-person weapon ATTACHED to the right-hand bone (joint 29): it rides
                     // the hand, so reload/aim/run hand motion comes from the animation itself.
                     let mut twm = vm_rifle
@@ -3598,7 +3598,7 @@ fn main() {
                     if rallow == 1 and astate[ai] != rdes { r3d_anim_play(actor_models[ai], rdes, 1, 1.0, 0.15); astate[ai] = rdes; astate_t[ai] = 0.0 }
                     if ushoot[ai] != anim_aim { r3d_anim_play_upper(actor_models[ai], anim_aim, 1, 1.0, 0.12, upper_mask_root); ushoot[ai] = anim_aim }
                     r3d_anim_update(actor_models[ai], dt)
-                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 0.95, 0.0 - 0.2, 0.0 - 0.2) } else { if actors[ai].sh > 0.0 { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 0.0 - 0.25, 0.0 - 0.05, 0.6) } else { r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale) } }
+                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 0.95, 0.0 - 0.2, 0.0 - 0.2) } else { if actors[ai].sh > 0.0 { r3d_draw_shield(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale) } }
                     // Third-person weapon ATTACHED to the remote's right-hand bone (joint 29).
                     let ryr = eyaw + actor_yaw_off
                     r3d_draw_on_joint(vm_rifle, actor_models[ai], hand_joint, ex, ey + actor_yoff, ez, ryr, 0.0, 0.0, actor_scale, hand_ox, hand_oy, hand_oz, hand_oyaw, hand_opitch, hand_oroll, rifle_scale)
