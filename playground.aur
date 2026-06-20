@@ -3013,11 +3013,37 @@ fn main() {
                 round_timer = round_len
                 round_over = false
                 won = false
+                // Full reset between rounds: player + every bot back to full hp / shield / ammo /
+                // cells, overclock cleared, leftover drops cleared.
+                actors[5].hp = php_max
+                actors[5].sh = psh_max
+                actors[5].cells = 0
+                actors[5].heal = 0.0
+                actors[5].wpn = 0
+                actors[5].mag[0] = 30; actors[5].mag[1] = 1
+                actors[5].res[0] = 60; actors[5].res[1] = 2
+                actors[5].rl = 0.0
+                dead = false
                 respawn_req = 1.0
+                oc_meter = 0.0
+                oc_active = false
+                oc_timer = 0.0
+                let mut rdr = 0
+                while rdr < drop_n { droplife[rdr] = 0.0; rdr = rdr + 1 }
                 let mut rb = 0
-                while rb < 3 {
+                while rb < bot_n {
                     actors[rb].hp = enemy_hp_max
-                    brains[rb].resp = 0.0
+                    if rb >= bot_count { actors[rb].hp = 0.0; brains[rb].resp = 1000000.0 }
+                    actors[rb].sh = actors[rb].shmax
+                    actors[rb].mag[0] = mag_size_w[0]; actors[rb].mag[1] = mag_size_w[1]
+                    actors[rb].res[0] = 60; actors[rb].res[1] = 2
+                    actors[rb].rl = 0.0
+                    actors[rb].wpn = 0
+                    actors[rb].cells = 0
+                    actors[rb].heal = 0.0
+                    actors[rb].fcd = 0.0
+                    if rb < bot_count { brains[rb].resp = 0.0 }
+                    phys3d_set_pos(actors[rb].hdl as i64, esx[rb], 0.9, esz[rb])
                     rb = rb + 1
                 }
             }
