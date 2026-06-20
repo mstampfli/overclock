@@ -1572,8 +1572,8 @@ fn main() {
     // Melee (V): a katana-reach lunge. Long reach because a short one is impossible to land
     // on a fast-moving target. 125 dmg = a full green bar (100) + half a shield bar (25);
     // shield absorbs first, so a fully-shielded foe survives by a sliver, off-shield = oneshot.
-    let melee_dmg = 125.0
-    let melee_range = 4.0       // katana lunge reach (metres)
+    let melee_dmg = 75.0        // 75% of green hp, and it BYPASSES shield (straight to hp)
+    let melee_range = 2.8       // katana lunge reach (metres) - short, high-risk
     let melee_cooldown = 0.7    // seconds between swings (no spam)
     let shot_kb = 2.2          // per-bullet impulse on a hit crate (impulse/mass)
     // Explosion INTENSITY per source (scales damage, radius, knockback + visual): 1.0
@@ -2309,12 +2309,9 @@ fn main() {
                         }
                     }
                     if in_arc == 1 {
-                        let mut md = melee_dmg
-                        if actors[mvk].sh > 0.0 {
-                            if actors[mvk].sh >= md { actors[mvk].sh = actors[mvk].sh - md; md = 0.0 }
-                            else { md = md - actors[mvk].sh; actors[mvk].sh = 0.0 }
-                        }
-                        actors[mvk].hp = actors[mvk].hp - md
+                        // Katana BYPASSES shield - straight to green health, so you can kill
+                        // someone who still has their shield up (high-risk close-combat reward).
+                        actors[mvk].hp = actors[mvk].hp - melee_dmg
                         brains[mvk].pop = 0.2
                         hitmark = 0.2
                         shake = 0.4
@@ -3407,13 +3404,13 @@ fn main() {
                         }
                         // Actor -> shove the crate away (a SMALL nudge, scaled lightly by the
                         // player's speed so a fast slide moves it just a little further).
-                        let mut pushf = 1.5
+                        let mut pushf = 0.6
                         if cai == pl_i {
                             let pvx = net_local_state(4)
                             let pvz = net_local_state(6)
-                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.18 + 1.5
+                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.07 + 0.6
                         }
-                        phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 0.6, 0.0 - ddz / dd * pushf)
+                        phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 0.35, 0.0 - ddz / dd * pushf)
                     }
                 }
                 cai = cai + 1
