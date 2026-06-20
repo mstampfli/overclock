@@ -1067,7 +1067,8 @@ fn main() {
     let anim_idle = 9               // parsed clips: 9 Idle_Loop, 13 Jog_Fwd, 15 Jump_Loop
     let anim_run = 13
     let anim_jump = 15
-    let anim_shoot = 23             // 23 Pistol_Shoot (played briefly when a bot fires)
+    let anim_shoot = 23             // 23 Pistol_Shoot (overlay while firing)
+    let anim_aim = 21               // 21 Pistol_Idle (always-on upper-body weapon-hold pose)
 
     // Physics world. World gravity pulls DYNAMIC bodies (the shootable targets)
     // down; the player capsule is kinematic and unaffected (it runs its own
@@ -1971,6 +1972,7 @@ fn main() {
         // the anchor / a max time; cooldown after use.
         g_cd = g_cd - dt
         if g_cd < 0.0 { g_cd = 0.0 }
+        if net_local_state(7) > 0.5 { g_cd = 0.0 }   // grounded -> grapple is ready again
         let gkey = input_down(act_grapple)
         if grapple_on {
             g_time = g_time + dt
@@ -1984,7 +1986,7 @@ fn main() {
             // a ceiling (slot 30) - so reeling into the roof drops you instead of pinning you.
             if gkey < 1 or gdd < 2.2 or g_time > 2.5 or net_local_state(30) > 0.5 {
                 grapple_on = false
-                g_cd = 1.2
+                g_cd = 0.6
             }
         } else {
             if gkey > 0 and g_prev < 1 and g_cd <= 0.0 and dead == false and actors[5].heal <= 0.0 {
@@ -3037,11 +3039,11 @@ fn main() {
                     // UPPER-BODY overlay = the shoot pose on the torso/arms while the legs keep
                     // running or jumping (Aurora's animation-layering feature). So a bot can now
                     // run-and-gun or shoot midair, not freeze to one full-body clip.
-                    if ashoot[ed] > 0.0 {
-                        if ushoot[ed] == 0 { r3d_anim_play_upper(actor_models[ed], anim_shoot, 1, 1.0, 0.08, upper_mask_root); ushoot[ed] = 1 }
-                    } else {
-                        if ushoot[ed] == 1 { r3d_anim_stop_upper(actor_models[ed], 0.18); ushoot[ed] = 0 }
-                    }
+                    // ALWAYS hold a weapon pose on the upper body (Pistol_Idle); swap to the shoot
+                    // pose while firing. ushoot stores the clip currently overlaid (0 = unset).
+                    let mut uwant = anim_aim
+                    if ashoot[ed] > 0.0 { uwant = anim_shoot }
+                    if ushoot[ed] != uwant { r3d_anim_play_upper(actor_models[ed], uwant, 1, 1.0, 0.12, upper_mask_root); ushoot[ed] = uwant }
                     r3d_anim_update(actor_models[ed], dt)
                     // Face the aim target, SMOOTHLY: low-pass the yaw the short way around, snap
                     // only on a big (>115 deg) reorient. No raw-delta jitter, no target/move toggle.
@@ -3125,6 +3127,7 @@ fn main() {
                     if astate[ai] < 0 { rallow = 1 }
                     if astate_t[ai] > 0.15 { rallow = 1 }
                     if rallow == 1 and astate[ai] != rdes { r3d_anim_play(actor_models[ai], rdes, 1, 1.0, 0.15); astate[ai] = rdes; astate_t[ai] = 0.0 }
+                    if ushoot[ai] != anim_aim { r3d_anim_play_upper(actor_models[ai], anim_aim, 1, 1.0, 0.12, upper_mask_root); ushoot[ai] = anim_aim }
                     r3d_anim_update(actor_models[ai], dt)
                     r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale)
                     // Third-person weapon in the remote player's hand (rifle by default).
