@@ -3450,11 +3450,11 @@ fn main() {
 
         let mut bar = (spd * 18.0) as i64
         if bar > fbw - 80 { bar = fbw - 80 }
-        let mut cr = 90
-        let mut cg = 220
-        let mut cb = 255
+        let mut cr = 165       // grey speed bar (so it isn't confused with the blue shield bar)
+        let mut cg = 170
+        let mut cb = 178
         if net_local_state(23) > 0.5 {
-            cr = 255
+            cr = 255           // gold while wallrunning
             cg = 200
             cb = 60
         }

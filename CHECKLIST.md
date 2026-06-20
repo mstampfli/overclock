@@ -7,9 +7,9 @@ Cadence: compile + commit + push after each item.
 
 ## Open
 ### Quick
-- [ ] Reset ammo / shield / health (everything) between rounds
+- [x] Reset ammo / shield / health (everything) between rounds
 - [x] Reduce katana range a bit
-- [ ] Velocity bar grey (so it's not confused with the blue shield bar)
+- [x] Velocity bar grey (so it's not confused with the blue shield bar)
 - [ ] Explosive: smaller range damage-falloff (more damage in the vicinity)
 - [ ] Overclock: faster reload + unlimited reserve mags
 - [ ] Hit-location damage: headshot > torso > legs/arms
