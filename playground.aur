@@ -2270,6 +2270,43 @@ fn main() {
                 bsy = bsy + 1
             }
         }
+        // HOST-AUTHORITATIVE DAMAGE: apply each client's lag-comp-VALIDATED hitscan hit to the
+        // entity the host owns (its bots, or the host's own player). The client only predicted
+        // the hitmarker; the host owns the real hp, and the unified death sweep below credits
+        // the kill + drops loot exactly as for a local shot. Same weapon/headshot/shield math.
+        if net_mode == 1 {
+            let nsh = net_server_hit_count()
+            let mut sh = 0
+            while sh < nsh {
+                let vic = net_server_hit_victim(sh)
+                let shooter_pid = net_server_hit_shooter(sh)
+                let hY = net_server_hit_y(sh)
+                let mut vai = 0 - 1
+                if vic >= 1000 { let bidx = vic - 1000; if bidx < bot_n { vai = bidx } }   // a bot
+                if vic == 0 { vai = pl_i }                                                  // the host
+                if vai >= 0 and actors[vai].hp > 0.0 {
+                    let mut dmg = gun_dmg
+                    let hrel = hY - phys3d_y(actors[vai].hdl as i64)
+                    if hrel > 0.5 { dmg = dmg * 2.0 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+                    if actors[vai].sh > 0.0 {
+                        if actors[vai].sh >= dmg { actors[vai].sh = actors[vai].sh - dmg; dmg = 0.0 }
+                        else { dmg = dmg - actors[vai].sh; actors[vai].sh = 0.0 }
+                    }
+                    actors[vai].hp = actors[vai].hp - dmg
+                    if vai < bot_n { brains[vai].pop = 0.1 }
+                    // Credit the shooter's host actor slot so the sweep counts the kill for them.
+                    let mut sai = 0 - 1
+                    let mut ra = bot_n + 1
+                    while ra < nactors {
+                        if apid[ra] == shooter_pid { sai = ra }
+                        ra = ra + 1
+                    }
+                    if sai >= 0 { last_hit[vai] = sai; kr_oc[vai] = 0.0; kr_mark[vai] = 0.0 }
+                }
+                sh = sh + 1
+            }
+            net_server_hits_clear()
+        }
         // Bounced by a full lobby: drop back to the menu with a clear message.
         if net_rejected() > 0 {
             lobby_full = true
@@ -3126,6 +3163,11 @@ fn main() {
                         let mut sg = 6
                         if mine == 1 { sg = 8 }
                         play_sound_at(2, 26, sg, ox, oy, oz)
+                        // Tell the host about my shot so IT validates the hit (lag-comp) and
+                        // applies authoritative damage. My local raycast below is prediction
+                        // (tracer + hitmarker); the host owns the real hp. Host's own net_fire
+                        // is a harmless local raycast (its combat already applied the damage).
+                        if mine == 1 and net_started { net_fire(ox, oy, oz, ax, ay, az, wp) }
                         let hb = phys3d_raycast_ex(actors[ci].hdl as i64, ox, oy, oz, ax, ay, az, 120.0)
                         let mut tex = ox + ax * 120.0
                         let mut tey = oy + ay * 120.0

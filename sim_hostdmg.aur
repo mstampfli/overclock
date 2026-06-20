@@ -1,0 +1,57 @@
+// Verifies the HOST-AUTHORITATIVE damage drain math (the new game-side code that turns a
+// lag-comp-validated client shot into real damage): victim-id -> actor mapping (bots are
+// ids 1000+i), headshot/leg multiplier from the hit height, shield-then-health subtraction,
+// and crediting the shooter's host actor slot so the death sweep counts the kill.
+
+fn main() {
+    let bot_n = 5
+    let pl_i = 5
+    let nactors = 9
+    let gun_dmg = 18.0
+
+    // Host actors: bot 1 has 30 shield + 100 hp; a remote shooter sits in slot 6 (apid 7).
+    let mut hp = [100.0; 9]
+    let mut shd = [0.0; 9]
+    let mut last_hit = [9999; 9]
+    shd[1] = 30.0
+    let mut apid = [9999; 9]
+    apid[6] = 7            // remote human shooter (net id 7) -> host actor slot 6
+    let bot_body_y = 1.0   // the bot capsule centre height
+
+    // ---- A validated HEADSHOT on bot 1 (victim id 1001) by shooter pid 7 ----
+    let vic = 1001
+    let shooter_pid = 7
+    let hY = bot_body_y + 0.8     // 0.8 above centre -> headshot (> 0.5)
+
+    let mut vai = 0 - 1
+    if vic >= 1000 { let bidx = vic - 1000; if bidx < bot_n { vai = bidx } }
+    if vic == 0 { vai = pl_i }
+
+    if vai >= 0 and hp[vai] > 0.0 {
+        let mut dmg = gun_dmg
+        let hrel = hY - bot_body_y
+        if hrel > 0.5 { dmg = dmg * 2.0 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+        // dmg = 36 now. Shield 30 absorbs first, 6 spills to hp.
+        if shd[vai] > 0.0 {
+            if shd[vai] >= dmg { shd[vai] = shd[vai] - dmg; dmg = 0.0 }
+            else { dmg = dmg - shd[vai]; shd[vai] = 0.0 }
+        }
+        hp[vai] = hp[vai] - dmg
+        let mut sai = 0 - 1
+        let mut ra = bot_n + 1
+        while ra < nactors {
+            if apid[ra] == shooter_pid { sai = ra }
+            ra = ra + 1
+        }
+        if sai >= 0 { last_hit[vai] = sai }
+    }
+
+    println("victim actor index (expect 1 = bot 1): ")
+    println(str(vai))
+    println("bot1 shield after headshot (expect 0): ")
+    println(str(shd[1] as i64))
+    println("bot1 hp after headshot 36 vs 30 shield (expect 94): ")
+    println(str(hp[1] as i64))
+    println("kill credited to shooter slot (expect 6): ")
+    println(str(last_hit[1]))
+}
