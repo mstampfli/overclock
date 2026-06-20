@@ -860,6 +860,37 @@ fn draw_centered(text: str, bx: i64, by: i64, bw: i64, bh: i64, px: i64, color: 
     draw_text(tx, ty, text, px, color)
 }
 
+// Draw a customisable crosshair centred at (cx,cy): an optional centre dot + four ticks
+// running from `gap` to `gap+size`, `thick` px wide. One place for the HUD + the editor
+// preview so they always match.
+fn draw_crosshair(cx: i64, cy: i64, size: i64, gap: i64, thick: i64, dot: i64, r: i64, g: i64, b: i64) {
+    let hd = thick / 2
+    if dot > 0 {
+        let mut dy = 0 - hd
+        while dy <= hd {
+            let mut dx = 0 - hd
+            while dx <= hd {
+                pixel(cx + dx, cy + dy, r, g, b)
+                dx = dx + 1
+            }
+            dy = dy + 1
+        }
+    }
+    let mut t = 0
+    while t < thick {
+        let off = t - thick / 2
+        let mut i = gap
+        while i <= gap + size {
+            pixel(cx + i, cy + off, r, g, b)        // right arm
+            pixel(cx - i, cy + off, r, g, b)        // left arm
+            pixel(cx + off, cy + i, r, g, b)        // bottom arm
+            pixel(cx + off, cy - i, r, g, b)        // top arm
+            i = i + 1
+        }
+        t = t + 1
+    }
+}
+
 fn menu_btn(x: i64, y: i64, w: i64, h: i64, mx: i64, my: i64) -> i64 {
     let mut hov = 0
     if mx >= x and mx <= x + w and my >= y and my <= y + h { hov = 1 }
@@ -1298,7 +1329,15 @@ fn main() {
     let mut username = ""       // scoreboard name (editable in the lobby, persisted); empty = "Player"
     let mut uname_len = 0
     let mut uname_codes = [0; 16]
-    let mut settings = [0.0; 40]
+    // Crosshair (customisable; persisted at settings[40..46]). Defaults = the classic plus.
+    let mut ch_size = 6        // tick length (px)
+    let mut ch_gap = 5         // inner gap from centre (px)
+    let mut ch_thick = 1       // tick/line thickness (px)
+    let mut ch_dot = 1         // centre dot on (1) / off (0)
+    let mut ch_r = 240
+    let mut ch_g = 240
+    let mut ch_b = 240
+    let mut settings = [0.0; 56]
     if load_settings(settings) > 2 {
         sens = settings[0]
         vol = (settings[1]) as i64
@@ -1314,6 +1353,16 @@ fn main() {
         username = ""
         let mut ui = 0
         while ui < uname_len { uname_codes[ui] = settings[21 + ui] as i64; username = username + code_char(uname_codes[ui]); ui = ui + 1 }
+        // Crosshair (only if previously configured; slot 40 is the size, 0 = use defaults).
+        if settings[40] > 0.0 {
+            ch_size = settings[40] as i64
+            ch_gap = settings[41] as i64
+            ch_thick = settings[42] as i64
+            ch_dot = settings[43] as i64
+            ch_r = settings[44] as i64
+            ch_g = settings[45] as i64
+            ch_b = settings[46] as i64
+        }
     }
     let mut bi = 0
     while bi < act_n {
@@ -1559,6 +1608,7 @@ fn main() {
     let s_game = 3
     let s_quit = 4
     let s_lobby = 5
+    let s_crosshair = 6
     let mut screen = s_title
     let mut set_back = s_title  // where SETTINGS' BACK returns (title or pause)
     let mut do_reset = true     // PLAY arms a fresh round; RESUME leaves it false
@@ -1733,6 +1783,70 @@ fn main() {
             let esc_l = key_down(20)
             if esc_l > 0 and esc_prev == 0 { screen = s_title }
             esc_prev = esc_l
+        } else { if screen == s_crosshair {
+            // ---- CROSSHAIR EDITOR: live preview + size/gap/thickness/dot/colour ----
+            draw_text(cx - text_width("CROSSHAIR", 44) / 2, 30, "CROSSHAIR", 44, gold)
+            let xl = cx - 250
+            // Live preview on a dim checkerboard pad (right side).
+            let cpx = cx + 180
+            let cpy = 240
+            let mut cby = cpy - 80
+            while cby < cpy + 80 {
+                let mut cbx = cpx - 80
+                while cbx < cpx + 80 { if (cbx + cby) % 2 == 0 { pixel(cbx, cby, 10, 12, 16) } cbx = cbx + 1 }
+                cby = cby + 1
+            }
+            draw_crosshair(cpx, cpy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
+            // Size
+            draw_text(xl, 114, "Size", 22, wht)
+            if menu_btn(xl + 150, 110, 32, 30, mx, my) == 1 { if clicked == 1 { ch_size = ch_size - 1; if ch_size < 1 { ch_size = 1 } } }
+            draw_centered("-", xl + 150, 110, 32, 30, 22, wht)
+            draw_int(xl + 200, 114, ch_size, 22, gold)
+            if menu_btn(xl + 240, 110, 32, 30, mx, my) == 1 { if clicked == 1 { ch_size = ch_size + 1; if ch_size > 40 { ch_size = 40 } } }
+            draw_centered("+", xl + 240, 110, 32, 30, 22, wht)
+            // Gap
+            draw_text(xl, 154, "Gap", 22, wht)
+            if menu_btn(xl + 150, 150, 32, 30, mx, my) == 1 { if clicked == 1 { ch_gap = ch_gap - 1; if ch_gap < 0 { ch_gap = 0 } } }
+            draw_centered("-", xl + 150, 150, 32, 30, 22, wht)
+            draw_int(xl + 200, 154, ch_gap, 22, gold)
+            if menu_btn(xl + 240, 150, 32, 30, mx, my) == 1 { if clicked == 1 { ch_gap = ch_gap + 1; if ch_gap > 40 { ch_gap = 40 } } }
+            draw_centered("+", xl + 240, 150, 32, 30, 22, wht)
+            // Thickness
+            draw_text(xl, 194, "Thickness", 22, wht)
+            if menu_btn(xl + 150, 190, 32, 30, mx, my) == 1 { if clicked == 1 { ch_thick = ch_thick - 1; if ch_thick < 1 { ch_thick = 1 } } }
+            draw_centered("-", xl + 150, 190, 32, 30, 22, wht)
+            draw_int(xl + 200, 194, ch_thick, 22, gold)
+            if menu_btn(xl + 240, 190, 32, 30, mx, my) == 1 { if clicked == 1 { ch_thick = ch_thick + 1; if ch_thick > 9 { ch_thick = 9 } } }
+            draw_centered("+", xl + 240, 190, 32, 30, 22, wht)
+            // Centre dot toggle
+            draw_text(xl, 234, "Dot", 22, wht)
+            if menu_btn(xl + 150, 230, 122, 30, mx, my) == 1 { if clicked == 1 { if ch_dot > 0 { ch_dot = 0 } else { ch_dot = 1 } } }
+            let mut dottxt = "OFF"
+            if ch_dot > 0 { dottxt = "ON" }
+            draw_centered(dottxt, xl + 150, 230, 122, 30, 20, gold)
+            // Colour (R/G/B bars 0..255)
+            draw_text(xl, 284, "Red", 22, wht)
+            if draw_bar(xl + 150, 284, 220, 20, (ch_r as f64) / 255.0, mx, my) == 1 { if clicked == 1 { ch_r = (((mx - (xl + 150)) as f64) / 220.0 * 255.0) as i64; if ch_r < 0 { ch_r = 0 } if ch_r > 255 { ch_r = 255 } } }
+            draw_text(xl, 324, "Green", 22, wht)
+            if draw_bar(xl + 150, 324, 220, 20, (ch_g as f64) / 255.0, mx, my) == 1 { if clicked == 1 { ch_g = (((mx - (xl + 150)) as f64) / 220.0 * 255.0) as i64; if ch_g < 0 { ch_g = 0 } if ch_g > 255 { ch_g = 255 } } }
+            draw_text(xl, 364, "Blue", 22, wht)
+            if draw_bar(xl + 150, 364, 220, 20, (ch_b as f64) / 255.0, mx, my) == 1 { if clicked == 1 { ch_b = (((mx - (xl + 150)) as f64) / 220.0 * 255.0) as i64; if ch_b < 0 { ch_b = 0 } if ch_b > 255 { ch_b = 255 } } }
+            // BACK: persist the crosshair + return to settings. Escape does the same.
+            if menu_btn(cx - 60, fbh - 62, 120, 44, mx, my) == 1 { if clicked == 1 {
+                settings[40] = ch_size as f64; settings[41] = ch_gap as f64; settings[42] = ch_thick as f64; settings[43] = ch_dot as f64
+                settings[44] = ch_r as f64; settings[45] = ch_g as f64; settings[46] = ch_b as f64
+                save_settings(settings)
+                screen = s_settings
+            } }
+            draw_centered("BACK", cx - 60, fbh - 62, 120, 44, 24, wht)
+            let esc_c = key_down(20)
+            if esc_c > 0 and esc_prev == 0 {
+                settings[40] = ch_size as f64; settings[41] = ch_gap as f64; settings[42] = ch_thick as f64; settings[43] = ch_dot as f64
+                settings[44] = ch_r as f64; settings[45] = ch_g as f64; settings[46] = ch_b as f64
+                save_settings(settings)
+                screen = s_settings
+            }
+            esc_prev = esc_c
         } else {
             draw_text(cx - text_width("SETTINGS", 44) / 2, 30, "SETTINGS", 44, gold)
             // Sensitivity: a bar adjusted in steps of EXACTLY 1 (one unit = 0.0001), so it
@@ -1802,6 +1916,9 @@ fn main() {
                     save_settings(settings)
                 }
             }
+            // Crosshair editor (its own screen).
+            if menu_btn(cx - 130, fbh - 160, 260, 38, mx, my) == 1 { if clicked == 1 { screen = s_crosshair } }
+            draw_centered("Crosshair editor", cx - 130, fbh - 160, 260, 38, 22, wht)
             // BACK (saves everything).
             // Display mode cycle: Windowed -> Borderless -> Fullscreen.
             let mut dlabel = "Display: Windowed"
@@ -1838,7 +1955,7 @@ fn main() {
                 screen = set_back
             }
             esc_prev = esc_s
-        } } }
+        } } } }
             // Leave the menu loop only once a non-menu screen is chosen: PLAY/RESUME ->
             // game, QUIT/window-close -> quit. title/settings/pause keep looping here.
             if screen == s_game or screen == s_quit { break }
@@ -3573,21 +3690,8 @@ fn main() {
         // HUD: crosshair + a horizontal speed bar; turns gold while wallrunning.
         clear(0, 0, 0)
         // (Hit flash + low-health vignette are now the GPU damage shader, above.)
-        // Crosshair: a centered dot (a small plus, symmetric about cx,cy so the
-        // point sits exactly between the ticks) + four ticks with a gap.
-        pixel(cx, cy, 240, 240, 240)
-        pixel(cx - 1, cy, 240, 240, 240)
-        pixel(cx + 1, cy, 240, 240, 240)
-        pixel(cx, cy - 1, 240, 240, 240)
-        pixel(cx, cy + 1, 240, 240, 240)
-        let i = 5
-        while i <= 11 {
-            pixel(cx + i, cy, 215, 215, 215)
-            pixel(cx - i, cy, 215, 215, 215)
-            pixel(cx, cy + i, 215, 215, 215)
-            pixel(cx, cy - i, 215, 215, 215)
-            i = i + 1
-        }
+        // Crosshair: drawn from the player's customisable settings (editor in SETTINGS).
+        draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
