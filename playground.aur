@@ -1291,10 +1291,8 @@ fn main() {
     let net_port = 45123
     let mut net_mode = 0        // lobby mode (0 practice / 1 host / 2 join)
     let mut net_started = false
-    let mut ip0 = 127           // join-target IP octets (default loopback for local testing)
-    let mut ip1 = 0
-    let mut ip2 = 0
-    let mut ip3 = 1
+    let mut join_addr = "127.0.0.1"   // JOIN target: IP or hostname (default loopback for testing)
+    let mut addr_len = 9
 
     let mut yaw = 0.0
     let mut pitch = 0.0
@@ -1606,35 +1604,34 @@ fn main() {
             if menu_btn(cl + 320, 276, 78, 34, mx, my) == 1 { if clicked == 1 { net_mode = 2 } }
             draw_text(cl + 340, 282, "JOIN", 20, mc2)
             if net_mode == 2 {
-                let ipy = 332
-                draw_text(cl, ipy + 4, "IP", 22, wht)
-                if menu_btn(cl + 44, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip0 = ip0 - 1; if ip0 < 0 { ip0 = 0 } } }
-                draw_text(cl + 51, ipy + 5, "-", 18, wht)
-                draw_int(cl + 72, ipy + 5, ip0, 20, gold)
-                if menu_btn(cl + 106, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip0 = ip0 + 1; if ip0 > 255 { ip0 = 255 } } }
-                draw_text(cl + 113, ipy + 5, "+", 18, wht)
-                if menu_btn(cl + 140, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip1 = ip1 - 1; if ip1 < 0 { ip1 = 0 } } }
-                draw_text(cl + 147, ipy + 5, "-", 18, wht)
-                draw_int(cl + 168, ipy + 5, ip1, 20, gold)
-                if menu_btn(cl + 202, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip1 = ip1 + 1; if ip1 > 255 { ip1 = 255 } } }
-                draw_text(cl + 209, ipy + 5, "+", 18, wht)
-                if menu_btn(cl + 236, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip2 = ip2 - 1; if ip2 < 0 { ip2 = 0 } } }
-                draw_text(cl + 243, ipy + 5, "-", 18, wht)
-                draw_int(cl + 264, ipy + 5, ip2, 20, gold)
-                if menu_btn(cl + 298, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip2 = ip2 + 1; if ip2 > 255 { ip2 = 255 } } }
-                draw_text(cl + 305, ipy + 5, "+", 18, wht)
-                if menu_btn(cl + 332, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip3 = ip3 - 1; if ip3 < 0 { ip3 = 0 } } }
-                draw_text(cl + 339, ipy + 5, "-", 18, wht)
-                draw_int(cl + 360, ipy + 5, ip3, 20, gold)
-                if menu_btn(cl + 394, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip3 = ip3 + 1; if ip3 > 255 { ip3 = 255 } } }
-                draw_text(cl + 401, ipy + 5, "+", 18, wht)
+                // Host-address text field: type an IP or a hostname (e.g. overclock.mstampfli.com).
+                // Drain the typed-char queue and edit join_addr (Backspace = code 8).
+                let mut tc = input_char()
+                while tc != 0 {
+                    if tc == 8 {
+                        if addr_len > 0 { join_addr = substr(join_addr, 0, addr_len - 1); addr_len = addr_len - 1 }
+                    } else {
+                        let mut ch = "?"
+                        let mut got = 0
+                        if tc >= 48 and tc <= 57 { ch = substr("0123456789", tc - 48, 1); got = 1 } else {
+                        if tc >= 97 and tc <= 122 { ch = substr("abcdefghijklmnopqrstuvwxyz", tc - 97, 1); got = 1 } else {
+                        if tc >= 65 and tc <= 90 { ch = substr("ABCDEFGHIJKLMNOPQRSTUVWXYZ", tc - 65, 1); got = 1 } else {
+                        if tc == 46 { ch = "."; got = 1 } else {
+                        if tc == 45 { ch = "-"; got = 1 } } } } }
+                        if got == 1 { join_addr = join_addr + ch; addr_len = addr_len + 1 }
+                    }
+                    tc = input_char()
+                }
+                draw_text(cl, 340, "Host:", 22, wht)
+                draw_text(cl + 86, 340, join_addr, 22, gold)
+                draw_text(cl, 372, "(type an IP or hostname like overclock.mstampfli.com)", 14, wht)
             }
             if net_started { draw_text(cx - 150, fbh - 150, "connected (settings reapply on start)", 16, wht) }
             if menu_btn(cx - 90, fbh - 72, 180, 46, mx, my) == 1 {
                 if clicked == 1 {
                     if net_started == false {
                         if net_mode == 2 {
-                            net_join(str(ip0) + "." + str(ip1) + "." + str(ip2) + "." + str(ip3), net_port)
+                            net_join(join_addr, net_port)
                         } else {
                             if net_host(net_port) == 0 { net_join("127.0.0.1", net_port) }
                         }
