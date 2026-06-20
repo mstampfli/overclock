@@ -3418,7 +3418,7 @@ fn main() {
             let cvz = phys3d_vel_z(chh3)
             let cspd = sqrt(cvx * cvx + cvz * cvz)
             let mut cai = 0
-            while cai < bot_n + 1 {
+            while cai < nactors {
                 if actors[cai].hp > 0.0 {
                     let apx = phys3d_x(actors[cai].hdl as i64)
                     let apz = phys3d_z(actors[cai].hdl as i64)
@@ -3429,8 +3429,10 @@ fn main() {
                         // Flying crate -> knock the actor a LITTLE, but ONLY if the crate is
                         // heading TOWARD them (dot of crate velocity with crate->actor > 0).
                         // A box you just shoved moves AWAY, so it won't knock you back.
+                        // Only LOCAL movers (bots + you) can be knocked; remotes are
+                        // net-authoritative (their position is overwritten from the network).
                         let toward = cvx * ddx + cvz * ddz
-                        if cspd > 3.5 and toward > 0.0 {
+                        if cspd > 3.5 and toward > 0.0 and cai < bot_n + 1 {
                             let mut kf = cspd * 0.2
                             if kf > 4.0 { kf = 4.0 }
                             if cai == pl_i {
@@ -3445,15 +3447,15 @@ fn main() {
                                 brains[cai].ky = brains[cai].ky + 1.0
                             }
                         }
-                        // Actor -> shove the crate away (a moderate push, scaled by the
-                        // player's speed so a fast slide shoves it a bit further).
-                        let mut pushf = 3.0
+                        // Actor -> shove the crate away (a SMALL nudge, scaled lightly by the
+                        // player's speed so a fast slide moves it just a little further).
+                        let mut pushf = 1.5
                         if cai == pl_i {
                             let pvx = net_local_state(4)
                             let pvz = net_local_state(6)
-                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.4 + 3.0
+                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.18 + 1.5
                         }
-                        phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 1.0, 0.0 - ddz / dd * pushf)
+                        phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 0.6, 0.0 - ddz / dd * pushf)
                     }
                 }
                 cai = cai + 1
