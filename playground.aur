@@ -2380,6 +2380,45 @@ fn main() {
                 sh = sh + 1
             }
             net_server_hits_clear()
+            // ...and each client's EXPLOSION (rocket/grenade): apply authoritative radial damage
+            // to our bots, same falloff as a local blast, crediting the shooter. The client
+            // predicted its own blast visuals + knockback; the host owns the bot hp.
+            let nse = net_server_explosion_count()
+            let mut se = 0
+            while se < nse {
+                let exx = net_server_explosion_x(se)
+                let exy = net_server_explosion_y(se)
+                let exz = net_server_explosion_z(se)
+                let gi = net_server_explosion_intensity(se)
+                let espid = net_server_explosion_shooter(se)
+                let mut esai = 0 - 1
+                let mut era = bot_n + 1
+                while era < nactors { if apid[era] == espid { esai = era } era = era + 1 }
+                let erad = nade_radius * gi
+                let mut eej = 0
+                while eej < bot_n {
+                    if actors[eej].hp > 0.0 {
+                        let eghh = actors[eej].hdl as i64
+                        let ebdx = phys3d_x(eghh) - exx
+                        let ebdy = (phys3d_y(eghh) + 0.5) - exy
+                        let ebdz = phys3d_z(eghh) - exz
+                        let ebdd = sqrt(ebdx * ebdx + ebdy * ebdy + ebdz * ebdz)
+                        if ebdd < erad {
+                            let mut eedmg = nade_dmg * gi * (1.0 - 0.30 * ebdd / erad)
+                            if actors[eej].sh > 0.0 {
+                                if actors[eej].sh >= eedmg { actors[eej].sh = actors[eej].sh - eedmg; eedmg = 0.0 }
+                                else { eedmg = eedmg - actors[eej].sh; actors[eej].sh = 0.0 }
+                            }
+                            actors[eej].hp = actors[eej].hp - eedmg
+                            brains[eej].pop = 0.15
+                            if esai >= 0 { last_hit[eej] = esai; kr_oc[eej] = 0.0; kr_mark[eej] = 0.0 }
+                        }
+                    }
+                    eej = eej + 1
+                }
+                se = se + 1
+            }
+            net_server_explosions_clear()
         }
         // Bounced by a full lobby: drop back to the menu with a clear message.
         if net_rejected() > 0 {
@@ -2716,6 +2755,9 @@ fn main() {
             let gi = ex_int
             let rad = nade_radius * gi    // damage radius
             let krad = nade_kb_radius * gi  // knockback reach
+            // GUEST: tell the host about MY blast so IT applies authoritative damage to its bots.
+            // My local radial damage below is prediction (overwritten by replicated bot hp).
+            if net_mode == 2 and ex_src < 0.5 { net_explosion(ex_x, ex_y, ex_z, gi) }
             boom_t = 0.6
             boom_int = gi
             boomx = ex_x
