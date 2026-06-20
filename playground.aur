@@ -947,6 +947,13 @@ fn code_char(c: i64) -> str {
     return " "
 }
 
+// Display name for an actor slot (bot callsign / your username / remote guest).
+fn slot_name(slot: i64, pli: i64, uname: str, ulen: i64) -> str {
+    if slot == pli { if ulen > 0 { return uname } return "PLAYER" }
+    if slot < pli { return bot_name(slot) }
+    return "GUEST"
+}
+
 // A settings slider bar: neon fill over a dark track. Returns 1 if the cursor is over
 // it (so the caller can let a click set the value directly).
 fn draw_bar(x: i64, y: i64, w: i64, h: i64, frac: f64, mx: i64, my: i64) -> i64 {
@@ -1361,6 +1368,10 @@ fn main() {
     let mut deaths = 0
     let mut akills = [0; 9]     // per-actor kills (scoreboard)
     let mut adeaths = [0; 9]    // per-actor deaths (scoreboard)
+    let mut kf_killer = [0; 6]  // kill feed ring: killer slot
+    let mut kf_victim = [0; 6]  // victim slot
+    let mut kf_time = [0.0; 6]  // seconds left to show
+    let mut kf_cur = 0
     let mut kill_target = 15        // lobby-set: kills to win
     let mut round_len = 120.0       // lobby-set: round length (seconds)
     let mut bot_count = 5           // lobby-set: number of active bots (0..bot_n)
@@ -1620,7 +1631,7 @@ fn main() {
             esc_prev = esc_now
         } else { if screen == s_lobby {
             // ---- LOBBY / MATCH SETUP: pick the match settings + network mode, then START ----
-            draw_text(cx - text_width("MATCH SETUP", 44) / 2, 36, "MATCH SETUP", 44, gold)
+            draw_text(cx - text_width("MATCH SETUP", 40) / 2, 14, "MATCH SETUP", 40, gold)
             let cl = cx - 230
             // Route typed characters to whichever text field is focused (name = 1, host = 2).
             let mut tc = input_char()
@@ -2109,6 +2120,7 @@ fn main() {
                             actors[mvk].hp = 0.0
                             if round_over == false { akills[pl_i] = akills[pl_i] + 1 }   // scoreboard: player melee
                             adeaths[mvk] = adeaths[mvk] + 1
+                            kf_killer[kf_cur] = pl_i; kf_victim[kf_cur] = mvk; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
                             brains[mvk].resp = enemy_respawn
                             dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64); dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
                             dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64) - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
@@ -2869,6 +2881,7 @@ fn main() {
                                         actors[vk].hp = 0.0
                                         if round_over == false { akills[ci] = akills[ci] + 1 }   // scoreboard: killer
                                         adeaths[vk] = adeaths[vk] + 1
+                                        kf_killer[kf_cur] = ci; kf_victim[kf_cur] = vk; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
                                         if vk == pl_i {
                                             dead = true; respawn_cd = 3.0; deaths = deaths + 1
                                             play_sound(0 - 26, 260, 0)
@@ -3256,7 +3269,7 @@ fn main() {
                     if dyaw > 2.0 or dyaw < (0.0 - 2.0) { ayaw[ed] = tyaw } else { ayaw[ed] = ayaw[ed] + dyaw * 0.2 }
                     // Tint the actual model: orange while I'm overclocked (enemies pop against the
                     // dimmed world), blue while shielded, otherwise untinted.
-                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 1.5, 0.7, 0.28) } else { if actors[ed].sh > 0.0 { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 0.5, 0.7, 1.35) } else { r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale) } }
+                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 2.6, 0.18, 0.15) } else { if actors[ed].sh > 0.0 { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 0.15, 0.35, 2.0) } else { r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale) } }
                     // Third-person weapon in the bot's hand (approx offset, aimed where it faces).
                     // Reload = lower it and bring it back up; equipped weapon picks the mesh.
                     let afwx = sin(ayaw[ed])
@@ -3334,7 +3347,7 @@ fn main() {
                     if rallow == 1 and astate[ai] != rdes { r3d_anim_play(actor_models[ai], rdes, 1, 1.0, 0.15); astate[ai] = rdes; astate_t[ai] = 0.0 }
                     if ushoot[ai] != anim_aim { r3d_anim_play_upper(actor_models[ai], anim_aim, 1, 1.0, 0.12, upper_mask_root); ushoot[ai] = anim_aim }
                     r3d_anim_update(actor_models[ai], dt)
-                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.5, 0.7, 0.28) } else { r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale) }
+                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 2.6, 0.18, 0.15) } else { if actors[ai].sh > 0.0 { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 0.15, 0.35, 2.0) } else { r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale) } }
                     // Third-person weapon in the remote player's hand (rifle by default).
                     let ryr = eyaw + actor_yaw_off
                     r3d_draw(vm_rifle, ex + sin(ryr) * 0.12 + cos(ryr) * 0.18, ey + actor_yoff + 1.25, ez + cos(ryr) * 0.12 - sin(ryr) * 0.18, ryr + gun_yaw, 0.0, 0.0, rifle_scale)
@@ -3662,6 +3675,22 @@ fn main() {
         draw_text(cx - 6, 66, "/", 26, col_white)
         draw_int(cx + 14, 66, kill_target, 26, col_white)
 
+        // Kill feed (top-right): recent "KILLER > VICTIM", showing for a few seconds.
+        let mut kfi = 0
+        while kfi < 6 {
+            if kf_time[kfi] > 0.0 {
+                kf_time[kfi] = kf_time[kfi] - dt
+                let kfy = 100 + kfi * 26
+                let kn = slot_name(kf_killer[kfi], pl_i, username, uname_len)
+                let vn = slot_name(kf_victim[kfi], pl_i, username, uname_len)
+                let kw = text_width(kn, 18)
+                draw_text(fbw - 300, kfy, kn, 18, col_gold)
+                draw_text(fbw - 300 + kw + 8, kfy, ">", 18, col_white)
+                draw_text(fbw - 300 + kw + 24, kfy, vn, 18, col_white)
+            }
+            kfi = kfi + 1
+        }
+
         // Scoreboard (hold TAB): name | K | D for the player + active bots + remotes, kills desc.
         if key_down(13) > 0 {
             let mut order = [0; 9]
@@ -3689,8 +3718,16 @@ fn main() {
             let lx = cx - 220
             let ly = 110
             let lh = 64 + ocount * 32
-            triangle(lx, ly, lx + 440, ly, lx, ly + lh, 12, 14, 20)
-            triangle(lx + 440, ly, lx + 440, ly + lh, lx, ly + lh, 12, 14, 20)
+            // Transparent panel: a 50% checkerboard dim (the game shows through the gaps).
+            let mut spy = ly
+            while spy < ly + lh {
+                let mut spx = lx
+                while spx < lx + 440 {
+                    if (spx + spy) % 2 == 0 { pixel(spx, spy, 6, 8, 12) }
+                    spx = spx + 1
+                }
+                spy = spy + 1
+            }
             draw_text(lx + 20, ly + 14, "SCOREBOARD", 26, col_gold)
             draw_text(lx + 300, ly + 20, "K", 20, col_white)
             draw_text(lx + 370, ly + 20, "D", 20, col_white)

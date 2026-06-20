@@ -26,3 +26,14 @@ Cadence: compile + commit + push after each item.
 - [x] Real scoreboard (per-actor kills on TAB) + editable, persisted username
 
 > If multiplayer is broken after the join system, that jumps to the top.
+
+## Round 2 (feedback)
+- [x] Shielded actors are solid BLUE; overclocked enemies bright RED (stronger glow) — real tint
+- [x] Scoreboard panel is transparent (checkerboard dim)
+- [x] Lobby title no longer overlaps the Name field
+- [x] Kill feed (top-right, "KILLER > VICTIM")
+- [x] Confirmed: rollback + server authority already in the netcode
+- [ ] Sync names + shield/OC state to remote players (no metadata channel yet)
+- [ ] Menu reorg + submenus (settings is cramped)
+- [ ] Center text everywhere (proper pass)
+- [ ] Crosshair editor · weapon bone-attach · portable build (font)
