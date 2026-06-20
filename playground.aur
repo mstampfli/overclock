@@ -1202,8 +1202,11 @@ fn main() {
     let hand_ox = 0.0
     let hand_oy = 0.0
     let hand_oz = 0.0
+    // The barrel was pointing UP (a pure yaw can't fix verticality); add a -90deg PITCH to drop
+    // it from vertical to horizontal/forward, keeping the yaw that set the left-right facing.
+    // Eye-tuned: if it points down/back, flip opitch to +1.5708; the small "toward you" lean is oyaw.
     let hand_oyaw = 0.0 - 1.5708
-    let hand_opitch = 0.0
+    let hand_opitch = 0.0 - 1.5708
     let hand_oroll = 0.0
     let kat_hand_oyaw = 0.0
     let kat_hand_opitch = 1.5708
