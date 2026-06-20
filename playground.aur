@@ -1017,9 +1017,19 @@ fn code_char(c: i64) -> str {
 }
 
 // Display name for an actor slot (bot callsign / your username / remote guest).
-fn slot_name(slot: i64, pli: i64, uname: str, ulen: i64) -> str {
+fn slot_name(slot: i64, pli: i64, uname: str, ulen: i64, apid: [i64; 9]) -> str {
     if slot == pli { if ulen > 0 { return uname } return "PLAYER" }
     if slot < pli { return bot_name(slot) }
+    // Remote player: build their REPLICATED display name char-by-char (apid maps the actor
+    // slot to the net player id). Falls back to GUEST until the name has synced.
+    let pid = apid[slot]
+    let nl = net_player_name_len(pid)
+    if nl > 0 {
+        let mut nm = ""
+        let mut ci = 0
+        while ci < nl { nm = nm + code_char(net_player_name_char(pid, ci)); ci = ci + 1 }
+        return nm
+    }
     return "GUEST"
 }
 
@@ -1476,6 +1486,7 @@ fn main() {
     // FFA round state: reach the kill target before the timer runs out.
     let mut kills = 0
     let mut deaths = 0
+    let mut apid = [9999; 9]    // actor slot -> net player id (remotes); 9999 = none (-> GUEST)
     let mut akills = [0; 9]     // per-actor kills (scoreboard)
     let mut adeaths = [0; 9]    // per-actor deaths (scoreboard)
     // Unified death handling: every damage path records who last hit each actor + the
@@ -2216,6 +2227,7 @@ fn main() {
         let mut oc_m = 0.0
         if oc_active { oc_m = 1.0 }
         net_set_meta(2, oc_m)
+        if uname_len > 0 { net_set_name(username) }
         net_send_input(blob)
         net_update(dt)
         respawn_req = 0.0    // one-shot: consumed by the send above
@@ -3597,6 +3609,7 @@ fn main() {
         while rs < max_remote {
             let ai = bot_n + 1 + rs
             actors[ai].hp = 0.0
+            apid[ai] = 9999   // clear the slot->pid map; live remotes re-set it below
             phys3d_set_pos(actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0)
             rs = rs + 1
         }
@@ -3606,6 +3619,7 @@ fn main() {
             let pid = net_player_id_at(pi)
             if pid != myid and slot < max_remote {
                 let ai = bot_n + 1 + slot
+                apid[ai] = pid   // map this remote's actor slot to its net id (for names)
                 let ex = net_player_x(pid)
                 let ey = net_player_y(pid)
                 let ez = net_player_z(pid)
@@ -3955,8 +3969,8 @@ fn main() {
             let ksl = (kf_cur + ko) % 6   // start at the oldest active slot, walk to newest
             if kf_time[ksl] > 0.0 {
                 let kfy = 92 + krow * 24
-                let kn = slot_name(kf_killer[ksl], pl_i, username, uname_len)
-                let vn = slot_name(kf_victim[ksl], pl_i, username, uname_len)
+                let kn = slot_name(kf_killer[ksl], pl_i, username, uname_len, apid)
+                let vn = slot_name(kf_victim[ksl], pl_i, username, uname_len, apid)
                 let kw = text_width(kn, 18)
                 // The local player's name is specially highlighted: bright cyan when YOU
                 // got the kill, red when YOU were the victim; everyone else gold/white.
@@ -4016,8 +4030,7 @@ fn main() {
             while row < ocount {
                 let s = order[row]
                 let ry = ly + 54 + row * 32
-                let mut nm = bot_name(s)
-                if s == pl_i { if uname_len > 0 { nm = username } else { nm = "PLAYER" } } else { if s > pl_i { nm = "GUEST" } }
+                let nm = slot_name(s, pl_i, username, uname_len, apid)
                 let mut rc = col_white
                 if s == pl_i { rc = col_gold }
                 draw_text(lx + 20, ry, nm, 22, rc)
