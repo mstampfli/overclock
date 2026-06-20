@@ -153,7 +153,7 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     // the sim's notion of grounded matches what move_character will snap to (no
     // "airborne on a small downslope" mismatch). phys3d_grounded only reflects
     // last tick's move, which lagged jump-on-landing and broke slide-hop.
-    let grounded = phys3d_raycast_ex(player, px, py, pz, 0.0, 0.0 - 1.0, 0.0, 1.2) >= 0
+    let grounded = phys3d_raycast_world(player, px, py, pz, 0.0, 0.0 - 1.0, 0.0, 1.2) >= 0
     // Grab the floor normal from that same down-ray NOW (valid when grounded) - the
     // wall probe below reuses the hit-normal slots. A slide reads this to accelerate
     // down a slope. Flat ground = (0, 1, 0).
@@ -188,13 +188,13 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     let mut wc = 0.0
     let mut wnx = 0.0
     let mut wnz = 0.0
-    let lb = phys3d_raycast_ex(player, px, py, pz, perpx, 0.0, perpz, probe)
+    let lb = phys3d_raycast_world(player, px, py, pz, perpx, 0.0, perpz, probe)
     if lb >= 0 {
         wc = 1.0
         wnx = phys3d_hit_nx()
         wnz = phys3d_hit_nz()
     } else {
-        let rb = phys3d_raycast_ex(player, px, py, pz, 0.0 - perpx, 0.0, 0.0 - perpz, probe)
+        let rb = phys3d_raycast_world(player, px, py, pz, 0.0 - perpx, 0.0, 0.0 - perpz, probe)
         if rb >= 0 {
             wc = 1.0
             wnx = phys3d_hit_nx()
@@ -237,7 +237,7 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     // wall's end): you can run straight walls and smooth curves, not sharp corners.
     let mut blocked = false
     if wc > 0.5 {
-        if phys3d_raycast_ex(player, px, py, pz, tx, 0.0, tz, 0.7) >= 0 {
+        if phys3d_raycast_world(player, px, py, pz, tx, 0.0, tz, 0.7) >= 0 {
             blocked = true
         }
     }
@@ -546,7 +546,7 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
         if pnl > 0.1 {
             let pdx = pwnx / pnl
             let pdz = pwnz / pnl
-            if phys3d_raycast_ex(player, px, py - 1.3, pz, 0.0 - pdx, 0.0, 0.0 - pdz, 1.1) >= 0 {
+            if phys3d_raycast_world(player, px, py - 1.3, pz, 0.0 - pdx, 0.0, 0.0 - pdz, 1.1) >= 0 {
                 top_exit = true
             }
         }
@@ -753,8 +753,8 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     // ground, mid-wallrun, or while shooting upward.
     let mut mantle_t = f32_load(state, 31)
     if mantle_t <= 0.0 and grounded == false and wr == false and vy < 4.0 {
-        let chest_wall = phys3d_raycast_ex(player, px, py, pz, hx, 0.0, hz, 0.85)
-        let head_clear = phys3d_raycast_ex(player, px, py + 1.1, pz, hx, 0.0, hz, 0.85)
+        let chest_wall = phys3d_raycast_world(player, px, py, pz, hx, 0.0, hz, 0.85)
+        let head_clear = phys3d_raycast_world(player, px, py + 1.1, pz, hx, 0.0, hz, 0.85)
         let fwd_v = f32_load(state, 4) * hx + f32_load(state, 6) * hz
         if chest_wall >= 0 and head_clear < 0 and fwd_v > 1.5 {
             mantle_t = 0.32
