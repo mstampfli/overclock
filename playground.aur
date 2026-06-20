@@ -3720,6 +3720,14 @@ fn main() {
                         trlife[trcur] = 0.06
                         trcur = trcur + 1
                         if trcur >= tracer_n { trcur = 0 }
+                        // HOST: announce this shot (its own + its bots') so every guest draws the
+                        // tracer + hears it. Shooter net id: 0 = host, 1000+slot = a bot. Relayed
+                        // CLIENT shots are announced by the engine in the fire handler.
+                        if net_mode == 1 {
+                            let mut shpid = net_my_id()
+                            if ci != pl_i { shpid = 1000 + ci }
+                            net_push_shot(shpid, ox, oy, oz, tex, tey, tez, wp)
+                        }
                     } else {
                         prjx[prjcur] = ox; prjy[prjcur] = oy; prjz[prjcur] = oz
                         prjvx[prjcur] = ax * proj_speed; prjvy[prjcur] = ay * proj_speed; prjvz[prjcur] = az * proj_speed
@@ -4442,6 +4450,32 @@ fn main() {
             r3d_draw_billboard(spark, hxp, hyp, hzp, 0.3)
             hit_t = hit_t - dt
         }
+        // REMOTE shot effects: the host announces every shot (its own + bots + relayed client
+        // shots) over the net, so every machine draws the tracer + plays the fire sound for shots
+        // that AREN'T its own (own shots are predicted locally) and - on the host - aren't its
+        // bots' (already drawn in the combat loop). This is what makes other players' fire
+        // visible + audible. Drained (and, on the host, broadcast) by net_shots_clear below.
+        let scn = net_shot_count()
+        let mut sci = 0
+        while sci < scn {
+            let ssh = net_shot_shooter(sci)
+            let mut show = 1
+            if ssh == net_my_id() { show = 0 }
+            if net_mode == 1 and ssh >= 1000 { show = 0 }
+            if show == 1 {
+                let sx1 = net_shot_field(sci, 0)
+                let sy1 = net_shot_field(sci, 1)
+                let sz1 = net_shot_field(sci, 2)
+                trx1[trcur] = sx1; try1[trcur] = sy1; trz1[trcur] = sz1
+                trx2[trcur] = net_shot_field(sci, 3); try2[trcur] = net_shot_field(sci, 4); trz2[trcur] = net_shot_field(sci, 5)
+                trlife[trcur] = 0.06
+                trcur = trcur + 1
+                if trcur >= tracer_n { trcur = 0 }
+                play_sound_at(2, 26, 6, sx1, sy1, sz1)   // remote rifle crack at the muzzle
+            }
+            sci = sci + 1
+        }
+        net_shots_clear()
         // Bullet tracers from bots (and anyone else) so you SEE incoming/passing shots.
         let mut tri = 0
         while tri < tracer_n {
@@ -4606,7 +4640,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-10", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-11", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
