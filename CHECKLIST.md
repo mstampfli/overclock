@@ -95,4 +95,11 @@ Cadence: compile + commit + push after each item.
    authority, on aurora-net predict.rs/lagcomp.rs. Keep PRACTICE working; verify with sims; do not break the game.
 3. [x] Fresnel / electric rim shield shader: r3d_draw_shield + ObjU params2; cyan animated rim on
        shielded actors (bots + remotes) instead of the flat blue tint. Shader validated by pipeline tests.
-4. Mantle mechanic (LAST-LAST) - in progress
+4. [x] Mantle mechanic: airborne chest-height ledge-grab -> pull up+over onto the ledge (~0.32s),
+       slot 31, snappy. Verified by sim_mantle.aur (triggers, clears the top, lands on the platform).
+
+## LOOP COMPLETE - all backlog items done. Remaining items need the USER:
+- MP host-authority (replicated combat state + host damage + bot/crate authority): needs a new aurora-net
+  metadata channel + a LIVE 2-client test. Plan documented above.
+- Weapon bone-attach: engine + wiring done; the hand_o* local offsets need EYE-TUNING to seat the weapon.
+- Fresnel shield + mantle: implemented + sim/pipeline-verified; want a visual/feel review when you play.
