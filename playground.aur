@@ -2923,7 +2923,12 @@ fn main() {
                 // Dead: park below the map; on respawn, pop back to the spawn point.
                 phys3d_set_pos(h, esx[ei2], 0.0 - 50.0, esz[ei2])
                 brains[ei2].resp = brains[ei2].resp - dt
-                if brains[ei2].resp <= 0.0 and ei2 < active_bots {
+                // Only respawn AFTER the death sweep has processed this death (death_done == 1).
+                // A bot killed earlier this frame (katana/explosive run before this loop) still
+                // has stale resp ~0; without this gate it would respawn here BEFORE the sweep,
+                // erasing the kill (no drops, no credit, no feed/marker/sound). The sweep sets
+                // death_done = 1 and resp = enemy_respawn, so the countdown starts there.
+                if brains[ei2].resp <= 0.0 and ei2 < active_bots and death_done[ei2] == 1 {
                     actors[ei2].hp = enemy_hp_max
                     death_done[ei2] = 0; last_hit[ei2] = 0 - 1   // re-arm the death sweep
                     actors[ei2].sh = 0.0   // respawn with no shield: must find + pop cells again
