@@ -1393,7 +1393,7 @@ fn main() {
         7.0,    // slide_boost    (big lurch - slide is THE ground speed tool now)
         1.2,    // slide_friction
         5.0,    // slide_min
-        21.0,   // dash_speed     (bigger punchy midair boost)
+        14.0,   // dash_speed     (punchy midair boost)
         0.0,    // dash_cd        (no cooldown - dash whenever)
         1.0,    // air_jumps
         4.0,    // wall_gravity   (idle slide-down rate)
@@ -2235,11 +2235,12 @@ fn main() {
         slidetilt = slidetilt + (stilt_t - slidetilt) * 0.12
         let eff_pitch = pitch + lean + slidetilt
 
-        // Dash wind: a fresh dash makes its cooldown (state[9]) jump up - detect that
-        // rising edge and fire a one-time wind burst that decays.
-        let dcd_now = net_local_state(9)
-        if dcd_now > prev_dcd + 0.5 { dashwind = 1.0 }
-        prev_dcd = dcd_now
+        // Dash wind: detect the dash off the INPUT edge while airborne (the sim's own dash
+        // condition), independent of the cooldown - the cooldown is now 0, so the old
+        // "cooldown jumped up" detection no longer fires.
+        let dash_in_now = input_down(act_dash)
+        if dash_in_now > 0 and prev_dcd < 0.5 and net_local_state(7) < 0.5 { dashwind = 1.0 }
+        prev_dcd = dash_in_now as f64
         dashwind = dashwind - dt * 2.5
         if dashwind < 0.0 { dashwind = 0.0 }
 
