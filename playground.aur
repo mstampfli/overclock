@@ -1285,25 +1285,16 @@ fn main() {
         3.0     // wall_min_speed (must move this fast to attach to a wall)
     ]
 
-    // Connect FIRST (host, or join localhost if the port is taken), THEN register the sim and
-    // spawn. This exact order is what the netcode needs - deferring it to the lobby broke the
-    // player sim (no movement / no combat). The lobby's HOST/JOIN is layered on top of this.
-    if net_host(45123) == 0 {
-        net_join("127.0.0.1", 45123)
-    }
+    // The LOBBY decides host vs join (+ address); the connection, sim registration, and spawn all
+    // happen together on match START - in that exact order, because net_sim / net_spawn_at operate
+    // on the session that net_host / net_join creates (no session first = no sim = no movement).
     let net_port = 45123
     let mut net_mode = 0        // lobby mode (0 practice / 1 host / 2 join)
-    let mut net_started = true  // already connected at startup, so the lobby won't reconnect
-    let mut ip0 = 127           // join-target IP octets (for a remote JOIN from the lobby)
+    let mut net_started = false
+    let mut ip0 = 127           // join-target IP octets (default loopback for local testing)
     let mut ip1 = 0
     let mut ip2 = 0
     let mut ip3 = 1
-    // Register the shared Aurora movement step (21 replicated state floats, 8 input floats).
-    net_sim(|state, input| {
-        sim_step(state, input, cfg)
-        0
-    }, 21, 17)
-    net_spawn_at(0.0, 0.9, 45.0)
 
     let mut yaw = 0.0
     let mut pitch = 0.0
@@ -1642,7 +1633,15 @@ fn main() {
             if menu_btn(cx - 90, fbh - 72, 180, 46, mx, my) == 1 {
                 if clicked == 1 {
                     if net_started == false {
-                        if net_mode == 2 { net_join(str(ip0) + "." + str(ip1) + "." + str(ip2) + "." + str(ip3), net_port) } else { net_host(net_port) }
+                        if net_mode == 2 {
+                            net_join(str(ip0) + "." + str(ip1) + "." + str(ip2) + "." + str(ip3), net_port)
+                        } else {
+                            if net_host(net_port) == 0 { net_join("127.0.0.1", net_port) }
+                        }
+                        net_sim(|state, input| {
+                            sim_step(state, input, cfg)
+                            0
+                        }, 21, 17)
                         net_spawn_at(0.0, 0.9, 45.0)
                         net_started = true
                     }
