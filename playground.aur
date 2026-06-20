@@ -3102,7 +3102,9 @@ fn main() {
         // TUNE MODE toggle (T, practice only): on the rising edge, respawn all bots to their
         // anchors as standing immortal dummies; while on, they're frozen + pacified (loops below
         // gated on tune_mode == 0) so you can walk around one + tune the weapon without dying.
-        let tdn = key_down(59)
+        // DISABLED: tune mode is no longer bound to any key (weapons are dialed in). The code is
+        // kept intact - to re-enable, change the line below back to `let tdn = key_down(59)`.
+        let tdn = 0
         if tdn > 0 and t_prev == 0 and net_mode == 0 {
             if tune_mode == 0 { tune_mode = 1 } else { tune_mode = 0 }
             if tune_mode == 1 {
