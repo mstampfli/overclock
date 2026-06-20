@@ -71,5 +71,5 @@ Cadence: compile + commit + push after each item.
 - [ ] Menu reorg + submenus (user said menu is fine for now - deprioritised)
 
 ## Refactor
-- [ ] Death-centralization: one last_hit + per-frame death sweep replacing the 3 duplicated death sites
-      (also fixes explosive kills not scoring). Verify with a headless death-sim.
+- [x] Death-centralization: one last_hit + per-frame death sweep replacing the 3 duplicated death sites.
+      ALSO fixed explosive kills not scoring (scoreboard + kill feed). Verified by sim_death.aur.
