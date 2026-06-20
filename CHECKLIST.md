@@ -93,5 +93,6 @@ Cadence: compile + commit + push after each item.
        Local h_* offsets are a best guess - TUNE BY EYE to seat in the grip.
 2. MP / host-authority: replicated combat state (hp/shield/cells/names) + host-authoritative damage + bot/crate
    authority, on aurora-net predict.rs/lagcomp.rs. Keep PRACTICE working; verify with sims; do not break the game.
-3. Fresnel / electric rim shield shader (LAST)
-4. Mantle mechanic (LAST-LAST)
+3. [x] Fresnel / electric rim shield shader: r3d_draw_shield + ObjU params2; cyan animated rim on
+       shielded actors (bots + remotes) instead of the flat blue tint. Shader validated by pipeline tests.
+4. Mantle mechanic (LAST-LAST) - in progress
