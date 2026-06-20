@@ -1090,11 +1090,13 @@ fn pcchan(pid: i64, ch: i64) -> i64 {
 fn pcolor(pid: i64) -> i64 {
     return pcchan(pid, 0) * 65536 + pcchan(pid, 1) * 256 + pcchan(pid, 2)
 }
-// Additive albedo OFFSET (r3d_draw_tint) that paints a model in a player's colour. Balanced around
-// mid-grey so it ADDS to the colour's strong channels and SUBTRACTS from its weak ones (a real hue
-// shift, not just brightening). `strength`: ~0.85 = always-on identity tint, ~1.7 = overclock glow.
+// Additive albedo OFFSET (r3d_draw_tint) that repaints a model in a player's colour. The offset is
+// measured FROM the mannequin's base ORANGE albedo (Mannequin.gltf material = 0.799/0.402/0.042),
+// so base + offset lands exactly on the player's colour. `strength` 1.0 = that colour; >1 over-
+// saturates into a glow (overclock).
 fn ptint(pid: i64, ch: i64, strength: f64) -> f64 {
-    return ((pcchan(pid, ch) as f64) / 255.0 - 0.5) * strength
+    let base = [0.799, 0.402, 0.042]
+    return ((pcchan(pid, ch) as f64) / 255.0 - base[ch]) * strength
 }
 
 // A settings slider bar: neon fill over a dark track. Returns 1 if the cursor is over
@@ -4270,7 +4272,7 @@ fn main() {
                     if dyaw > 2.0 or dyaw < (0.0 - 2.0) { ayaw[ed] = tyaw } else { ayaw[ed] = ayaw[ed] + dyaw * 0.2 }
                     // Tint the actual model: orange while I'm overclocked (enemies pop against the
                     // dimmed world), blue while shielded, otherwise untinted.
-                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, ptint(1000 + ed, 0, 1.7), ptint(1000 + ed, 1, 1.7), ptint(1000 + ed, 2, 1.7)) } else { if actors[ed].sh > 0.0 { r3d_draw_shield(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, ptint(1000 + ed, 0, 0.85), ptint(1000 + ed, 1, 0.85), ptint(1000 + ed, 2, 0.85)) } }
+                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, ptint(1000 + ed, 0, 1.5), ptint(1000 + ed, 1, 1.5), ptint(1000 + ed, 2, 1.5)) } else { if actors[ed].sh > 0.0 { r3d_draw_shield(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, ptint(1000 + ed, 0, 1.0), ptint(1000 + ed, 1, 1.0), ptint(1000 + ed, 2, 1.0)) } }
                     // Third-person weapon ATTACHED to the right-hand bone (joint 29): it rides
                     // the hand, so reload/aim/run hand motion comes from the animation itself.
                     let mut twm = vm_rifle
@@ -4387,7 +4389,7 @@ fn main() {
                     if net_player_meta(pid, 8) > 0.5 { ruwant = kat_swing_clip }
                     if ushoot[ai] != ruwant { r3d_anim_play_upper(actor_models[ai], ruwant, 1, 1.0, 0.1, upper_mask_root); ushoot[ai] = ruwant }
                     r3d_anim_update(actor_models[ai], dt)
-                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.7), ptint(apid[ai], 1, 1.7), ptint(apid[ai], 2, 1.7)) } else { if actors[ai].sh > 0.0 { r3d_draw_shield(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 0.85), ptint(apid[ai], 1, 0.85), ptint(apid[ai], 2, 0.85)) } }
+                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.5), ptint(apid[ai], 1, 1.5), ptint(apid[ai], 2, 1.5)) } else { if actors[ai].sh > 0.0 { r3d_draw_shield(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.0), ptint(apid[ai], 1, 1.0), ptint(apid[ai], 2, 1.0)) } }
                     // Third-person weapon ATTACHED to the remote's right-hand bone (joint 29).
                     let ryr = eyaw + actor_yaw_off
                     // Draw the katana while swinging (its own offset/scale), else the rifle.
@@ -4688,7 +4690,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-14", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-15", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
