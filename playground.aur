@@ -2368,6 +2368,11 @@ fn main() {
         let mut sw_m = 0.0
         if melee_cd > melee_cooldown - 0.35 { sw_m = 1.0 }
         net_set_meta(8, sw_m)
+        // Grapple anchor (12/13/14) + rope timer (15) so OTHERS draw my grapple rope.
+        net_set_meta(12, actors[5].gax)
+        net_set_meta(13, actors[5].gay)
+        net_set_meta(14, actors[5].gaz)
+        net_set_meta(15, actors[5].gat)
         if uname_len > 0 { net_set_name(username) }
         // HOST: replicate authoritative crate positions (boxes are static until shot, so the
         // engine's change-detection keeps this near-zero traffic). Clients snap to these, and
@@ -3410,6 +3415,10 @@ fn main() {
                 net_set_bot_meta(bpi, 1, actors[bpi].sh)
                 net_set_bot_meta(bpi, 6, akills[bpi])   // bot kills/deaths for the synced scoreboard
                 net_set_bot_meta(bpi, 7, adeaths[bpi])
+                net_set_bot_meta(bpi, 12, actors[bpi].gax)   // bot grapple anchor + rope timer
+                net_set_bot_meta(bpi, 13, actors[bpi].gay)
+                net_set_bot_meta(bpi, 14, actors[bpi].gaz)
+                net_set_bot_meta(bpi, 15, actors[bpi].gat)
                 net_set_bot_name(bpi, bot_name(bpi))   // so guests show the bot's real name in feed/scoreboard
                 bpi = bpi + 1
             }
@@ -4289,6 +4298,12 @@ fn main() {
                 let ex = net_player_x(pid)
                 let ey = net_player_y(pid)
                 let ez = net_player_z(pid)
+                // Replicate this remote's GRAPPLE (anchor 12/13/14 + rope timer 15) so the rope
+                // render below draws it - that's what makes other players' grapples visible.
+                actors[ai].gax = net_player_meta(pid, 12)
+                actors[ai].gay = net_player_meta(pid, 13)
+                actors[ai].gaz = net_player_meta(pid, 14)
+                actors[ai].gat = net_player_meta(pid, 15)
                 let mut eyaw = net_player_yaw(pid)
                 // HUMAN remotes broadcast their raw LOOK-yaw. The renderer faces (sin yaw, cos yaw)
                 // (glam from_euler YXZ, model local forward +Z - confirmed by bots, drawn with
@@ -4640,7 +4655,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-11", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-12", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
