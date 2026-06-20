@@ -2290,6 +2290,10 @@ fn main() {
         // host owns the result - it resets my hp on a respawn and spends a cell on a heal.
         net_set_meta(3, g_resp_ctr)
         net_set_meta(5, g_heal_ctr)
+        // Scoreboard: my kills/deaths (slots 6/7). On the host this is authoritative; on a guest
+        // the host overrides it (it owns my score), so this is just a harmless default.
+        net_set_meta(6, akills[pl_i])
+        net_set_meta(7, adeaths[pl_i])
         if uname_len > 0 { net_set_name(username) }
         // HOST: replicate authoritative crate positions (boxes are static until shot, so the
         // engine's change-detection keeps this near-zero traffic). Clients snap to these, and
@@ -2305,12 +2309,21 @@ fn main() {
         }
         net_send_input(blob)
         net_update(dt)
-        // GUEST: snap local boxes to the host's authoritative positions, so every machine sees
-        // the same world. Local crate physics is prediction the host corrects here each frame.
+        // GUEST: reconcile local boxes to the host's authoritative positions. BLEND toward them
+        // (smooth) when close, SNAP when far off (a fresh/teleported box), so a sliding crate
+        // reads smoothly instead of stair-stepping at the snapshot rate.
         if net_mode == 2 and net_object_count() >= crate_n {
             let mut gci = 0
             while gci < crate_n {
-                phys3d_set_pos(crates[gci] as i64, net_object_x(gci), net_object_y(gci), net_object_z(gci))
+                let cch = crates[gci] as i64
+                let tcx = net_object_x(gci)
+                let tcy = net_object_y(gci)
+                let tcz = net_object_z(gci)
+                let ccx = phys3d_x(cch)
+                let ccy = phys3d_y(cch)
+                let ccz = phys3d_z(cch)
+                let cofs = sqrt((tcx - ccx) * (tcx - ccx) + (tcy - ccy) * (tcy - ccy) + (tcz - ccz) * (tcz - ccz))
+                if cofs > 2.0 { phys3d_set_pos(cch, tcx, tcy, tcz) } else { phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.35, ccy + (tcy - ccy) * 0.35, ccz + (tcz - ccz) * 0.35) }
                 gci = gci + 1
             }
         }
@@ -2439,6 +2452,8 @@ fn main() {
                     net_set_player_meta(svid, 0, actors[scai].hp)
                     net_set_player_meta(svid, 1, actors[scai].sh)
                     net_set_player_meta(svid, 4, actors[scai].cells)
+                    net_set_player_meta(svid, 6, akills[scai])   // client kills/deaths -> synced scoreboard
+                    net_set_player_meta(svid, 7, adeaths[scai])
                     svk = svk + 1
                 }
                 svp = svp + 1
@@ -3264,6 +3279,8 @@ fn main() {
                 net_set_bot(bpi, phys3d_x(bph), phys3d_y(bph), phys3d_z(bph), brains[bpi].face)
                 net_set_bot_meta(bpi, 0, actors[bpi].hp)
                 net_set_bot_meta(bpi, 1, actors[bpi].sh)
+                net_set_bot_meta(bpi, 6, akills[bpi])   // bot kills/deaths for the synced scoreboard
+                net_set_bot_meta(bpi, 7, adeaths[bpi])
                 net_set_bot_name(bpi, bot_name(bpi))   // so guests show the bot's real name in feed/scoreboard
                 bpi = bpi + 1
             }
@@ -4447,14 +4464,32 @@ fn main() {
 
         // Scoreboard (hold TAB): name | K | D for the player + active bots + remotes, kills desc.
         if key_down(13) > 0 {
+            // Kills/deaths per slot: host-authoritative in MP (replicated meta 6/7), local in
+            // practice. So the scoreboard is identical on every machine.
+            let mut sbk = [0; 9]
+            let mut sbd = [0; 9]
+            let mut sbi = 0
+            while sbi < nactors {
+                if net_started {
+                    let mut spid = apid[sbi]
+                    if sbi == pl_i { spid = net_my_id() }
+                    sbk[sbi] = net_player_meta(spid, 6) as i64
+                    sbd[sbi] = net_player_meta(spid, 7) as i64
+                } else {
+                    sbk[sbi] = akills[sbi]; sbd[sbi] = adeaths[sbi]
+                }
+                sbi = sbi + 1
+            }
             let mut order = [0; 9]
             let mut ocount = 0
             let mut si = 0
             while si < nactors {
+                // Include me, any networked actor (remote human OR, on a guest, a bot - apid set),
+                // and host/practice local bots. This is what was missing the guest's pool slots.
                 let mut act = 0
-                if si < active_bots { act = 1 }
                 if si == pl_i { act = 1 }
-                if si > pl_i and actors[si].hp > 0.0 { act = 1 }
+                if apid[si] != 9999 { act = 1 }
+                if si < active_bots { act = 1 }
                 if act == 1 { order[ocount] = si; ocount = ocount + 1 }
                 si = si + 1
             }
@@ -4463,7 +4498,7 @@ fn main() {
                 let mut best = a
                 let mut b = a + 1
                 while b < ocount {
-                    if akills[order[b]] > akills[order[best]] { best = b }
+                    if sbk[order[b]] > sbk[order[best]] { best = b }
                     b = b + 1
                 }
                 let tmp = order[a]; order[a] = order[best]; order[best] = tmp
@@ -4493,8 +4528,8 @@ fn main() {
                 let mut rc = col_white
                 if s == pl_i { rc = col_gold }
                 draw_text(lx + 20, ry, nm, 22, rc)
-                draw_int(lx + 300, ry, akills[s], 22, rc)
-                draw_int(lx + 370, ry, adeaths[s], 22, rc)
+                draw_int(lx + 300, ry, sbk[s], 22, rc)
+                draw_int(lx + 370, ry, sbd[s], 22, rc)
                 row = row + 1
             }
         }
