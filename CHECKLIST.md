@@ -21,7 +21,7 @@ Cadence: compile + commit + push after each item.
 - [ ] Put the weapon actually IN the hands (bone attach — engine joint API)
 
 ### Big
-- [ ] Fullscreen + windowed-fullscreen
+- [x] Fullscreen + windowed-fullscreen (Settings -> Display cycle, persisted)
 - [ ] Customizable crosshair + a crosshair editor (Valorant-like)
 - [ ] Real scoreboard: per-actor kills on a leaderboard (+ username/account)
 

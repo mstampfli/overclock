@@ -1247,6 +1247,8 @@ fn main() {
     let mut bind_code = [5.0, 7.0, 6.0, 8.0, 4.0, 11.0, 10.0, 100.0, 14.0, 17.0, 15.0, 46.0, 16.0, 30.0, 31.0, 19.0]
     let mut sens = 0.0025      // mouse sensitivity (rad per mouse unit)
     let mut vol = 70           // master volume 0..100
+    let mut disp_mode = 0      // display: 0 windowed, 1 borderless fullscreen, 2 exclusive
+    let mut disp_applied = 0   // apply the saved display mode once at startup
     let mut settings = [0.0; 20]
     if load_settings(settings) > 2 {
         sens = settings[0]
@@ -1256,6 +1258,7 @@ fn main() {
         // Saves from before melee existed have no code for it (reads as 0 = ArrowLeft);
         // restore the default so the new action isn't silently bound to a junk key.
         if bind_code[act_melee] < 1.0 { bind_code[act_melee] = 19.0 }
+        disp_mode = (settings[18]) as i64
     }
     let mut bi = 0
     while bi < act_n {
@@ -1512,6 +1515,8 @@ fn main() {
         loop {
             if r3d_present() == 0 { screen = s_quit; break }
             r3d_begin()
+            // Apply the saved display mode once the window exists.
+            if disp_applied == 0 { window_fullscreen(disp_mode); disp_applied = 1 }
         // Clear the persistent game post-overlays so the red damage vignette + speed
         // lines don't linger over the menu/pause/settings. The game loop reapplies them
         // from hurt_flash/windlvl on resume.
@@ -1724,6 +1729,17 @@ fn main() {
                 }
             }
             // BACK (saves everything).
+            // Display mode cycle: Windowed -> Borderless -> Fullscreen.
+            let mut dlabel = "Display: Windowed"
+            if disp_mode == 1 { dlabel = "Display: Borderless" } else { if disp_mode == 2 { dlabel = "Display: Fullscreen" } }
+            if menu_btn(cx - 130, fbh - 116, 260, 38, mx, my) == 1 { if clicked == 1 {
+                disp_mode = disp_mode + 1
+                if disp_mode > 2 { disp_mode = 0 }
+                window_fullscreen(disp_mode)
+                settings[18] = disp_mode as f64
+                save_settings(settings)
+            } }
+            draw_text(cx - text_width(dlabel, 22) / 2, fbh - 108, dlabel, 22, wht)
             if menu_btn(cx - 60, fbh - 62, 120, 44, mx, my) == 1 {
                 if clicked == 1 {
                     settings[0] = sens
