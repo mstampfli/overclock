@@ -919,6 +919,16 @@ fn key_name(code: i64) -> str {
     return str(code)
 }
 
+// Bot callsigns for the scoreboard (one per bot slot).
+fn bot_name(i: i64) -> str {
+    if i == 0 { return "REAPER" }
+    if i == 1 { return "VORTEX" }
+    if i == 2 { return "ECHO" }
+    if i == 3 { return "RAZOR" }
+    if i == 4 { return "NYX" }
+    return "BOT"
+}
+
 // A settings slider bar: neon fill over a dark track. Returns 1 if the cursor is over
 // it (so the caller can let a click set the value directly).
 fn draw_bar(x: i64, y: i64, w: i64, h: i64, frac: f64, mx: i64, my: i64) -> i64 {
@@ -1321,6 +1331,10 @@ fn main() {
     // FFA round state: reach the kill target before the timer runs out.
     let mut kills = 0
     let mut deaths = 0
+    let mut akills = [0; 9]     // per-actor kills (scoreboard)
+    let mut adeaths = [0; 9]    // per-actor deaths (scoreboard)
+    let mut username = "Player" // your name on the scoreboard (editable in the lobby)
+    let mut uname_len = 6
     let mut kill_target = 15        // lobby-set: kills to win
     let mut round_len = 120.0       // lobby-set: round length (seconds)
     let mut bot_count = 5           // lobby-set: number of active bots (0..bot_n)
@@ -1767,6 +1781,8 @@ fn main() {
             if do_reset {
                 kills = 0
                 deaths = 0
+                let mut zk = 0
+                while zk < 9 { akills[zk] = 0; adeaths[zk] = 0; zk = zk + 1 }
                 round_timer = round_len
                 round_over = false
                 over_t = 0.0
@@ -2056,6 +2072,8 @@ fn main() {
                         brains[mvk].kz = fz * 14.0
                         if actors[mvk].hp <= 0.0 {
                             actors[mvk].hp = 0.0
+                            if round_over == false { akills[pl_i] = akills[pl_i] + 1 }   // scoreboard: player melee
+                            adeaths[mvk] = adeaths[mvk] + 1
                             brains[mvk].resp = enemy_respawn
                             dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64); dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
                             dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64) - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
@@ -2338,6 +2356,7 @@ fn main() {
                     dead = true
                     respawn_cd = 3.0
                     deaths = deaths + 1
+                    adeaths[pl_i] = adeaths[pl_i] + 1
                     play_sound(0 - 26, 260, 0)
                 }
             }
@@ -2813,6 +2832,8 @@ fn main() {
                                     }
                                     if actors[vk].hp <= 0.0 {
                                         actors[vk].hp = 0.0
+                                        if round_over == false { akills[ci] = akills[ci] + 1 }   // scoreboard: killer
+                                        adeaths[vk] = adeaths[vk] + 1
                                         if vk == pl_i {
                                             dead = true; respawn_cd = 3.0; deaths = deaths + 1
                                             play_sound(0 - 26, 260, 0)
@@ -3049,6 +3070,8 @@ fn main() {
             if over_t <= 0.0 {
                 kills = 0
                 deaths = 0
+                let mut zk2 = 0
+                while zk2 < 9 { akills[zk2] = 0; adeaths[zk2] = 0; zk2 = zk2 + 1 }
                 round_timer = round_len
                 round_over = false
                 won = false
@@ -3603,6 +3626,53 @@ fn main() {
         draw_int(cx - 46, 66, kills, 26, col_gold)
         draw_text(cx - 6, 66, "/", 26, col_white)
         draw_int(cx + 14, 66, kill_target, 26, col_white)
+
+        // Scoreboard (hold TAB): name | K | D for the player + active bots + remotes, kills desc.
+        if key_down(13) > 0 {
+            let mut order = [0; 9]
+            let mut ocount = 0
+            let mut si = 0
+            while si < nactors {
+                let mut act = 0
+                if si < bot_count { act = 1 }
+                if si == pl_i { act = 1 }
+                if si > pl_i and actors[si].hp > 0.0 { act = 1 }
+                if act == 1 { order[ocount] = si; ocount = ocount + 1 }
+                si = si + 1
+            }
+            let mut a = 0
+            while a < ocount {
+                let mut best = a
+                let mut b = a + 1
+                while b < ocount {
+                    if akills[order[b]] > akills[order[best]] { best = b }
+                    b = b + 1
+                }
+                let tmp = order[a]; order[a] = order[best]; order[best] = tmp
+                a = a + 1
+            }
+            let lx = cx - 220
+            let ly = 110
+            let lh = 64 + ocount * 32
+            triangle(lx, ly, lx + 440, ly, lx, ly + lh, 12, 14, 20)
+            triangle(lx + 440, ly, lx + 440, ly + lh, lx, ly + lh, 12, 14, 20)
+            draw_text(lx + 20, ly + 14, "SCOREBOARD", 26, col_gold)
+            draw_text(lx + 300, ly + 20, "K", 20, col_white)
+            draw_text(lx + 370, ly + 20, "D", 20, col_white)
+            let mut row = 0
+            while row < ocount {
+                let s = order[row]
+                let ry = ly + 54 + row * 32
+                let mut nm = bot_name(s)
+                if s == pl_i { nm = username } else { if s > pl_i { nm = "GUEST" } }
+                let mut rc = col_white
+                if s == pl_i { rc = col_gold }
+                draw_text(lx + 20, ry, nm, 22, rc)
+                draw_int(lx + 300, ry, akills[s], 22, rc)
+                draw_int(lx + 370, ry, adeaths[s], 22, rc)
+                row = row + 1
+            }
+        }
 
         // Round over: a coloured top/bottom border + big WIN/LOSE + the final kills.
         if round_over {
