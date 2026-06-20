@@ -1849,6 +1849,8 @@ fn main() {
         // slows you to a vulnerable walk.
         let mut oc_mult = 1.0
         if oc_active { oc_mult = 1.35 }
+        // Overclock perk: unlimited reserve mags (keep the reserve topped up each frame).
+        if oc_active { actors[5].res[0] = res_max[0]; actors[5].res[1] = res_max[1] }
         if actors[5].heal > 0.0 { oc_mult = 0.5 }
         // Grapple anchor + active flag (set last frame after aiming; 1-frame lag fine).
         let mut g_flag = 0.0
@@ -2587,7 +2589,7 @@ fn main() {
                 let awp = actors[ci].wpn
                 if actors[ci].rl <= 0.0 and actors[ci].mag[awp] <= 0 and actors[ci].res[awp] > 0 {
                     let mut acrl = reload_w[awp]
-                    if ci == pl_i and oc_active { acrl = reload_w[awp] * 0.5 }
+                    if ci == pl_i and oc_active { acrl = reload_w[awp] * 0.4 }
                     actors[ci].rl = acrl
                     actors[ci].rlw = awp
                 }
@@ -2608,7 +2610,7 @@ fn main() {
                     sox = px; soy = eye; soz = pz
                     ax = fx; ay = fy; az = fz
                     let mut crl = reload_w[actors[ci].wpn]
-                    if oc_active { crl = reload_w[actors[ci].wpn] * 0.5 }
+                    if oc_active { crl = reload_w[actors[ci].wpn] * 0.4 }
                     if input_down(act_reload) > 0 and actors[ci].rl <= 0.0 and actors[ci].mag[actors[ci].wpn] < mag_size_w[actors[ci].wpn] and actors[ci].res[actors[ci].wpn] > 0 and dead == false { actors[ci].rl = crl; actors[ci].rlw = actors[ci].wpn }
                     if input_down(act_fire) > 0 and dead == false { want = 1 }
                 } else {
