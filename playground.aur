@@ -3140,7 +3140,14 @@ fn main() {
                         } else {
                             if mine == 1 { hxp = ox + ax * 120.0; hyp = oy + ay * 120.0; hzp = oz + az * 120.0; hit_t = 0.05 }
                         }
-                        trx1[trcur] = ox; try1[trcur] = oy; trz1[trcur] = oz
+                        // One tracer system for everyone. The local player's tracer starts
+                        // at the EYE (like the original single player tracer) so it reads the
+                        // same; bots/remotes start at their body muzzle.
+                        if mine == 1 {
+                            trx1[trcur] = px + fx * 0.4; try1[trcur] = eye - 0.08; trz1[trcur] = pz + fz * 0.4
+                        } else {
+                            trx1[trcur] = ox; try1[trcur] = oy; trz1[trcur] = oz
+                        }
                         trx2[trcur] = tex; try2[trcur] = tey; trz2[trcur] = tez
                         trlife[trcur] = 0.06
                         trcur = trcur + 1
@@ -3636,9 +3643,9 @@ fn main() {
             }
         }
 
-        // Tracer + impact spark for a few frames after a shot.
+        // Impact spark for a few frames after the player's shot (the tracer line itself is
+        // now drawn by the unified tracer ring below, so it isn't drawn twice).
         if hit_t > 0.0 {
-            r3d_debug_line(px + fx * 0.4, eye - 0.08, pz + fz * 0.4, hxp, hyp, hzp, 1.0, 0.9, 0.4)
             r3d_draw_billboard(spark, hxp, hyp, hzp, 0.3)
             hit_t = hit_t - dt
         }
