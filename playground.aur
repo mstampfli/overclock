@@ -747,6 +747,30 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     f32_store(state, 5, vy)
     f32_store(state, 29, knock_t)
 
+    // ===== MANTLE (slot 31 = remaining mantle time). When AIRBORNE and moving toward a
+    // wall at chest height that has CLEARANCE above the head (a ledge), pull up+forward
+    // over a few ticks and plop onto it - snappy, Titanfall/Apex style. Never on the
+    // ground, mid-wallrun, or while shooting upward.
+    let mut mantle_t = f32_load(state, 31)
+    if mantle_t <= 0.0 and grounded == false and wr == false and vy < 4.0 {
+        let chest_wall = phys3d_raycast_ex(player, px, py, pz, hx, 0.0, hz, 0.85)
+        let head_clear = phys3d_raycast_ex(player, px, py + 1.1, pz, hx, 0.0, hz, 0.85)
+        let fwd_v = f32_load(state, 4) * hx + f32_load(state, 6) * hz
+        if chest_wall >= 0 and head_clear < 0 and fwd_v > 1.5 {
+            mantle_t = 0.32
+        }
+    }
+    if mantle_t > 0.0 {
+        // Scripted pull: steady climb + a gentle push toward the ledge (modest forward so you
+        // settle on top instead of launching past it); overrides gravity/momentum.
+        f32_store(state, 4, hx * 3.0)
+        f32_store(state, 6, hz * 3.0)
+        vy = 6.0
+        f32_store(state, 5, vy)
+        mantle_t = mantle_t - dt
+    }
+    f32_store(state, 31, mantle_t)
+
     // Collide-and-slide via the physics character, then read the resolved
     // position back into the blob (the engine reads [0..3] for the transform).
     // The wall-stick is added to the move only (kept out of stored velocity) so
@@ -805,6 +829,7 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
         f32_store(state, 4, 0.0)
         f32_store(state, 5, 0.0)
         f32_store(state, 6, 0.0)
+        f32_store(state, 31, 0.0)   // clear any in-progress mantle on respawn
     }
 }
 

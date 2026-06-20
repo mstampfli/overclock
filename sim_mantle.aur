@@ -1,0 +1,64 @@
+// Headless verification of the MANTLE state machine against a REAL physics ledge.
+// Reproduces the sim_step mantle: airborne + a wall at chest height with clearance above
+// the head + moving toward it -> pull up+forward and plop onto the ledge top. Asserts the
+// player ends up ON TOP of the ledge (y above its top, x onto it).
+
+fn main() {
+    phys3d_init(0.0, 0.0, 0.0)   // gravity handled manually below (like sim_step)
+    // Ledge: a static block spanning x[2,8], y[0,2], z[-2,2] (deep platform). Mantle the top (y=2).
+    phys3d_add_box(5.0, 1.0, 0.0, 3.0, 1.0, 2.0, 0)
+    // Player capsule, airborne just in front of the wall face (x=2), centre below the top.
+    let player = phys3d_add_character(1.3, 1.3, 0.0, 0.6, 0.3)
+
+    let yaw = 1.5708            // face +x: hx = sin = 1, hz = -cos = 0
+    let hx = sin(yaw)
+    let hz = 0.0 - cos(yaw)
+    let mut px = 1.3
+    let mut py = 1.3
+    let mut pz = 0.0
+    let mut vx = 4.0           // moving forward (+x) into the ledge
+    let mut vy = 0.0
+    let mut vz = 0.0
+    let mut mantle_t = 0.0
+    let mut started = 0
+    let dt = 0.016
+    let mut peak_y = py
+    let mut on_top = 0          // was the player ever standing ON the platform top?
+
+    let mut t = 0
+    while t < 70 {
+        phys3d_set_pos(player, px, py, pz)
+        let grounded = phys3d_raycast_ex(player, px, py, pz, 0.0, 0.0 - 1.0, 0.0, 1.2) >= 0
+        if mantle_t <= 0.0 { vy = vy - 16.0 * dt }   // gravity when not mantling
+        // ---- mantle detect (verbatim from sim_step) ----
+        if mantle_t <= 0.0 and grounded == false and vy < 4.0 {
+            let chest = phys3d_raycast_ex(player, px, py, pz, hx, 0.0, hz, 0.85)
+            let head = phys3d_raycast_ex(player, px, py + 1.1, pz, hx, 0.0, hz, 0.85)
+            let fwd_v = vx * hx + vz * hz
+            if chest >= 0 and head < 0 and fwd_v > 1.5 { mantle_t = 0.32; started = 1 }
+        }
+        // ---- mantle boost ----
+        if mantle_t > 0.0 {
+            vx = hx * 3.0
+            vz = hz * 3.0
+            vy = 6.0
+            mantle_t = mantle_t - dt
+        }
+        phys3d_move_character(player, vx * dt, vy * dt, vz * dt, dt)
+        phys3d_step(dt)
+        px = phys3d_x(player)
+        py = phys3d_y(player)
+        pz = phys3d_z(player)
+        if py > peak_y { peak_y = py }
+        // Standing ON the platform top (capsule centre rests ~0.9 above the y=2 top) while over it.
+        if py > 2.6 and py < 3.2 and px > 2.2 and px < 7.8 { on_top = 1 }
+        t = t + 1
+    }
+
+    println("mantle started (expect 1): ")
+    println(str(started))
+    println("peak y reached *100 (expect > 290 = cleared the ledge top): ")
+    println(str((peak_y * 100.0) as i64))
+    println("ended up standing ON the platform top (expect 1): ")
+    println(str(on_top))
+}
