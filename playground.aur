@@ -3942,20 +3942,36 @@ fn main() {
 
         // FFA round: count down the timer; end on reaching the kill target (win) or
         // the timer expiring (lose). After a short over-screen, reset for a new round.
-        if round_over == false {
-            round_timer = round_timer - dt
-            if kills >= kill_target {
-                round_over = true
-                won = true
-                over_t = 5.0
+        // FFA round. HOST + practice run it authoritatively and replicate the clock + over-state
+        // on the host's id-0 meta (10 = timer, 11 = over); a GUEST mirrors those so the match
+        // clock / end / reset are identical everywhere instead of each machine drifting its own.
+        if net_mode == 2 {
+            let g_over = net_player_meta(0, 11) > 0.5
+            round_timer = net_player_meta(0, 10)
+            // Host RESET edge (over -> playing): clear local round display + respawn (hp reset
+            // flows through the normal respawn handshake).
+            if round_over and g_over == false {
+                oc_meter = 0.0; oc_active = false; oc_timer = 0.0
+                respawn_req = 1.0; g_resp_ctr = g_resp_ctr + 1.0; g_resp_wait = 1; g_resp_wait_t = 0.6
             }
-            if round_timer <= 0.0 {
-                round_timer = 0.0
-                round_over = true
-                won = false
-                over_t = 5.0
-            }
+            round_over = g_over
         } else {
+            if round_over == false {
+                round_timer = round_timer - dt
+                // End when ANY player reaches the kill target (max kills across host+clients+bots).
+                let mut topk = kills
+                let mut tki = 0
+                while tki < nactors { if tki != pl_i and akills[tki] > topk { topk = akills[tki] } tki = tki + 1 }
+                if topk >= kill_target {
+                    round_over = true
+                    over_t = 5.0
+                }
+                if round_timer <= 0.0 {
+                    round_timer = 0.0
+                    round_over = true
+                    over_t = 5.0
+                }
+            } else {
             over_t = over_t - dt
             if over_t <= 0.0 {
                 kills = 0
@@ -3968,7 +3984,7 @@ fn main() {
                 // Full reset between rounds: player + every bot back to full hp / shield / ammo /
                 // cells, overclock cleared, leftover drops cleared.
                 actors[5].hp = php_max
-                actors[5].sh = psh_max
+                actors[5].sh = 0.0   // shieldless on round reset too (matches spawn/respawn; loot cells)
                 actors[5].cells = 0
                 actors[5].heal = 0.0
                 actors[5].wpn = 0
@@ -4002,6 +4018,25 @@ fn main() {
                 }
             }
         }
+        }
+        // HOST: replicate the authoritative round clock + over-state to guests (id-0 meta 10/11).
+        if net_mode == 1 { net_set_meta(10, round_timer); net_set_meta(11, round_over as f64) }
+        // WIN/LOSS (every machine, from the synced scoreboard): you win the round if you hold the
+        // most kills. My kills + each rival's come from the same source the scoreboard reads, so
+        // every machine shows the same result (replaces the old local kills>=target win flag).
+        let mut my_k = kills
+        if net_started { my_k = net_player_meta(net_my_id(), 6) as i64 }
+        let mut max_ok = 0
+        let mut wki = 0
+        while wki < nactors {
+            if wki != pl_i {
+                let mut okk = akills[wki]
+                if net_started and (net_mode != 1 or wki >= bot_n) { okk = net_player_meta(apid[wki], 6) as i64 }
+                if okk > max_ok { max_ok = okk }
+            }
+            wki = wki + 1
+        }
+        won = my_k >= max_ok
 
         // World: ground plane + the arena boxes (each at its collider position) + dome.
         r3d_draw(ground_vis, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
@@ -4571,7 +4606,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-9", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-10", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
