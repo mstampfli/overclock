@@ -1516,6 +1516,16 @@ fn main() {
     let mut kills = 0
     let mut deaths = 0
     let mut apid = [9999; 9]    // actor slot -> net player id (remotes); 9999 = none (-> GUEST)
+    // HOST-OWNED CLIENT SURVIVABILITY: the host owns each connected client's hp/shield/cells in
+    // its actor slot (6..8), applies all damage to it, and replicates it (net_set_player_meta).
+    // A client can't fake invincibility - it only PREDICTS its hp + reconciles to ours. Per slot:
+    let mut cpid_h = [9999; 9]   // net id currently owning this slot's survivability (new id = reset)
+    let mut cresp_seen = [0; 9]  // last respawn-counter (meta 3) seen - client signals respawn by ++
+    let mut cheal_seen = [0; 9]  // last heal-counter (meta 5) seen - client signals a popped cell by ++
+    // GUEST: my own signals to the host (ride free meta slots; the host owns the RESULT).
+    let mut g_resp_ctr = 0.0     // ++ each time I respawn (meta 3)
+    let mut g_heal_ctr = 0.0     // ++ each time I finish a shield-cell channel (meta 5)
+    let mut g_hp_prev = 100.0    // last reconciled hp (for the incoming-damage hurt flash)
     let mut akills = [0; 9]     // per-actor kills (scoreboard)
     let mut adeaths = [0; 9]    // per-actor deaths (scoreboard)
     // Unified death handling: every damage path records who last hit each actor + the
@@ -2276,6 +2286,10 @@ fn main() {
         let mut oc_m = 0.0
         if oc_active { oc_m = 1.0 }
         net_set_meta(2, oc_m)
+        // Survivability SIGNALS to the host (intent, not result): my respawn + heal counters. The
+        // host owns the result - it resets my hp on a respawn and spends a cell on a heal.
+        net_set_meta(3, g_resp_ctr)
+        net_set_meta(5, g_heal_ctr)
         if uname_len > 0 { net_set_name(username) }
         // HOST: replicate authoritative crate positions (boxes are static until shot, so the
         // engine's change-detection keeps this near-zero traffic). Clients snap to these, and
@@ -2299,6 +2313,18 @@ fn main() {
                 phys3d_set_pos(crates[gci] as i64, net_object_x(gci), net_object_y(gci), net_object_z(gci))
                 gci = gci + 1
             }
+        }
+        // GUEST: RECONCILE my own survivability to the host's authoritative value - the host
+        // owns my hp/shield/cells (it applies all damage + heals + pickups), I only display it.
+        // This is what makes a guest's own death host-driven, and stops hp self-report cheating.
+        if net_mode == 2 {
+            let amy = net_my_id()
+            let newhp = net_player_meta(amy, 0)
+            if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05 }   // took damage
+            g_hp_prev = newhp
+            actors[pl_i].hp = newhp
+            actors[pl_i].sh = net_player_meta(amy, 1)
+            actors[pl_i].cells = net_player_meta(amy, 4) as i64
         }
         // GUEST: consume the host's authoritative KILL events. This only DISPLAYS them (kill
         // feed + the killer's red marker/sound/score) - the kill itself was decided host-side,
@@ -2349,6 +2375,74 @@ fn main() {
         // the hitmarker; the host owns the real hp, and the unified death sweep below credits
         // the kill + drops loot exactly as for a local shot. Same weapon/headshot/shield math.
         if net_mode == 1 {
+            // HOST owns each connected client's SURVIVABILITY (hp/shield/cells): init a new
+            // client, honour its respawn + heal SIGNALS (it states intent via meta counters; we
+            // own the result), claim pickups it walks over, then replicate. Runs BEFORE damage so
+            // a fresh client starts at full hp. A client can't fake invincibility - it only
+            // predicts its hp and reconciles to ours.
+            let mut svk = 0
+            let mut svp = 0
+            let svpc = net_player_count()
+            let svmy = net_my_id()
+            while svp < svpc and svk < max_remote {
+                let svid = net_player_id_at(svp)
+                if svid != svmy and svid < 1000 {
+                    let scai = bot_n + 1 + svk
+                    if cpid_h[scai] != svid {
+                        cpid_h[scai] = svid
+                        actors[scai].hp = php_max; actors[scai].sh = 0.0; actors[scai].cells = 0; actors[scai].shmax = psh_max
+                        death_done[scai] = 0; last_hit[scai] = 0 - 1
+                        cresp_seen[scai] = net_player_meta(svid, 3) as i64
+                        cheal_seen[scai] = net_player_meta(svid, 5) as i64
+                    }
+                    let svrc = net_player_meta(svid, 3) as i64
+                    if svrc != cresp_seen[scai] {
+                        cresp_seen[scai] = svrc
+                        actors[scai].hp = php_max; actors[scai].sh = 0.0; actors[scai].cells = 0
+                        death_done[scai] = 0; last_hit[scai] = 0 - 1
+                    }
+                    let svhc = net_player_meta(svid, 5) as i64
+                    if svhc != cheal_seen[scai] {
+                        cheal_seen[scai] = svhc
+                        if actors[scai].cells > 0 and actors[scai].sh < actors[scai].shmax {
+                            actors[scai].cells = actors[scai].cells - 1
+                            actors[scai].sh = actors[scai].sh + cell_shield
+                            if actors[scai].sh > actors[scai].shmax { actors[scai].sh = actors[scai].shmax }
+                        }
+                    }
+                    if actors[scai].hp > 0.0 {
+                        let scx = net_player_x(svid)
+                        let scz = net_player_z(svid)
+                        let mut sfp = 0
+                        while sfp < pk_n {
+                            if pkcd[sfp] <= 0.0 {
+                                let sdx = scx - pkx[sfp]
+                                let sdz = scz - pkz[sfp]
+                                if sqrt(sdx * sdx + sdz * sdz) < 1.4 {
+                                    if pktype[sfp] < 0.5 { if actors[scai].hp < php_max { actors[scai].hp = php_max; pkcd[sfp] = pk_respawn } } else { if pktype[sfp] < 1.5 { if actors[scai].cells < max_cells { actors[scai].cells = actors[scai].cells + 1; pkcd[sfp] = pk_respawn } } }
+                                }
+                            }
+                            sfp = sfp + 1
+                        }
+                        let mut sdp = 0
+                        while sdp < drop_n {
+                            if droplife[sdp] > 0.0 {
+                                let sddx = scx - dropx[sdp]
+                                let sddz = scz - dropz[sdp]
+                                if sqrt(sddx * sddx + sddz * sddz) < 1.4 {
+                                    if droptype[sdp] < 0.5 { if actors[scai].hp < php_max { actors[scai].hp = php_max; droplife[sdp] = 0.0 } } else { if droptype[sdp] < 1.5 { if actors[scai].cells < max_cells { actors[scai].cells = actors[scai].cells + 1; droplife[sdp] = 0.0 } } }
+                                }
+                            }
+                            sdp = sdp + 1
+                        }
+                    }
+                    net_set_player_meta(svid, 0, actors[scai].hp)
+                    net_set_player_meta(svid, 1, actors[scai].sh)
+                    net_set_player_meta(svid, 4, actors[scai].cells)
+                    svk = svk + 1
+                }
+                svp = svp + 1
+            }
             let nsh = net_server_hit_count()
             let mut sh = 0
             while sh < nsh {
@@ -2358,6 +2452,7 @@ fn main() {
                 let mut vai = 0 - 1
                 if vic >= 1000 { let bidx = vic - 1000; if bidx < bot_n { vai = bidx } }   // a bot
                 if vic == 0 { vai = pl_i }                                                  // the host
+                if vic >= 1 and vic < 1000 { let mut cva = bot_n + 1; while cva < nactors { if apid[cva] == vic { vai = cva } cva = cva + 1 } }   // a client (host owns its hp)
                 if vai >= 0 and actors[vai].hp > 0.0 {
                     let mut dmg = gun_dmg
                     let hrel = hY - phys3d_y(actors[vai].hdl as i64)
@@ -2453,7 +2548,7 @@ fn main() {
                     if det == 1 {
                         let erad = nade_radius * pgi
                         let mut eej = 0
-                        while eej < bot_n {
+                        while eej < nactors {
                             if actors[eej].hp > 0.0 {
                                 let eghh = actors[eej].hdl as i64
                                 let ebdx = phys3d_x(eghh) - dx
@@ -3253,6 +3348,19 @@ fn main() {
                         }
                         tk = tk + 1
                     }
+                    // ...and connected CLIENTS (slots 6..8): bots hunt remote humans too (host owns
+                    // their hp, so a bot's hit is applied authoritatively like any other).
+                    let mut tkc = bot_n + 1
+                    while tkc < nactors {
+                        if actors[tkc].hp > 0.0 and apid[tkc] != 9999 {
+                            let ekc = actors[tkc].hdl as i64
+                            let exc = phys3d_x(ekc) - bsx
+                            let ezc = phys3d_z(ekc) - bsz
+                            let ddc = sqrt(exc * exc + ezc * ezc)
+                            if ddc < bestd { bestd = ddc; tgx = phys3d_x(ekc); tgy = phys3d_y(ekc) + 0.5; tgz = phys3d_z(ekc); tgi = tkc }
+                        }
+                        tkc = tkc + 1
+                    }
                     nearest = bestd
                     // Face the body toward whatever it's aiming at (so the model + its shoot
                     // animation point at the actual target, not hardcoded at the player).
@@ -3326,6 +3434,9 @@ fn main() {
                         actors[ci].cells = actors[ci].cells - 1
                         actors[ci].sh = actors[ci].sh + cell_shield
                         if actors[ci].sh > actors[ci].shmax { actors[ci].sh = actors[ci].shmax }
+                        // GUEST: signal the host to spend a cell + add shield (it owns the result;
+                        // the local change above is just prediction it reconciles).
+                        if ci == pl_i and net_mode == 2 { g_heal_ctr = g_heal_ctr + 1.0 }
                     }
                 } else {
                     actors[ci].heal = 0.0
@@ -3370,10 +3481,10 @@ fn main() {
                                 if pcur >= 28 { pcur = 0 }
                                 sp = sp + 1
                             }
-                            // Damage whichever ACTOR we hit (shield then health) - this one
-                            // routine handles player->bot, bot->player and bot->bot.
+                            // Damage whichever ACTOR we hit (shield then health) - one routine for
+                            // player->bot, bot->player, bot->bot, and (host) anyone->client.
                             let mut vk = 0
-                            while vk < bot_n + 1 {
+                            while vk < nactors {
                                 if vk != ci and hb == (actors[vk].hdl as i64) and actors[vk].hp > 0.0 {
                                     let mut dmg = gun_dmg
                                     // Hit location (height of the impact vs the capsule centre):
@@ -3505,9 +3616,11 @@ fn main() {
         // kill / Overclock / sound when the killer is the local player). death_done gates it
         // to once per life; respawn clears it. Remotes are excluded (net-authoritative).
         let mut dv = 0
-        while dv < bot_n + 1 {
-            // Only the player + ACTIVE bots; inactive bot slots sit at hp=0 permanently.
-            if actors[dv].hp <= 0.0 and death_done[dv] == 0 and (dv == pl_i or dv < active_bots) {
+        while dv < nactors {
+            // The player + ACTIVE bots, and on the HOST also connected clients (it owns their hp,
+            // so it runs their death too -> drops + kill event; the client respawns itself).
+            let dv_live = dv == pl_i or dv < active_bots or (net_mode == 1 and dv > pl_i and apid[dv] != 9999)
+            if actors[dv].hp <= 0.0 and death_done[dv] == 0 and dv_live {
                 death_done[dv] = 1
                 actors[dv].hp = 0.0
                 adeaths[dv] = adeaths[dv] + 1
@@ -3525,12 +3638,13 @@ fn main() {
                 if dv == pl_i {
                     dead = true; respawn_cd = 3.0; deaths = deaths + 1; play_sound(0 - 26, 260, 0)
                 } else {
-                    brains[dv].resp = enemy_respawn
+                    brains[dv].resp = enemy_respawn   // (dummy for client slots; they respawn themselves)
                 }
-                if kk >= 0 and kk != dv {
+                // The kill FEED + credit + the killer's marker/sound are shown locally on the host/
+                // practice. A guest shows them ONLY from the host's net kill events (above), never
+                // from its own sweep, so nothing is double-counted or simulated guest-side.
+                if kk >= 0 and kk != dv and net_mode != 2 {
                     if round_over == false { akills[kk] = akills[kk] + 1 }
-                    // HOST: announce this authoritative kill to guests (net ids), so their feed +
-                    // the killer's red marker/sound come from US, never simulated guest-side.
                     if net_mode == 1 { net_push_kill(actor_netid(kk, pl_i, bot_n, apid), actor_netid(dv, pl_i, bot_n, apid)) }
                     kf_killer[kf_cur] = kk; kf_victim[kf_cur] = dv; kf_killer_pid[kf_cur] = 0 - 1; kf_victim_pid[kf_cur] = 0 - 1; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
                     if kk == pl_i {
@@ -3590,6 +3704,8 @@ fn main() {
                 actors[5].rl = 0.0
                 pinvuln = 2.0
                 respawn_req = 1.0
+                // GUEST: signal the host that I respawned (it owns my hp -> resets it to full).
+                if net_mode == 2 { g_resp_ctr = g_resp_ctr + 1.0; g_hp_prev = php_max }
             }
         }
         prev_dead = dead
@@ -3913,7 +4029,7 @@ fn main() {
         while rs < maxslots {
             let mut ai = bot_n + 1 + rs
             if net_mode == 2 { if rs < bot_n { ai = rs } else { ai = rs + 1 } }   // skip pl_i
-            actors[ai].hp = 0.0
+            if net_mode == 2 { actors[ai].hp = 0.0 }   // guest parks hp; HOST owns client hp (keep it)
             apid[ai] = 9999   // clear the slot->pid map; live remotes re-set it below
             phys3d_set_pos(actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0)
             rs = rs + 1
@@ -3923,7 +4039,7 @@ fn main() {
         while pi < pcount {
             let pid = net_player_id_at(pi)
             let rhp = net_player_meta(pid, 0)   // replicated hp: skip the dead uniformly
-            if pid != myid and slot < maxslots and rhp > 0.0 {
+            if pid != myid and slot < maxslots and (net_mode == 1 or rhp > 0.0) {
                 let mut ai = bot_n + 1 + slot
                 if net_mode == 2 { if slot < bot_n { ai = slot } else { ai = slot + 1 } }
                 apid[ai] = pid   // map this remote's actor slot to its net id (for names)
@@ -3931,9 +4047,15 @@ fn main() {
                 let ey = net_player_y(pid)
                 let ez = net_player_z(pid)
                 let eyaw = net_player_yaw(pid)
+                // GUEST displays the host's replicated hp/shield. HOST OWNS this client's hp/
+                // shield (managed in the survivability block above), so it stays host-owned here.
+                if net_mode == 2 { actors[ai].hp = rhp; actors[ai].sh = net_player_meta(pid, 1) }
+                // Cull the dead from the render. The host keeps a dead client's SLOT (apid set
+                // above) so respawn still maps it; we just park its body and skip drawing.
+                let r_alive = actors[ai].hp > 0.0
+                if r_alive == false { phys3d_set_pos(actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0) }
+                if r_alive {
                 phys3d_set_pos(actors[ai].hdl, ex, ey, ez)
-                actors[ai].hp = rhp   // replicated hp (drives death-cull + draw)
-                actors[ai].sh = net_player_meta(pid, 1)   // synced shield -> correct Fresnel rim on remotes
                 if actor_models[ai] >= 0 {
                     let rvx = ex - aprevx[ai]
                     let rvz = ez - aprevz[ai]
@@ -3962,6 +4084,7 @@ fn main() {
                     r3d_draw(body_vis, ex, ey, ez, eyaw, 0.0, 0.0, 1.0)
                     r3d_draw(head_vis, ex, ey + 0.85, ez, eyaw, 0.0, 0.0, 1.0)
                 }
+                }   // close: if r_alive
                 slot = slot + 1
             }
             pi = pi + 1

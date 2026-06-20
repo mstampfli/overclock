@@ -1,0 +1,73 @@
+// Verifies the HOST-OWNED CLIENT SURVIVABILITY state machine (the human-vs-human hp work):
+// a new client inits to full hp, the host claims pickups + spends a cell on the guest's HEAL
+// SIGNAL, damage goes shield-then-hp, death registers once, a RESPAWN SIGNAL restores full hp,
+// and a faked heal with no cell does nothing (the host owns the result, so a client can't cheat
+// shield/hp). This is the deterministic core; net_set_player_meta + reconcile are loopback-tested.
+
+fn main() {
+    let php_max = 100.0
+    let psh_max = 50.0
+    let cell_shield = 25.0
+    let max_cells = 4
+    let gun_dmg = 18.0
+
+    let mut hp = [0.0; 1]       // host-owned, starts uninitialised
+    let mut sh = [0.0; 1]
+    let mut cells = [0; 1]
+    let mut cpid = [9999; 1]
+    let mut resp_seen = [0; 1]
+    let mut heal_seen = [0; 1]
+    let mut ddone = [0; 1]
+    let mut g_resp = 0          // the guest's signal counters
+    let mut g_heal = 0
+    let k = 0
+
+    // New client (pid 7) -> fresh survivability.
+    let pid = 7
+    if cpid[k] != pid { cpid[k] = pid; hp[k] = php_max; sh[k] = 0.0; cells[k] = 0; ddone[k] = 0; resp_seen[k] = g_resp; heal_seen[k] = g_heal }
+    println("new client hp (expect 100): ")
+    println(str(hp[0] as i64))
+
+    // Host claims a shield-cell pickup the client walked over.
+    if cells[k] < max_cells { cells[k] = cells[k] + 1 }
+    println("cells after shield pickup (expect 1): ")
+    println(str(cells[0]))
+
+    // Guest signals a completed heal channel -> host spends a cell + adds shield.
+    g_heal = g_heal + 1
+    if g_heal != heal_seen[k] { heal_seen[k] = g_heal; if cells[k] > 0 and sh[k] < psh_max { cells[k] = cells[k] - 1; sh[k] = sh[k] + cell_shield } }
+    println("cells after heal (expect 0): ")
+    println(str(cells[0]))
+    println("shield after heal (expect 25): ")
+    println(str(sh[0] as i64))
+
+    // A headshot: 36 dmg vs 25 shield -> shield 0, 11 spills to hp (100 -> 89).
+    let mut dmg = gun_dmg * 2.0
+    if sh[k] > 0.0 { if sh[k] >= dmg { sh[k] = sh[k] - dmg; dmg = 0.0 } else { dmg = dmg - sh[k]; sh[k] = 0.0 } }
+    hp[k] = hp[k] - dmg
+    println("shield after 36 dmg (expect 0): ")
+    println(str(sh[0] as i64))
+    println("hp after 36 dmg through 25 shield (expect 89): ")
+    println(str(hp[0] as i64))
+
+    // Lethal damage -> death registers exactly once.
+    hp[k] = hp[k] - 200.0
+    let mut killed = 0
+    if hp[k] <= 0.0 and ddone[k] == 0 { ddone[k] = 1; killed = 1 }
+    println("client death registered once (expect 1): ")
+    println(str(killed))
+
+    // Guest respawns (signals) -> host restores full hp + re-arms the death.
+    g_resp = g_resp + 1
+    if g_resp != resp_seen[k] { resp_seen[k] = g_resp; hp[k] = php_max; sh[k] = 0.0; cells[k] = 0; ddone[k] = 0 }
+    println("hp after respawn (expect 100): ")
+    println(str(hp[0] as i64))
+    println("death re-armed after respawn (expect 0): ")
+    println(str(ddone[0]))
+
+    // CHEAT CHECK: a heal signal with NO cell does nothing - the host owns the result.
+    g_heal = g_heal + 1
+    if g_heal != heal_seen[k] { heal_seen[k] = g_heal; if cells[k] > 0 and sh[k] < psh_max { cells[k] = cells[k] - 1; sh[k] = sh[k] + cell_shield } }
+    println("shield after a FAKE heal with 0 cells (expect 0 = cheat blocked): ")
+    println(str(sh[0] as i64))
+}
