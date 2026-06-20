@@ -1387,7 +1387,7 @@ fn main() {
         Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
         Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
         Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        Actor { hdl: 0 - 1, hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        Actor { hdl: 0 - 1, hp: 100.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
         Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
         Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
         Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 }
@@ -2379,9 +2379,17 @@ fn main() {
         if net_mode == 2 {
             let amy = net_my_id()
             let newhp = net_player_meta(amy, 0)
-            if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05 }   // took damage
-            g_hp_prev = newhp
-            actors[pl_i].hp = newhp
+            // DIES-TWICE fix: right after respawning, the host's replicated hp can still be the
+            // STALE pre-respawn 0 until our respawn signal (g_resp_ctr) round-trips and the host
+            // resets it. Applying that 0 re-kills us the instant we respawn. During the post-
+            // respawn invuln window, KEEP our predicted hp (set full in the respawn block) and
+            // don't reconcile hp; shields/cells still reconcile. After pinvuln the host's hp is
+            // current again.
+            if pinvuln <= 0.0 {
+                if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05 }   // took damage
+                g_hp_prev = newhp
+                actors[pl_i].hp = newhp
+            }
             actors[pl_i].sh = net_player_meta(amy, 1)
             actors[pl_i].cells = net_player_meta(amy, 4) as i64
         }
@@ -3569,7 +3577,7 @@ fn main() {
                             // player->bot, bot->player, bot->bot, and (host) anyone->client.
                             let mut vk = 0
                             while vk < nactors {
-                                if vk != ci and hb == (actors[vk].hdl as i64) and actors[vk].hp > 0.0 {
+                                if vk != ci and hb == (actors[vk].hdl as i64) and actors[vk].hp > 0.0 and (mine == 0 or net_started == false) {
                                     let mut dmg = gun_dmg
                                     // Hit location (height of the impact vs the capsule centre):
                                     // head = 2x, low legs = 0.65x, torso = 1x.
@@ -3613,6 +3621,32 @@ fn main() {
                             }
                         } else {
                             if mine == 1 { hxp = ox + ax * 120.0; hyp = oy + ay * 120.0; hzp = oz + az * 120.0; hit_t = 0.05 }
+                        }
+                        // HOST authoritative hit via LAG-COMP. The local raycast above hits remote
+                        // render-actors whose colliders lag ~1 frame (set via phys3d_set_pos, only
+                        // synced on the next phys3d_step), so a fast-moving guest is missed (~90%).
+                        // net_fire ran the lag-comp raycast against the AUTHORITATIVE positions at
+                        // the shot tick - exactly where we render them - so use net_hit_player as the
+                        // real victim. Bots are in lag-comp too, so MP hits are uniform. The local
+                        // raycast (gated off above for mine==1+net) stays only for tracer/particles.
+                        if mine == 1 and net_started {
+                            let lh = net_hit_player()
+                            let mut avk = 0 - 1
+                            if lh >= 1000 { let abi = lh - 1000; if abi < bot_n { avk = abi } }
+                            else { if lh >= 1 and lh < 1000 { let mut acc = bot_n + 1; while acc < nactors { if apid[acc] == lh { avk = acc } acc = acc + 1 } } }
+                            if avk >= 0 and avk != ci and actors[avk].hp > 0.0 {
+                                let mut admg = gun_dmg
+                                let ahrel = net_hit_y() - phys3d_y(actors[avk].hdl as i64)
+                                if ahrel > 0.5 { admg = admg * 2.0; play_sound(12, 90, 0) } else { if ahrel < (0.0 - 0.4) { admg = admg * 0.65 } }
+                                if actors[avk].sh > 0.0 { if actors[avk].sh >= admg { actors[avk].sh = actors[avk].sh - admg; admg = 0.0 } else { admg = admg - actors[avk].sh; actors[avk].sh = 0.0 } }
+                                actors[avk].hp = actors[avk].hp - admg
+                                if avk < bot_n { brains[avk].pop = 0.1 }
+                                hitmark = 0.18; play_noise(45, 14)
+                                last_hit[avk] = ci; kr_mark[avk] = 0.35
+                                let mut aocg = 13.0
+                                if net_local_state(7) < 0.5 { aocg = 20.0 }
+                                kr_oc[avk] = aocg
+                            }
                         }
                         // One tracer system for everyone. The local player's tracer starts
                         // at the EYE (like the original single player tracer) so it reads the
@@ -4153,12 +4187,13 @@ fn main() {
                 let ey = net_player_y(pid)
                 let ez = net_player_z(pid)
                 let mut eyaw = net_player_yaw(pid)
-                // HUMAN remotes broadcast their raw LOOK-yaw. The model's default facing is +Z
-                // (yaw 0), but the player's look-yaw 0 faces -Z (forward = (sin,-cos)), so the
-                // model is rendered exactly 180 around Y. The fix is a flat +PI rotation (NOT
-                // atan2(sin,-cos) = PI-eyaw, which is a MIRROR: right on one axis, flipped on the
-                // other). Bots (pid>=1000) broadcast `face` (already draw-space), so leave them.
-                if pid < 1000 { eyaw = eyaw + 3.14159 }
+                // HUMAN remotes broadcast their raw LOOK-yaw. The renderer faces (sin yaw, cos yaw)
+                // (glam from_euler YXZ, model local forward +Z - confirmed by bots, drawn with
+                // face=atan2(dx,dz)). The player's look forward is (sin eyaw, -cos eyaw), so the
+                // correct draw-yaw is PI - eyaw (makes sin/cos match the look dir). NOT eyaw+PI,
+                // which X-flips (looking east renders facing west). Bots (pid>=1000) already
+                // broadcast draw-space `face`, so leave them.
+                if pid < 1000 { eyaw = 3.14159 - eyaw }
                 // GUEST displays the host's replicated hp/shield. HOST OWNS this client's hp/
                 // shield (managed in the survivability block above), so it stays host-owned here.
                 if net_mode == 2 { actors[ai].hp = rhp; actors[ai].sh = net_player_meta(pid, 1) }
@@ -4175,14 +4210,25 @@ fn main() {
                     if rinst > 40.0 { rinst = 0.0 }
                     aspd[ai] = aspd[ai] + (rinst - aspd[ai]) * 0.12
                     let rspd = aspd[ai]
-                    let mut rdes = astate[ai]
-                    if rdes < 0 { rdes = anim_idle }
-                    if rdes == anim_jump { rdes = anim_idle }
+                    let mut rdes = anim_idle
+                    // Airborne LATCH (mirrors the bot anim): remote HUMANS broadcast their vy
+                    // (slot 5) + grounded flag (slot 7) via sim_step, so show the jump/midair clip
+                    // instead of forcing idle. Set on a real takeoff/hard fall, hold through the
+                    // apex, clear only when actually grounded - so it never strobes around vy=0.
+                    let rvy = net_player_state(pid, 5)
+                    let rground = net_player_state(pid, 7)
+                    if rvy > 3.0 or rvy < (0.0 - 5.0) { ajump[ai] = 0.45 }
+                    if rground > 0.5 and rvy < 1.0 { ajump[ai] = 0.0 }
+                    ajump[ai] = ajump[ai] - dt
+                    if ajump[ai] < 0.0 { ajump[ai] = 0.0 }
                     if rspd > 1.4 { rdes = anim_run; aidle_t[ai] = 0.0 } else { aidle_t[ai] = aidle_t[ai] + dt; if aidle_t[ai] > 0.35 { rdes = anim_idle } }
+                    if ajump[ai] > 0.0 { rdes = anim_jump }
                     astate_t[ai] = astate_t[ai] + dt
                     let mut rallow = 0
                     if astate[ai] < 0 { rallow = 1 }
                     if astate_t[ai] > 0.15 { rallow = 1 }
+                    if rdes == anim_jump { rallow = 1 }
+                    if astate[ai] == anim_jump and ajump[ai] <= 0.0 { rallow = 1 }
                     if rallow == 1 and astate[ai] != rdes { r3d_anim_play(actor_models[ai], rdes, 1, 1.0, 0.15); astate[ai] = rdes; astate_t[ai] = 0.0 }
                     // Upper-body overlay: the katana SWING (clip 41) while this remote is meleeing
                     // (replicated meta 8), else the held weapon pose. Reuses the existing overlay.
@@ -4465,7 +4511,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-1", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-2", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
