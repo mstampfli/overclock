@@ -1199,15 +1199,16 @@ fn main() {
     // found via r3d_joint_dump). The h_* offsets are the weapon's pose IN the hand bone's local
     // space - TUNE BY EYE (position + the local yaw/pitch/roll) to seat it in the grip.
     let hand_joint = 29
-    let hand_ox = 0.0
-    let hand_oy = 0.0
-    let hand_oz = 0.0
-    // The barrel was pointing UP (a pure yaw can't fix verticality); add a -90deg PITCH to drop
-    // it from vertical to horizontal/forward, keeping the yaw that set the left-right facing.
-    // Eye-tuned: if it points down/back, flip opitch to +1.5708; the small "toward you" lean is oyaw.
-    let hand_oyaw = 0.0 - 1.5708
-    let hand_opitch = 0.0 - 1.5708
-    let hand_oroll = 0.0
+    // hand_o* = the weapon's pose in the hand-bone local frame. The bone's axes aren't obvious by
+    // eye, so these are LIVE-TUNABLE in-game: hold T and use arrows (pitch/yaw) + O/U (roll) +
+    // I/K (forward-back) + J/L (left-right) + Y/H (up-down). The values are drawn on-screen; once
+    // it seats right, tell me the numbers and I bake them in as the defaults below.
+    let mut hand_ox = 0.0
+    let mut hand_oy = 0.0
+    let mut hand_oz = 0.0
+    let mut hand_oyaw = 0.0 - 1.5708
+    let mut hand_opitch = 0.0 - 1.5708
+    let mut hand_oroll = 0.0
     let kat_hand_oyaw = 0.0
     let kat_hand_opitch = 1.5708
     let kat_hand_oroll = 0.0
@@ -4308,6 +4309,33 @@ fn main() {
 
         // HUD: crosshair + a horizontal speed bar; turns gold while wallrunning.
         clear(0, 0, 0)
+        // WEAPON-ATTACH LIVE TUNER (hold T): rotate/move the 3rd-person weapon in the hand bone's
+        // frame until it seats right, read the values below, and report them so I bake them in.
+        if key_down(59) > 0 {
+            let tstep = dt * 1.5
+            if key_down(2) > 0 { hand_opitch = hand_opitch + tstep }   // arrow up
+            if key_down(3) > 0 { hand_opitch = hand_opitch - tstep }   // arrow down
+            if key_down(0) > 0 { hand_oyaw = hand_oyaw + tstep }       // arrow left
+            if key_down(1) > 0 { hand_oyaw = hand_oyaw - tstep }       // arrow right
+            if key_down(54) > 0 { hand_oroll = hand_oroll + tstep }    // O
+            if key_down(60) > 0 { hand_oroll = hand_oroll - tstep }    // U
+            if key_down(48) > 0 { hand_oz = hand_oz + dt * 0.5 }       // I  forward
+            if key_down(50) > 0 { hand_oz = hand_oz - dt * 0.5 }       // K  back
+            if key_down(49) > 0 { hand_ox = hand_ox - dt * 0.5 }       // J  left
+            if key_down(51) > 0 { hand_ox = hand_ox + dt * 0.5 }       // L  right
+            if key_down(64) > 0 { hand_oy = hand_oy + dt * 0.5 }       // Y  up
+            if key_down(47) > 0 { hand_oy = hand_oy - dt * 0.5 }       // H  down
+            let tc_gold = 255 * 65536 + 200 * 256 + 60
+            let tc_white = 255 * 65536 + 255 * 256 + 255
+            draw_text(20, 120, "WEAPON TUNE (hold T): arrows=pitch/yaw  O/U=roll  IJKL/YH=move", 16, tc_gold)
+            draw_text(20, 144, "pitch x100", 16, tc_white); draw_int(160, 144, (hand_opitch * 100.0) as i64, 16, tc_white)
+            draw_text(20, 164, "yaw x100", 16, tc_white); draw_int(160, 164, (hand_oyaw * 100.0) as i64, 16, tc_white)
+            draw_text(20, 184, "roll x100", 16, tc_white); draw_int(160, 184, (hand_oroll * 100.0) as i64, 16, tc_white)
+            draw_text(20, 204, "ox/oy/oz x100", 16, tc_white)
+            draw_int(180, 204, (hand_ox * 100.0) as i64, 16, tc_white)
+            draw_int(240, 204, (hand_oy * 100.0) as i64, 16, tc_white)
+            draw_int(300, 204, (hand_oz * 100.0) as i64, 16, tc_white)
+        }
         // (Hit flash + low-health vignette are now the GPU damage shader, above.)
         // Crosshair: drawn from the player's customisable settings (editor in SETTINGS).
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
