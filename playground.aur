@@ -1552,6 +1552,7 @@ fn main() {
     let mut g_resp_ctr = 0.0     // ++ each time I respawn (meta 3)
     let mut g_heal_ctr = 0.0     // ++ each time I finish a shield-cell channel (meta 5)
     let mut g_hp_prev = 100.0    // last reconciled hp (for the incoming-damage hurt flash)
+    let mut g_resp_wait = 0      // 1 while awaiting the host's respawn ACK (ignore stale hp=0 only then)
     let mut akills = [0; 9]     // per-actor kills (scoreboard)
     let mut adeaths = [0; 9]    // per-actor deaths (scoreboard)
     // Unified death handling: every damage path records who last hit each actor + the
@@ -2381,11 +2382,11 @@ fn main() {
             let newhp = net_player_meta(amy, 0)
             // DIES-TWICE fix: right after respawning, the host's replicated hp can still be the
             // STALE pre-respawn 0 until our respawn signal (g_resp_ctr) round-trips and the host
-            // resets it. Applying that 0 re-kills us the instant we respawn. During the post-
-            // respawn invuln window, KEEP our predicted hp (set full in the respawn block) and
-            // don't reconcile hp; shields/cells still reconcile. After pinvuln the host's hp is
-            // current again.
-            if pinvuln <= 0.0 {
+            // resets it; applying that 0 re-kills us instantly. So while AWAITING the respawn ack,
+            // ignore hp - but ONLY until the host's hp comes back > 0 (the ack), NOT a fixed window
+            // (a fixed window made us ignore real damage for seconds -> "survives extra hits").
+            if g_resp_wait == 1 and newhp > 0.0 { g_resp_wait = 0 }
+            if g_resp_wait == 0 {
                 if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05 }   // took damage
                 g_hp_prev = newhp
                 actors[pl_i].hp = newhp
@@ -3577,7 +3578,7 @@ fn main() {
                             // player->bot, bot->player, bot->bot, and (host) anyone->client.
                             let mut vk = 0
                             while vk < nactors {
-                                if vk != ci and hb == (actors[vk].hdl as i64) and actors[vk].hp > 0.0 and (mine == 0 or net_started == false) {
+                                if vk != ci and hb == (actors[vk].hdl as i64) and actors[vk].hp > 0.0 and (mine == 0 or net_mode != 1) {
                                     let mut dmg = gun_dmg
                                     // Hit location (height of the impact vs the capsule centre):
                                     // head = 2x, low legs = 0.65x, torso = 1x.
@@ -3629,14 +3630,17 @@ fn main() {
                         // the shot tick - exactly where we render them - so use net_hit_player as the
                         // real victim. Bots are in lag-comp too, so MP hits are uniform. The local
                         // raycast (gated off above for mine==1+net) stays only for tracer/particles.
-                        if mine == 1 and net_started {
+                        if mine == 1 and net_mode == 1 {
                             let lh = net_hit_player()
                             let mut avk = 0 - 1
                             if lh >= 1000 { let abi = lh - 1000; if abi < bot_n { avk = abi } }
                             else { if lh >= 1 and lh < 1000 { let mut acc = bot_n + 1; while acc < nactors { if apid[acc] == lh { avk = acc } acc = acc + 1 } } }
                             if avk >= 0 and avk != ci and actors[avk].hp > 0.0 {
                                 let mut admg = gun_dmg
-                                let ahrel = net_hit_y() - phys3d_y(actors[avk].hdl as i64)
+                                // Headshot reference = the victim's AUTHORITATIVE centre at the shot
+                                // tick (net_player_y, = where we render + what lag-comp recorded), NOT
+                                // the render-actor body (its collider lags a frame -> 3-vs-4-hit jitter).
+                                let ahrel = net_hit_y() - net_player_y(lh)
                                 if ahrel > 0.5 { admg = admg * 2.0; play_sound(12, 90, 0) } else { if ahrel < (0.0 - 0.4) { admg = admg * 0.65 } }
                                 if actors[avk].sh > 0.0 { if actors[avk].sh >= admg { actors[avk].sh = actors[avk].sh - admg; admg = 0.0 } else { admg = admg - actors[avk].sh; actors[avk].sh = 0.0 } }
                                 actors[avk].hp = actors[avk].hp - admg
@@ -3827,7 +3831,7 @@ fn main() {
                 pinvuln = 2.0
                 respawn_req = 1.0
                 // GUEST: signal the host that I respawned (it owns my hp -> resets it to full).
-                if net_mode == 2 { g_resp_ctr = g_resp_ctr + 1.0; g_hp_prev = php_max }
+                if net_mode == 2 { g_resp_ctr = g_resp_ctr + 1.0; g_hp_prev = php_max; g_resp_wait = 1 }
             }
         }
         prev_dead = dead
@@ -4511,7 +4515,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-2", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-3", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
