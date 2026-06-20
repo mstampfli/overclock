@@ -53,6 +53,16 @@ Cadence: compile + commit + push after each item.
 - [x] Unified bullet tracers (player drawn once from the eye, no double-draw)
 - [x] Crate <-> actor knockback (local movers only; flying crates only knock if moving toward you)
 
+## MP / netcode - UPDATE: metadata channel BUILT + headlessly verified (no live test needed)
+- [x] Replicated per-player metadata channel (hp/shield/oc) in aurora-net: a separate META_LEN blob that
+      rides input+snapshot but NEVER runs through the sim (so it can't clobber local-only state slots).
+      Builtins net_set_meta / net_player_meta. VERIFIED by a loopback 2-Session Rust test (host<->client
+      hp replicate both ways) - two Sessions over UDP loopback in-process, NO live 2-machine test needed.
+- [x] Game broadcasts hp/shield/oc each frame; remotes read the synced shield -> correct Fresnel rim.
+- [ ] STILL host-authority for DAMAGE: today each client self-reports its own hp (fine for a friends game,
+      not cheat-proof). Host-authoritative damage (host applies + replicates via this channel, clients
+      predict + reconcile, lag-comp via lagcomp.rs) + names (pack chars into more meta slots) are next.
+
 ## MP / netcode - FINDINGS from the autonomous loop (needs a separate channel + live test)
 - The replicated state is f32 slots 0..20 (STATE_MAX 32). Movement fills 0..20. Slots 21..29 are
   used by sim_step as LOCAL-ONLY working state (21 = physics body handle read as net_local_state(21),
