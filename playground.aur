@@ -2254,15 +2254,21 @@ fn main() {
         let mut active_bots = bot_count - num_remotes
         if active_bots < 0 { active_bots = 0 }
         if active_bots > bot_n { active_bots = bot_n }
-        // Re-sync the live bot population to active_bots (handles join/leave mid-round).
-        let mut bsy = 0
-        while bsy < bot_n {
-            if bsy >= active_bots {
-                if brains[bsy].resp < 500000.0 { actors[bsy].hp = 0.0; brains[bsy].resp = 1000000.0 }
-            } else {
-                if brains[bsy].resp >= 500000.0 { brains[bsy].resp = 0.5 }   // un-park: respawn shortly
+        // GUEST: bots don't exist as bots here - they arrive as ordinary remote players from
+        // the host. So we run/own NO local bots (active_bots = 0) and never park them; the
+        // host is the only place the AI brain lives.
+        if net_mode == 2 { active_bots = 0 }
+        // Re-sync the live bot population to active_bots (host/practice only).
+        if net_mode != 2 {
+            let mut bsy = 0
+            while bsy < bot_n {
+                if bsy >= active_bots {
+                    if brains[bsy].resp < 500000.0 { actors[bsy].hp = 0.0; brains[bsy].resp = 1000000.0 }
+                } else {
+                    if brains[bsy].resp >= 500000.0 { brains[bsy].resp = 0.5 }   // un-park: respawn shortly
+                }
+                bsy = bsy + 1
             }
-            bsy = bsy + 1
         }
         // Bounced by a full lobby: drop back to the menu with a clear message.
         if net_rejected() > 0 {
@@ -2721,8 +2727,11 @@ fn main() {
         let pvx_s = net_local_state(4)
         let pvz_s = net_local_state(6)
         let pspd = sqrt(pvx_s * pvx_s + pvz_s * pvz_s)
+        // The AI brain + bot physics run ONLY on the host/practice. On a guest, bots arrive
+        // as network-driven actors (handled in the unified remote loop), so this whole loop
+        // is skipped - the guest never runs the brain.
         let mut ei2 = 0
-        while ei2 < bot_n {
+        while ei2 < bot_n and net_mode != 2 {
             let h = actors[ei2].hdl as i64
             brains[ei2].pop = brains[ei2].pop - dt
             if brains[ei2].pop < 0.0 { brains[ei2].pop = 0.0 }
@@ -2928,6 +2937,21 @@ fn main() {
             ei2 = ei2 + 1
         }
 
+        // HOST: replicate our live bots so guests render them as ordinary remote players
+        // (their AI brain stays here; the guest has no bot concept). We push transform + hp +
+        // shield each frame; a dead/respawning bot pushes hp 0, so guests cull it uniformly.
+        if net_mode == 1 {
+            net_set_bot_count(active_bots)
+            let mut bpi = 0
+            while bpi < active_bots {
+                let bph = actors[bpi].hdl as i64
+                net_set_bot(bpi, phys3d_x(bph), phys3d_y(bph), phys3d_z(bph), brains[bpi].face)
+                net_set_bot_meta(bpi, 0, actors[bpi].hp)
+                net_set_bot_meta(bpi, 1, actors[bpi].sh)
+                bpi = bpi + 1
+            }
+        }
+
         // ===== UNIFIED COMBAT: ONE fire path for EVERY actor - the bots AND the player.
         // Each actor's INTENT is computed here (the player from input + crosshair; a bot
         // from its AI target-pick + aim spread), then the EXACT SAME reload + ammo + shot
@@ -2936,7 +2960,9 @@ fn main() {
         // authoritative, so they are not simulated here (loop stops at pl_i).
         let mut ci = 0
         while ci < bot_n + 1 {
-            if actors[ci].hp > 0.0 {
+            // On a guest only the LOCAL player runs combat; bots are resolved host-side and
+            // arrive over the wire, so the guest never simulates their firing/reload/pickups.
+            if actors[ci].hp > 0.0 and (net_mode != 2 or ci == pl_i) {
                 // Reload tick (pull reserve -> mag) - identical for everyone.
                 if actors[ci].rl > 0.0 {
                     actors[ci].rl = actors[ci].rl - dt
@@ -3555,9 +3581,10 @@ fn main() {
             drd = drd + 1
         }
 
-        // Live enemy bots at their physics positions (dead ones are hidden).
+        // Live enemy bots at their physics positions (dead ones are hidden). Host/practice
+        // only - on a guest these same bots are drawn by the unified remote loop below.
         let mut ed = 0
-        while ed < bot_n {
+        while ed < bot_n and net_mode != 2 {
             if actors[ed].hp > 0.0 {
                 let h = actors[ed].hdl as i64
                 let bx = phys3d_x(h)
@@ -3638,17 +3665,20 @@ fn main() {
             ed = ed + 1
         }
 
-        // Remote players are ACTORS too (the slots after the local player). Each frame we
-        // sync their kinematic body to the netcode's interpolated position + mark them
-        // active, then draw them. Their COMBAT is server-authoritative (the server owns
-        // their health/ammo and validates hits), so locally these are transform + body
-        // actors - they share the Actor type, they just aren't simulated client-side.
+        // Network-driven ACTORS: every other player on the wire (humans AND, on a guest, the
+        // host's bots) is synced to its replicated position + drawn. Their COMBAT is host-
+        // authoritative, so locally these are transform + body actors, not simulated. A guest
+        // renders EVERYONE this way (no bot concept): the pool is every actor slot except our
+        // own. The host renders only human remotes here (it draws its own bots above).
         let myid = net_my_id()
         let pcount = net_player_count()
-        // Park + deactivate all remote slots first; the live ones get re-activated below.
+        let mut maxslots = max_remote
+        if net_mode == 2 { maxslots = bot_n + max_remote }   // guest: all 8 non-self slots
+        // Park + deactivate all usable slots first; the live ones get re-activated below.
         let mut rs = 0
-        while rs < max_remote {
-            let ai = bot_n + 1 + rs
+        while rs < maxslots {
+            let mut ai = bot_n + 1 + rs
+            if net_mode == 2 { if rs < bot_n { ai = rs } else { ai = rs + 1 } }   // skip pl_i
             actors[ai].hp = 0.0
             apid[ai] = 9999   // clear the slot->pid map; live remotes re-set it below
             phys3d_set_pos(actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0)
@@ -3658,15 +3688,17 @@ fn main() {
         let mut slot = 0
         while pi < pcount {
             let pid = net_player_id_at(pi)
-            if pid != myid and slot < max_remote {
-                let ai = bot_n + 1 + slot
+            let rhp = net_player_meta(pid, 0)   // replicated hp: skip the dead uniformly
+            if pid != myid and slot < maxslots and rhp > 0.0 {
+                let mut ai = bot_n + 1 + slot
+                if net_mode == 2 { if slot < bot_n { ai = slot } else { ai = slot + 1 } }
                 apid[ai] = pid   // map this remote's actor slot to its net id (for names)
                 let ex = net_player_x(pid)
                 let ey = net_player_y(pid)
                 let ez = net_player_z(pid)
                 let eyaw = net_player_yaw(pid)
                 phys3d_set_pos(actors[ai].hdl, ex, ey, ez)
-                actors[ai].hp = 100.0   // keep drawn (active); real death is host-authority (TODO)
+                actors[ai].hp = rhp   // replicated hp (drives death-cull + draw)
                 actors[ai].sh = net_player_meta(pid, 1)   // synced shield -> correct Fresnel rim on remotes
                 if actor_models[ai] >= 0 {
                     let rvx = ex - aprevx[ai]
@@ -3996,12 +4028,18 @@ fn main() {
         draw_int(cx - 46, 66, kills, 26, col_gold)
         draw_text(cx - 6, 66, "/", 26, col_white)
         draw_int(cx + 14, 66, kill_target, 26, col_white)
-        // MP roster (host + connected players, and how many of the budget are bots).
+        // MP roster. Host owns bots, so it shows connected humans + its bot budget. A guest
+        // has no bot concept - everyone on the wire is just a combatant, so it shows one total.
         if net_started {
-            draw_text(fbw - 168, 18, "players ", 16, col_gold)
-            draw_int(fbw - 96, 18, net_player_count(), 16, col_white)
-            draw_text(fbw - 168, 38, "bots ", 16, col_gold)
-            draw_int(fbw - 96, 38, active_bots, 16, col_white)
+            if net_mode == 1 {
+                draw_text(fbw - 168, 18, "players ", 16, col_gold)
+                draw_int(fbw - 96, 18, net_player_count(), 16, col_white)
+                draw_text(fbw - 168, 38, "bots ", 16, col_gold)
+                draw_int(fbw - 96, 38, active_bots, 16, col_white)
+            } else {
+                draw_text(fbw - 168, 18, "in match ", 16, col_gold)
+                draw_int(fbw - 96, 18, net_player_count(), 16, col_white)
+            }
         }
 
         // Kill feed (top-right): "KILLER > VICTIM". Decrement every timer FIRST so expiry
