@@ -1019,17 +1019,23 @@ fn code_char(c: i64) -> str {
 // Display name for an actor slot (bot callsign / your username / remote guest).
 fn slot_name(slot: i64, pli: i64, uname: str, ulen: i64, apid: [i64; 9]) -> str {
     if slot == pli { if ulen > 0 { return uname } return "PLAYER" }
-    if slot < pli { return bot_name(slot) }
-    // Remote player: build their REPLICATED display name char-by-char (apid maps the actor
-    // slot to the net player id). Falls back to GUEST until the name has synced.
+    // apid-FIRST: any slot mapped to a net id is a network actor (a remote human OR, on a
+    // guest, a host bot relayed over the wire). Build its REPLICATED name char-by-char. This
+    // is what keeps the guest correct - on a guest the bot slots 0..4 hold net actors, so we
+    // must NOT fall through to the local bot_name() table for them.
     let pid = apid[slot]
-    let nl = net_player_name_len(pid)
-    if nl > 0 {
-        let mut nm = ""
-        let mut ci = 0
-        while ci < nl { nm = nm + code_char(net_player_name_char(pid, ci)); ci = ci + 1 }
-        return nm
+    if pid != 9999 {
+        let nl = net_player_name_len(pid)
+        if nl > 0 {
+            let mut nm = ""
+            let mut ci = 0
+            while ci < nl { nm = nm + code_char(net_player_name_char(pid, ci)); ci = ci + 1 }
+            return nm
+        }
+        return "GUEST"
     }
+    // No net mapping: a LOCAL bot (host/practice). Use the local name table.
+    if slot < pli { return bot_name(slot) }
     return "GUEST"
 }
 
@@ -3011,6 +3017,7 @@ fn main() {
                 net_set_bot(bpi, phys3d_x(bph), phys3d_y(bph), phys3d_z(bph), brains[bpi].face)
                 net_set_bot_meta(bpi, 0, actors[bpi].hp)
                 net_set_bot_meta(bpi, 1, actors[bpi].sh)
+                net_set_bot_name(bpi, bot_name(bpi))   // so guests show the bot's real name in feed/scoreboard
                 bpi = bpi + 1
             }
         }
