@@ -76,7 +76,8 @@ Cadence: compile + commit + push after each item.
 - [x] Katana: 2.8m range, 75 dmg straight to HP (BYPASSES shield); box push way down (still felt too strong)
 
 ## AUTONOMOUS LOOP ORDER (user asleep - implement EVERYTHING, compile+commit+push each step)
-1. Weapon bone-attach: engine builtin to expose a joint world transform -> attach 3rd-person weapons to hand
+1. [x] Weapon bone-attach: engine r3d_draw_on_joint + joint names/dump; weapons ride hand bone (joint 29).
+       Local h_* offsets are a best guess - TUNE BY EYE to seat in the grip.
 2. MP / host-authority: replicated combat state (hp/shield/cells/names) + host-authoritative damage + bot/crate
    authority, on aurora-net predict.rs/lagcomp.rs. Keep PRACTICE working; verify with sims; do not break the game.
 3. Fresnel / electric rim shield shader (LAST)
