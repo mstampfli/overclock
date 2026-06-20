@@ -1,0 +1,37 @@
+// Verify the LEAST-CONTESTED spawn selection: with enemies clustered at one candidate, the
+// algorithm must pick a DIFFERENT, far candidate.
+fn main() {
+    let spx = [30.0, 0.0 - 30.0, 30.0, 0.0 - 30.0, 0.0, 0.0]
+    let spz = [30.0, 30.0, 0.0 - 30.0, 0.0 - 30.0, 0.0 - 42.0, 45.0]
+    let sp_n = 6
+    let spawn_r = 16.0
+
+    // Mock enemies: 3 clustered around candidate 0 (30,30), 1 near candidate 5 (0,45).
+    let ex = [30.0, 28.0, 32.0, 2.0]
+    let ez = [30.0, 31.0, 29.0, 44.0]
+    let en = 4
+
+    let mut best_si = 0
+    let mut best_cnt = 100000.0
+    let mut best_near = 0.0
+    let mut spi = 0
+    while spi < sp_n {
+        let mut scnt = 0.0
+        let mut snear = 100000.0
+        let mut sci = 0
+        while sci < en {
+            let sdx = ex[sci] - spx[spi]
+            let sdz = ez[sci] - spz[spi]
+            let sdd = sqrt(sdx * sdx + sdz * sdz)
+            if sdd < spawn_r { scnt = scnt + 1.0 }
+            if sdd < snear { snear = sdd }
+            sci = sci + 1
+        }
+        println("cand " + str(spi) + " (" + str(spx[spi] as i64) + "," + str(spz[spi] as i64) + ")  near=" + str(scnt as i64) + "  nearest=" + str(snear as i64))
+        if scnt < best_cnt or (scnt == best_cnt and snear > best_near) {
+            best_cnt = scnt; best_near = snear; best_si = spi
+        }
+        spi = spi + 1
+    }
+    println("CHOSEN spawn = cand " + str(best_si) + " at (" + str(spx[best_si] as i64) + "," + str(spz[best_si] as i64) + ")  (expect NOT 0, and away from the cluster)")
+}
