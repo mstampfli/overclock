@@ -1209,6 +1209,11 @@ fn main() {
     let mut hand_oyaw = 0.0 - 1.5708
     let mut hand_opitch = 0.0 - 1.5708
     let mut hand_oroll = 0.0
+    // TUNE MODE (toggle with T, practice only): freezes + pacifies + makes bots immortal so they
+    // stand as static dummies holding the weapon (can't kill you), and enables the weapon tuner.
+    // TEMPORARY debug aid - remove once the weapon offset is dialled in.
+    let mut tune_mode = 0
+    let mut t_prev = 0
     let kat_hand_oyaw = 0.0
     let kat_hand_opitch = 1.5708
     let kat_hand_oroll = 0.0
@@ -3073,11 +3078,29 @@ fn main() {
         let pvx_s = net_local_state(4)
         let pvz_s = net_local_state(6)
         let pspd = sqrt(pvx_s * pvx_s + pvz_s * pvz_s)
-        // The AI brain + bot physics run ONLY on the host/practice. On a guest, bots arrive
-        // as network-driven actors (handled in the unified remote loop), so this whole loop
-        // is skipped - the guest never runs the brain.
+        // TUNE MODE toggle (T, practice only): on the rising edge, respawn all bots to their
+        // anchors as standing immortal dummies; while on, they're frozen + pacified (loops below
+        // gated on tune_mode == 0) so you can walk around one + tune the weapon without dying.
+        let tdn = key_down(59)
+        if tdn > 0 and t_prev == 0 and net_mode == 0 {
+            if tune_mode == 0 { tune_mode = 1 } else { tune_mode = 0 }
+            if tune_mode == 1 {
+                let mut rbz = 0
+                while rbz < bot_n {
+                    actors[rbz].hp = enemy_hp_max; actors[rbz].sh = 0.0
+                    brains[rbz].resp = 0.0; brains[rbz].vy = 0.0; death_done[rbz] = 0
+                    phys3d_set_pos(actors[rbz].hdl as i64, esx[rbz], 0.9, esz[rbz])
+                    rbz = rbz + 1
+                }
+            }
+        }
+        t_prev = tdn
+        // While tuning, keep the dummies alive (so a stray shot can't drop your reference).
+        if tune_mode == 1 { let mut tbz = 0; while tbz < bot_n { actors[tbz].hp = enemy_hp_max; tbz = tbz + 1 } }
+        // The AI brain + bot physics run ONLY on the host/practice (and not in tune mode). On a
+        // guest, bots arrive as network-driven actors, so this whole loop is skipped.
         let mut ei2 = 0
-        while ei2 < bot_n and net_mode != 2 {
+        while ei2 < bot_n and net_mode != 2 and tune_mode == 0 {
             let h = actors[ei2].hdl as i64
             brains[ei2].pop = brains[ei2].pop - dt
             if brains[ei2].pop < 0.0 { brains[ei2].pop = 0.0 }
@@ -3315,8 +3338,9 @@ fn main() {
         let mut ci = 0
         while ci < bot_n + 1 {
             // On a guest only the LOCAL player runs combat; bots are resolved host-side and
-            // arrive over the wire, so the guest never simulates their firing/reload/pickups.
-            if actors[ci].hp > 0.0 and (net_mode != 2 or ci == pl_i) {
+            // arrive over the wire. In tune mode, bots also don't fire (only the player) so the
+            // dummies stay harmless.
+            if actors[ci].hp > 0.0 and (ci == pl_i or (net_mode != 2 and tune_mode == 0)) {
                 // Reload tick (pull reserve -> mag) - identical for everyone.
                 if actors[ci].rl > 0.0 {
                     actors[ci].rl = actors[ci].rl - dt
@@ -4309,9 +4333,9 @@ fn main() {
 
         // HUD: crosshair + a horizontal speed bar; turns gold while wallrunning.
         clear(0, 0, 0)
-        // WEAPON-ATTACH LIVE TUNER (hold T): rotate/move the 3rd-person weapon in the hand bone's
-        // frame until it seats right, read the values below, and report them so I bake them in.
-        if key_down(59) > 0 {
+        // WEAPON-ATTACH LIVE TUNER (active in tune mode, toggled by T): rotate/move the 3rd-person
+        // weapon in the hand bone's frame until it seats right, read the values, report them.
+        if tune_mode > 0 {
             let tstep = dt * 1.5
             if key_down(2) > 0 { hand_opitch = hand_opitch + tstep }   // arrow up
             if key_down(3) > 0 { hand_opitch = hand_opitch - tstep }   // arrow down
@@ -4327,7 +4351,8 @@ fn main() {
             if key_down(47) > 0 { hand_oy = hand_oy - dt * 0.5 }       // H  down
             let tc_gold = 255 * 65536 + 200 * 256 + 60
             let tc_white = 255 * 65536 + 255 * 256 + 255
-            draw_text(20, 120, "WEAPON TUNE (hold T): arrows=pitch/yaw  O/U=roll  IJKL/YH=move", 16, tc_gold)
+            draw_text(20, 100, "TUNE MODE (T to exit) - bots are frozen dummies", 16, tc_gold)
+            draw_text(20, 120, "weapon: arrows=pitch/yaw  O/U=roll  IJKL/YH=move", 16, tc_gold)
             draw_text(20, 144, "pitch x100", 16, tc_white); draw_int(160, 144, (hand_opitch * 100.0) as i64, 16, tc_white)
             draw_text(20, 164, "yaw x100", 16, tc_white); draw_int(160, 164, (hand_oyaw * 100.0) as i64, 16, tc_white)
             draw_text(20, 184, "roll x100", 16, tc_white); draw_int(160, 184, (hand_oroll * 100.0) as i64, 16, tc_white)
