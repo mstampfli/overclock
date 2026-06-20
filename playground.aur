@@ -3426,31 +3426,34 @@ fn main() {
                     let ddz = apz - ccz
                     let dd = sqrt(ddx * ddx + ddz * ddz)
                     if dd < 1.5 and dd > 0.01 {
-                        // Flying crate -> knock the actor along the crate's travel (capped, gentle).
-                        if cspd > 3.5 {
-                            let mut kf = cspd * 0.4
-                            if kf > 8.0 { kf = 8.0 }
+                        // Flying crate -> knock the actor a LITTLE, but ONLY if the crate is
+                        // heading TOWARD them (dot of crate velocity with crate->actor > 0).
+                        // A box you just shoved moves AWAY, so it won't knock you back.
+                        let toward = cvx * ddx + cvz * ddz
+                        if cspd > 3.5 and toward > 0.0 {
+                            let mut kf = cspd * 0.2
+                            if kf > 4.0 { kf = 4.0 }
                             if cai == pl_i {
                                 if dead == false {
                                     blast_ix = blast_ix + cvx / cspd * kf
                                     blast_iz = blast_iz + cvz / cspd * kf
-                                    blast_iy = blast_iy + 2.5
+                                    blast_iy = blast_iy + 1.2
                                 }
                             } else {
                                 brains[cai].kx = brains[cai].kx + cvx / cspd * kf
                                 brains[cai].kz = brains[cai].kz + cvz / cspd * kf
-                                brains[cai].ky = brains[cai].ky + 1.8
+                                brains[cai].ky = brains[cai].ky + 1.0
                             }
                         }
-                        // Actor -> shove the crate away (scaled by the player's own speed, so
-                        // running/sliding into a box sends it flying; bots give a steady shove).
-                        let mut pushf = 6.0
+                        // Actor -> shove the crate away (a moderate push, scaled by the
+                        // player's speed so a fast slide shoves it a bit further).
+                        let mut pushf = 3.0
                         if cai == pl_i {
                             let pvx = net_local_state(4)
                             let pvz = net_local_state(6)
-                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.9 + 6.0
+                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.4 + 3.0
                         }
-                        phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 1.4, 0.0 - ddz / dd * pushf)
+                        phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 1.0, 0.0 - ddz / dd * pushf)
                     }
                 }
                 cai = cai + 1
