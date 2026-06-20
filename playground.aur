@@ -2209,6 +2209,13 @@ fn main() {
         let mut g_flag = 0.0
         if grapple_on { g_flag = 1.0 }
         let blob = [fwd, strafe, yaw, jump as f64, slide as f64, dash as f64, dt, pitch, respawn_req, oc_mult, gx, gy, gz, g_flag, blast_ix, blast_iy, blast_iz]
+        // Broadcast our combat state to everyone via the metadata channel (separate from the
+        // sim state, so it can't disturb movement/reconciliation). Remotes read it below.
+        net_set_meta(0, actors[5].hp)
+        net_set_meta(1, actors[5].sh)
+        let mut oc_m = 0.0
+        if oc_active { oc_m = 1.0 }
+        net_set_meta(2, oc_m)
         net_send_input(blob)
         net_update(dt)
         respawn_req = 0.0    // one-shot: consumed by the send above
@@ -3604,7 +3611,8 @@ fn main() {
                 let ez = net_player_z(pid)
                 let eyaw = net_player_yaw(pid)
                 phys3d_set_pos(actors[ai].hdl, ex, ey, ez)
-                actors[ai].hp = 100.0   // active (transform mirror; server owns real combat)
+                actors[ai].hp = 100.0   // keep drawn (active); real death is host-authority (TODO)
+                actors[ai].sh = net_player_meta(pid, 1)   // synced shield -> correct Fresnel rim on remotes
                 if actor_models[ai] >= 0 {
                     let rvx = ex - aprevx[ai]
                     let rvz = ez - aprevz[ai]
