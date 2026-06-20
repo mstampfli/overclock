@@ -1061,10 +1061,14 @@ fn name_from_pid(pid: i64, myid: i64, uname: str, ulen: i64) -> str {
 
 // Map a local actor SLOT to its NET id, for announcing host-authoritative kills: the host
 // player is id 0, bots are ids 1000+slot, and remote humans use their apid mapping.
-fn actor_netid(slot: i64, pli: i64, bot_n: i64, apid: [i64; 9]) -> i64 {
-    if slot == pli { return 0 }
-    if slot < bot_n { return 1000 + slot }
-    return apid[slot]
+// The STABLE net id of an actor slot - the single source of truth for colour + kill events, so it
+// must be IDENTICAL on host and guests. Keyed off apid (the real net id), NOT the slot position:
+// on the host slots 0..bot_n-1 are local bots, but on a GUEST those same low slots hold HUMAN
+// remotes, so the old "slot < bot_n => bot" rule gave a different (wrong) id per machine.
+fn actor_netid(slot: i64, pli: i64, apid: [i64; 9], myid: i64) -> i64 {
+    if slot == pli { return myid }              // self: my own net id (0 on host, my id on a guest)
+    if apid[slot] != 9999 { return apid[slot] } // a networked actor (a client; or a guest's bots+humans)
+    return 1000 + slot                          // a host-LOCAL bot (has no apid mapping)
 }
 
 // Each player/bot gets a UNIQUE colour derived from its STABLE net id (host=0, clients=1..,
@@ -1086,11 +1090,11 @@ fn pcchan(pid: i64, ch: i64) -> i64 {
 fn pcolor(pid: i64) -> i64 {
     return pcchan(pid, 0) * 65536 + pcchan(pid, 1) * 256 + pcchan(pid, 2)
 }
-// Overclock GLOW tint for a player's colour, mapped into r3d_draw_tint's additive range exactly
-// like the old red glow (full channel -> +0.95, empty -> -0.2). So while YOU are overclocked,
-// everyone glows in their own colour.
-fn ptint(pid: i64, ch: i64) -> f64 {
-    return (pcchan(pid, ch) as f64) / 255.0 * 1.15 - 0.2
+// Additive albedo OFFSET (r3d_draw_tint) that paints a model in a player's colour. Balanced around
+// mid-grey so it ADDS to the colour's strong channels and SUBTRACTS from its weak ones (a real hue
+// shift, not just brightening). `strength`: ~0.85 = always-on identity tint, ~1.7 = overclock glow.
+fn ptint(pid: i64, ch: i64, strength: f64) -> f64 {
+    return ((pcchan(pid, ch) as f64) / 255.0 - 0.5) * strength
 }
 
 // A settings slider bar: neon fill over a dark track. Returns 1 if the cursor is over
@@ -3870,7 +3874,7 @@ fn main() {
                 // from its own sweep, so nothing is double-counted or simulated guest-side.
                 if kk >= 0 and kk != dv and net_mode != 2 {
                     if round_over == false { akills[kk] = akills[kk] + 1 }
-                    if net_mode == 1 { net_push_kill(actor_netid(kk, pl_i, bot_n, apid), actor_netid(dv, pl_i, bot_n, apid)) }
+                    if net_mode == 1 { net_push_kill(actor_netid(kk, pl_i, apid, net_my_id()), actor_netid(dv, pl_i, apid, net_my_id())) }
                     kf_killer[kf_cur] = kk; kf_victim[kf_cur] = dv; kf_killer_pid[kf_cur] = 0 - 1; kf_victim_pid[kf_cur] = 0 - 1; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
                     if kk == pl_i {
                         killmark = kr_mark[dv]
@@ -4266,7 +4270,7 @@ fn main() {
                     if dyaw > 2.0 or dyaw < (0.0 - 2.0) { ayaw[ed] = tyaw } else { ayaw[ed] = ayaw[ed] + dyaw * 0.2 }
                     // Tint the actual model: orange while I'm overclocked (enemies pop against the
                     // dimmed world), blue while shielded, otherwise untinted.
-                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, ptint(1000 + ed, 0), ptint(1000 + ed, 1), ptint(1000 + ed, 2)) } else { if actors[ed].sh > 0.0 { r3d_draw_shield(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale) } }
+                    if oc_active { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, ptint(1000 + ed, 0, 1.7), ptint(1000 + ed, 1, 1.7), ptint(1000 + ed, 2, 1.7)) } else { if actors[ed].sh > 0.0 { r3d_draw_shield(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw_tint(actor_models[ed], bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, ptint(1000 + ed, 0, 0.85), ptint(1000 + ed, 1, 0.85), ptint(1000 + ed, 2, 0.85)) } }
                     // Third-person weapon ATTACHED to the right-hand bone (joint 29): it rides
                     // the hand, so reload/aim/run hand motion comes from the animation itself.
                     let mut twm = vm_rifle
@@ -4383,7 +4387,7 @@ fn main() {
                     if net_player_meta(pid, 8) > 0.5 { ruwant = kat_swing_clip }
                     if ushoot[ai] != ruwant { r3d_anim_play_upper(actor_models[ai], ruwant, 1, 1.0, 0.1, upper_mask_root); ushoot[ai] = ruwant }
                     r3d_anim_update(actor_models[ai], dt)
-                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0), ptint(apid[ai], 1), ptint(apid[ai], 2)) } else { if actors[ai].sh > 0.0 { r3d_draw_shield(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale) } }
+                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.7), ptint(apid[ai], 1, 1.7), ptint(apid[ai], 2, 1.7)) } else { if actors[ai].sh > 0.0 { r3d_draw_shield(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 0.85), ptint(apid[ai], 1, 0.85), ptint(apid[ai], 2, 0.85)) } }
                     // Third-person weapon ATTACHED to the remote's right-hand bone (joint 29).
                     let ryr = eyaw + actor_yaw_off
                     // Draw the katana while swinging (its own offset/scale), else the rifle.
@@ -4684,7 +4688,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-13", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-14", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
@@ -4858,8 +4862,8 @@ fn main() {
                 } else {
                     kn = slot_name(kf_killer[ksl], pl_i, username, uname_len, apid)
                     vn = slot_name(kf_victim[ksl], pl_i, username, uname_len, apid)
-                    kpid2 = actor_netid(kf_killer[ksl], pl_i, bot_n, apid)
-                    vpid2 = actor_netid(kf_victim[ksl], pl_i, bot_n, apid)
+                    kpid2 = actor_netid(kf_killer[ksl], pl_i, apid, myid)
+                    vpid2 = actor_netid(kf_victim[ksl], pl_i, apid, myid)
                 }
                 let kw = text_width(kn, 18)
                 // Killer + victim drawn in their OWN unique colours (same palette as the scoreboard
@@ -4940,11 +4944,9 @@ fn main() {
                 let s = order[row]
                 let ry = ly + 54 + row * 32
                 let nm = slot_name(s, pl_i, username, uname_len, apid)
-                // Each row in that player's unique colour (self via net_my_id so a guest gets ITS
-                // colour, not the host's). Scoreboard + killfeed + overclock glow all agree.
-                let mut spid2 = actor_netid(s, pl_i, bot_n, apid)
-                if s == pl_i { spid2 = net_my_id() }
-                let rc = pcolor(spid2)
+                // Each row in that player's unique colour - actor_netid gives the SAME net id on
+                // every machine (self via myid), so the colour matches the model + killfeed + glow.
+                let rc = pcolor(actor_netid(s, pl_i, apid, net_my_id()))
                 draw_text(lx + 20, ry, nm, 22, rc)
                 draw_int(lx + 300, ry, sbk[s], 22, rc)
                 draw_int(lx + 370, ry, sbd[s], 22, rc)
