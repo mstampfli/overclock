@@ -16,7 +16,7 @@ Cadence: compile + commit + push after each item.
 
 ### Medium
 - [ ] Center text EVERYWHERE
-- [ ] Allow binds on the MOUSE buttons
+- [x] Allow binds on the MOUSE buttons (LMB/RMB/MMB)
 - [ ] Shield = blue, Overclocked = orange; others glow while I'm overclocked
 - [ ] Put the weapon actually IN the hands (bone attach — engine joint API)
 

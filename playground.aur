@@ -891,6 +891,8 @@ fn menu_btn(x: i64, y: i64, w: i64, h: i64, mx: i64, my: i64) -> i64 {
 // instead of raw numbers. Mirrors the engine's code_to_key map.
 fn key_name(code: i64) -> str {
     if code == 100 { return "LMB" }
+    if code == 101 { return "RMB" }
+    if code == 102 { return "MMB" }
     if code == 4 { return "SPACE" }
     if code == 9 { return "ENTER" }
     if code == 10 { return "LSHIFT" }
@@ -1497,6 +1499,7 @@ fn main() {
     let mut menu_t = 0.0
     let mut mprev = 0           // mouse button last frame (click edge)
     let mut rebind = 0 - 1      // action awaiting a new key (-1 = none)
+    let mut rebind_armed = 0    // wait for the box-click LMB to release before capturing
     let mut esc_prev = 1        // Escape edge-detect (pause toggle); 1 = ignore held
 
     loop {
@@ -1685,17 +1688,25 @@ fn main() {
                 draw_action_name(ki, cl + 10, ry + 4, wht)
                 let mut kc = gold
                 if rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
-                if menu_btn(cl + 220, ry, 90, 24, mx, my) == 1 { if clicked == 1 { rebind = ki } }
+                if menu_btn(cl + 220, ry, 90, 24, mx, my) == 1 { if clicked == 1 { rebind = ki; rebind_armed = 0 } }
                 draw_text(cl + 234, ry + 4, key_name(bind_code[ki] as i64), 18, kc)
                 ki = ki + 1
             }
             // Capture the next key for the action being rebound.
             if rebind > (0 - 1) {
+                // Arm only once the box-click LMB is released, then the next key OR mouse button
+                // (LMB 100 / RMB 101 / MMB 102) becomes the bind.
+                if mouse_button(0) < 1 and mouse_button(1) < 1 and mouse_button(2) < 1 { rebind_armed = 1 }
                 let mut kc2 = 0
                 let mut found = 0 - 1
-                while kc2 < 66 {
-                    if key_down(kc2) > 0 and found < 0 { found = kc2 }
-                    kc2 = kc2 + 1
+                if rebind_armed == 1 {
+                    while kc2 < 66 {
+                        if key_down(kc2) > 0 and found < 0 { found = kc2 }
+                        kc2 = kc2 + 1
+                    }
+                    if mouse_button(0) > 0 { found = 100 }
+                    if mouse_button(1) > 0 { found = 101 }
+                    if mouse_button(2) > 0 { found = 102 }
                 }
                 if found > (0 - 1) {
                     bind_code[rebind] = found as f64
