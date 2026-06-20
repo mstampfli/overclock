@@ -2214,7 +2214,7 @@ fn main() {
                     let bdz = phys3d_z(ghh) - ex_z
                     let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
                     if bdd < rad {
-                        let mut edmg = nade_dmg * gi * (1.0 - 0.55 * bdd / rad)
+                        let mut edmg = nade_dmg * gi * (1.0 - 0.30 * bdd / rad)
                         if actors[ej].sh > 0.0 {
                             if actors[ej].sh >= edmg { actors[ej].sh = actors[ej].sh - edmg; edmg = 0.0 }
                             else { edmg = edmg - actors[ej].sh; actors[ej].sh = 0.0 }
@@ -2293,7 +2293,7 @@ fn main() {
             let pbz = pz - ex_z
             let pbd = sqrt(pbx * pbx + pby * pby + pbz * pbz)
             if pbd < rad and pinvuln <= 0.0 and dead == false {
-                let mut sd = nade_dmg * gi * (1.0 - 0.55 * pbd / rad) * 0.5
+                let mut sd = nade_dmg * gi * (1.0 - 0.30 * pbd / rad) * 0.5
                 if actors[5].sh > 0.0 {
                     if actors[5].sh >= sd { actors[5].sh = actors[5].sh - sd; sd = 0.0 }
                     else { sd = sd - actors[5].sh; actors[5].sh = 0.0 }
