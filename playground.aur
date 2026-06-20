@@ -2306,6 +2306,22 @@ fn main() {
                 net_set_object(oci, phys3d_x(ohh), phys3d_y(ohh), phys3d_z(ohh))
                 oci = oci + 1
             }
+            // HOST: publish transient visuals (loot drops + in-flight projectiles) so guests
+            // render them - loot on the ground + others' rockets/grenades flying in. Count the
+            // active ones, then fill: kind = drop type (0-2), 3 = rocket, 4 = grenade.
+            let mut fxc = 0
+            let mut fc1 = 0
+            while fc1 < drop_n { if droplife[fc1] > 0.0 { fxc = fxc + 1 } fc1 = fc1 + 1 }
+            let mut fc2 = 0
+            while fc2 < proj_n { if prjlife[fc2] > 0.0 { fxc = fxc + 1 } fc2 = fc2 + 1 }
+            if nade_live { fxc = fxc + 1 }
+            net_set_fx_count(fxc)
+            let mut fxw = 0
+            let mut fd1 = 0
+            while fd1 < drop_n { if droplife[fd1] > 0.0 { net_set_fx(fxw, dropx[fd1], dropy[fd1], dropz[fd1], droptype[fd1]); fxw = fxw + 1 } fd1 = fd1 + 1 }
+            let mut fp1 = 0
+            while fp1 < proj_n { if prjlife[fp1] > 0.0 { net_set_fx(fxw, prjx[fp1], prjy[fp1], prjz[fp1], 3.0); fxw = fxw + 1 } fp1 = fp1 + 1 }
+            if nade_live { net_set_fx(fxw, grx, gry, grz, 4.0); fxw = fxw + 1 }
         }
         net_send_input(blob)
         net_update(dt)
@@ -3644,12 +3660,16 @@ fn main() {
                 let kk = last_hit[dv]
                 let dbx = phys3d_x(actors[dv].hdl as i64)
                 let dbz = phys3d_z(actors[dv].hdl as i64)
-                if dv == pl_i {
-                    if actors[dv].cells > 0 { dropx[dropcur] = dbx + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 } }
-                } else {
-                    dropx[dropcur] = dbx; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                    dropx[dropcur] = dbx - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                    if actors[dv].cells > 0 { dropx[dropcur] = dbx + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 } }
+                // Drops are host-owned: a guest spawns NONE locally (the host spawns its drops and
+                // replicates them over the fx channel), so loot never doubles or desyncs.
+                if net_mode != 2 {
+                    if dv == pl_i {
+                        if actors[dv].cells > 0 { dropx[dropcur] = dbx + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 } }
+                    } else {
+                        dropx[dropcur] = dbx; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
+                        dropx[dropcur] = dbx - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
+                        if actors[dv].cells > 0 { dropx[dropcur] = dbx + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 } }
+                    }
                 }
                 actors[dv].cells = 0
                 if dv == pl_i {
@@ -3931,8 +3951,10 @@ fn main() {
             pkd = pkd + 1
         }
         // Enemy drops (smaller orbs) while alive.
+        // Local drops (host/practice). A guest owns NO local drops - it renders the host's
+        // authoritative drops + in-flight projectiles from the fx channel just below instead.
         let mut drd = 0
-        while drd < drop_n {
+        while drd < drop_n and net_mode != 2 {
             if droplife[drd] > 0.0 {
                 let bob2 = sin(etime * 3.0 + (drd as f64)) * 0.1
                 if droptype[drd] < 0.5 {
@@ -3946,6 +3968,22 @@ fn main() {
                 }
             }
             drd = drd + 1
+        }
+        // GUEST: render the host's authoritative transient visuals - loot drops (kind 0-2) and
+        // OTHERS' in-flight rockets (3) / grenades (4). Our own predicted rocket is still drawn by
+        // the local projectile loop, so we see incoming explosives in time to dodge them.
+        if net_mode == 2 {
+            let fxn = net_fx_count()
+            let mut fxi = 0
+            while fxi < fxn {
+                let fxx = net_fx_x(fxi)
+                let fxy = net_fx_y(fxi)
+                let fxz = net_fx_z(fxi)
+                let fxk = net_fx_kind(fxi)
+                let bobf = sin(etime * 3.0 + (fxi as f64)) * 0.1
+                if fxk < 0.5 { r3d_draw(heal_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 1.5 { r3d_draw(shield_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 2.5 { r3d_draw(ammo_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 3.5 { r3d_draw(proj_vis, fxx, fxy, fxz, 0.0, 0.0, 0.0, 1.0) } else { r3d_draw(nade_vis, fxx, fxy, fxz, etime * 7.0, etime * 5.0, 0.0, 1.0) } } } }
+                fxi = fxi + 1
+            }
         }
 
         // Live enemy bots at their physics positions (dead ones are hidden). Host/practice
