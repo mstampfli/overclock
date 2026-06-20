@@ -1285,21 +1285,25 @@ fn main() {
         3.0     // wall_min_speed (must move this fast to attach to a wall)
     ]
 
-    // Networking is established from the in-game LOBBY (host / join by IP), not at startup, so
-    // the player picks. net_sim is registered here; the connection + spawn happen on match START.
+    // Connect FIRST (host, or join localhost if the port is taken), THEN register the sim and
+    // spawn. This exact order is what the netcode needs - deferring it to the lobby broke the
+    // player sim (no movement / no combat). The lobby's HOST/JOIN is layered on top of this.
+    if net_host(45123) == 0 {
+        net_join("127.0.0.1", 45123)
+    }
     let net_port = 45123
-    let mut net_mode = 0        // 0 = practice (host local), 1 = host, 2 = join
-    let mut net_started = false
-    let mut ip0 = 127           // join-target IP octets (default loopback for local testing)
+    let mut net_mode = 0        // lobby mode (0 practice / 1 host / 2 join)
+    let mut net_started = true  // already connected at startup, so the lobby won't reconnect
+    let mut ip0 = 127           // join-target IP octets (for a remote JOIN from the lobby)
     let mut ip1 = 0
     let mut ip2 = 0
     let mut ip3 = 1
-    // Register the shared Aurora movement step (21 replicated state floats, 8 input
-    // floats). The sim creates each player's own physics character on demand.
+    // Register the shared Aurora movement step (21 replicated state floats, 8 input floats).
     net_sim(|state, input| {
         sim_step(state, input, cfg)
         0
     }, 21, 17)
+    net_spawn_at(0.0, 0.9, 45.0)
 
     let mut yaw = 0.0
     let mut pitch = 0.0
