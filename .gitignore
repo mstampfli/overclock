@@ -8,3 +8,6 @@
 
 # Runtime-generated player settings (per-machine)
 overclock_settings.txt
+overclock-win64.zip
+overclock.exe
+*.zip
