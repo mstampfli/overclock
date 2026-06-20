@@ -4153,13 +4153,12 @@ fn main() {
                 let ey = net_player_y(pid)
                 let ez = net_player_z(pid)
                 let mut eyaw = net_player_yaw(pid)
-                // HUMAN remotes broadcast their raw LOOK-yaw, whose forward is (sin,-cos)
-                // (see sim_step hx/hz). But r3d_draw + the bot `face` convention is atan2(dx,dz).
-                // Feed look-yaw straight in and the model+weapon render 180-mirrored ("I look
-                // left, the guest sees me looking right"). Convert into face-space so a guest
-                // renders EXACTLY like a bot facing the same way. Bots (pid>=1000) already
-                // broadcast `face`, so leave them untouched.
-                if pid < 1000 { eyaw = atan2(sin(eyaw), 0.0 - cos(eyaw)) }
+                // HUMAN remotes broadcast their raw LOOK-yaw. The model's default facing is +Z
+                // (yaw 0), but the player's look-yaw 0 faces -Z (forward = (sin,-cos)), so the
+                // model is rendered exactly 180 around Y. The fix is a flat +PI rotation (NOT
+                // atan2(sin,-cos) = PI-eyaw, which is a MIRROR: right on one axis, flipped on the
+                // other). Bots (pid>=1000) broadcast `face` (already draw-space), so leave them.
+                if pid < 1000 { eyaw = eyaw + 3.14159 }
                 // GUEST displays the host's replicated hp/shield. HOST OWNS this client's hp/
                 // shield (managed in the survivability block above), so it stays host-owned here.
                 if net_mode == 2 { actors[ai].hp = rhp; actors[ai].sh = net_player_meta(pid, 1) }
@@ -4464,6 +4463,9 @@ fn main() {
         // (Hit flash + low-health vignette are now the GPU damage shader, above.)
         // Crosshair: drawn from the player's customisable settings (editor in SETTINGS).
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
+        // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
+        // If this text is missing or says an older tag, you are running a STALE exe.
+        draw_text(12, 12, "BUILD FLOATFIX-1", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
