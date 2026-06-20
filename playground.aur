@@ -1058,7 +1058,11 @@ fn main() {
     grab_mouse(1)
     // Load a font for the HUD text/numbers (score, timer). Falls back to no text if
     // the file isn't found - draw_text/draw_int just no-op then.
-    load_font("C:/Windows/Fonts/AGENCYB.TTF")   // Agency FB Bold - condensed sci-fi look
+    // Font: prefer the system Agency FB (the look this was tuned for, present on most
+    // Windows installs); fall back to the bundled OFL Rajdhani so a downloaded build still
+    // renders text on a machine without Agency FB. load_font returns 1 on success.
+    let mut font_ok = load_font("C:/Windows/Fonts/AGENCYB.TTF")
+    if font_ok < 1 { font_ok = load_font("fonts/SairaCondensed-Black.ttf") }
 
     // Environment. Higher ambient since the room is now ROOFED (sun is blocked); the
     // point lights below carry most of the interior lighting.
@@ -1337,7 +1341,10 @@ fn main() {
     let mut ch_r = 240
     let mut ch_g = 240
     let mut ch_b = 240
-    let mut settings = [0.0; 56]
+    let mut active_preset = 0   // selected crosshair preset slot (0..5)
+    // settings layout: 0 sens, 1 vol, 2..17 binds, 18 display, 20..36 username,
+    // 40..46 live crosshair, 56..97 six crosshair presets (7 each), 98 active preset.
+    let mut settings = [0.0; 100]
     if load_settings(settings) > 2 {
         sens = settings[0]
         vol = (settings[1]) as i64
@@ -1363,6 +1370,9 @@ fn main() {
             ch_g = settings[45] as i64
             ch_b = settings[46] as i64
         }
+        active_preset = settings[98] as i64
+        if active_preset < 0 { active_preset = 0 }
+        if active_preset > 5 { active_preset = 0 }
     }
     let mut bi = 0
     while bi < act_n {
@@ -1787,13 +1797,14 @@ fn main() {
             // ---- CROSSHAIR EDITOR: live preview + size/gap/thickness/dot/colour ----
             draw_text(cx - text_width("CROSSHAIR", 44) / 2, 30, "CROSSHAIR", 44, gold)
             let xl = cx - 250
-            // Live preview on a dim checkerboard pad (right side).
-            let cpx = cx + 180
-            let cpy = 240
-            let mut cby = cpy - 80
-            while cby < cpy + 80 {
-                let mut cbx = cpx - 80
-                while cbx < cpx + 80 { if (cbx + cby) % 2 == 0 { pixel(cbx, cby, 10, 12, 16) } cbx = cbx + 1 }
+            // Live preview on a dim checkerboard pad (top-right, clear of the colour bars).
+            let cpx = cx + 200
+            let cpy = 158
+            draw_text(cpx - text_width("PREVIEW", 16) / 2, cpy - 84, "PREVIEW", 16, wht)
+            let mut cby = cpy - 64
+            while cby < cpy + 64 {
+                let mut cbx = cpx - 64
+                while cbx < cpx + 64 { if (cbx + cby) % 2 == 0 { pixel(cbx, cby, 10, 12, 16) } cbx = cbx + 1 }
                 cby = cby + 1
             }
             draw_crosshair(cpx, cpy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
@@ -1831,6 +1842,36 @@ fn main() {
             if draw_bar(xl + 150, 324, 220, 20, (ch_g as f64) / 255.0, mx, my) == 1 { if clicked == 1 { ch_g = (((mx - (xl + 150)) as f64) / 220.0 * 255.0) as i64; if ch_g < 0 { ch_g = 0 } if ch_g > 255 { ch_g = 255 } } }
             draw_text(xl, 364, "Blue", 22, wht)
             if draw_bar(xl + 150, 364, 220, 20, (ch_b as f64) / 255.0, mx, my) == 1 { if clicked == 1 { ch_b = (((mx - (xl + 150)) as f64) / 220.0 * 255.0) as i64; if ch_b < 0 { ch_b = 0 } if ch_b > 255 { ch_b = 255 } } }
+            // Crosshair presets (6 slots, saved to the settings file on disk). Click a slot
+            // to load it (and make it active); SAVE writes the current crosshair into it.
+            draw_text(xl, 414, "Presets", 22, wht)
+            let mut pp = 0
+            while pp < 6 {
+                let pslot = xl + 150 + pp * 44
+                let mut pcol = wht
+                if active_preset == pp { pcol = gold }
+                if menu_btn(pslot, 410, 38, 30, mx, my) == 1 { if clicked == 1 {
+                    active_preset = pp
+                    let pb = 56 + pp * 7
+                    if settings[pb] > 0.0 {
+                        ch_size = settings[pb] as i64; ch_gap = settings[pb + 1] as i64; ch_thick = settings[pb + 2] as i64; ch_dot = settings[pb + 3] as i64
+                        ch_r = settings[pb + 4] as i64; ch_g = settings[pb + 5] as i64; ch_b = settings[pb + 6] as i64
+                    }
+                    settings[98] = active_preset as f64
+                    save_settings(settings)
+                } }
+                draw_centered(str(pp + 1), pslot, 410, 38, 30, 20, pcol)
+                pp = pp + 1
+            }
+            let psave = xl + 150 + 6 * 44 + 12
+            if menu_btn(psave, 410, 110, 30, mx, my) == 1 { if clicked == 1 {
+                let pb2 = 56 + active_preset * 7
+                settings[pb2] = ch_size as f64; settings[pb2 + 1] = ch_gap as f64; settings[pb2 + 2] = ch_thick as f64; settings[pb2 + 3] = ch_dot as f64
+                settings[pb2 + 4] = ch_r as f64; settings[pb2 + 5] = ch_g as f64; settings[pb2 + 6] = ch_b as f64
+                settings[98] = active_preset as f64
+                save_settings(settings)
+            } }
+            draw_centered("SAVE P" + str(active_preset + 1), psave, 410, 110, 30, 18, gold)
             // BACK: persist the crosshair + return to settings. Escape does the same.
             if menu_btn(cx - 60, fbh - 62, 120, 44, mx, my) == 1 { if clicked == 1 {
                 settings[40] = ch_size as f64; settings[41] = ch_gap as f64; settings[42] = ch_thick as f64; settings[43] = ch_dot as f64
@@ -2291,9 +2332,10 @@ fn main() {
                             brains[mvk].resp = enemy_respawn
                             dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64); dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
                             dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64) - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                            if actors[mvk].shmax > 0.0 {
+                            if actors[mvk].cells > 0 {
                                 dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64) + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
                             }
+                            actors[mvk].cells = 0   // un-popped reserve shields are lost on death
                             killmark = 0.4
                             if round_over == false { kills = kills + 1 }
                             if oc_active { oc_timer = oc_timer + 2.5 } else {
@@ -2503,7 +2545,7 @@ fn main() {
                             droplife[dropcur] = drop_life
                             dropcur = dropcur + 1
                             if dropcur >= drop_n { dropcur = 0 }
-                            if actors[ej].shmax > 0.0 {
+                            if actors[ej].cells > 0 {
                                 dropx[dropcur] = phys3d_x(actors[ej].hdl as i64) + 0.6
                                 dropy[dropcur] = 0.6
                                 dropz[dropcur] = phys3d_z(actors[ej].hdl as i64)
@@ -2512,6 +2554,7 @@ fn main() {
                                 dropcur = dropcur + 1
                                 if dropcur >= drop_n { dropcur = 0 }
                             }
+                            actors[ej].cells = 0   // un-popped reserve shields are lost on death
                             // Only credit the PLAYER (score, Overclock, kill marker) when
                             // the player caused the blast - not a bot's rocket.
                             if ex_src < 0.5 {
@@ -2572,6 +2615,10 @@ fn main() {
                     deaths = deaths + 1
                     adeaths[pl_i] = adeaths[pl_i] + 1
                     play_sound(0 - 26, 260, 0)
+                    if actors[pl_i].cells > 0 {
+                        dropx[dropcur] = phys3d_x(actors[pl_i].hdl as i64) + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[pl_i].hdl as i64); droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
+                    }
+                    actors[pl_i].cells = 0   // lose un-popped reserve shields on death
                 }
             }
             if pbd < krad and pbd > 0.01 and dead == false {
@@ -3052,13 +3099,18 @@ fn main() {
                                         if vk == pl_i {
                                             dead = true; respawn_cd = 3.0; deaths = deaths + 1
                                             play_sound(0 - 26, 260, 0)
+                                            if actors[pl_i].cells > 0 {
+                                                dropx[dropcur] = phys3d_x(actors[pl_i].hdl as i64) + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[pl_i].hdl as i64); droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
+                                            }
+                                            actors[pl_i].cells = 0   // lose un-popped reserve shields on death
                                         } else {
                                             brains[vk].resp = enemy_respawn
                                             dropx[dropcur] = phys3d_x(actors[vk].hdl as i64); dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[vk].hdl as i64); droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
                                             dropx[dropcur] = phys3d_x(actors[vk].hdl as i64) - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[vk].hdl as i64); droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                                            if actors[vk].shmax > 0.0 {
+                                            if actors[vk].cells > 0 {
                                                 dropx[dropcur] = phys3d_x(actors[vk].hdl as i64) + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[vk].hdl as i64); droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
                                             }
+                                            actors[vk].cells = 0   // lose un-popped reserve shields on death
                                             if mine == 1 {
                                                 killmark = 0.35
                                                 if round_over == false { kills = kills + 1 }
