@@ -53,6 +53,19 @@ Cadence: compile + commit + push after each item.
 - [x] Unified bullet tracers (player drawn once from the eye, no double-draw)
 - [x] Crate <-> actor knockback (local movers only; flying crates only knock if moving toward you)
 
+## MP / netcode - FINDINGS from the autonomous loop (needs a separate channel + live test)
+- The replicated state is f32 slots 0..20 (STATE_MAX 32). Movement fills 0..20. Slots 21..29 are
+  used by sim_step as LOCAL-ONLY working state (21 = physics body handle read as net_local_state(21),
+  22 = windup, 23 = wallrun flag, 24/25 wall normals, 26..29 slide/knock). They are NOT replicated on
+  purpose: replicating slot 21 would reconcile a client's local handle to the host's -> broken physics.
+- So combat state (hp/shield/cells/oc/names) CANNOT ride free state slots. It needs a SEPARATE metadata
+  channel in aurora-net (alongside the input/state replication). net_is_server() already exists for the
+  host-authority branch; net_player_state(id, slot) now exists to read replicated slots (building block).
+- PLAN (do with a live 2-client test): add a per-player metadata blob channel in aurora-net (snapshot.rs/
+  channel.rs); host owns hp/shield/cells/oc/name, replicates it; clients display remote hp/shield/oc tint
+  + names; host-authoritative damage (apply on host, lag-comp via lagcomp.rs, replicate); bot + crate run
+  on host only. Tried free-slot replication in the loop -> reverted (would clobber the handle).
+
 ## MP / netcode (the big remaining block - needs live 2-client testing)
 - [ ] Host-authoritative combat branch: on the host, apply damage to ALL players + bots and replicate;
       clients only predict feedback (hitmarker/tracer) and reconcile. Uses existing predict.rs + lagcomp.rs.
