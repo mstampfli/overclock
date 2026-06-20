@@ -23,6 +23,6 @@ Cadence: compile + commit + push after each item.
 ### Big
 - [x] Fullscreen + windowed-fullscreen (Settings -> Display cycle, persisted)
 - [ ] Customizable crosshair + a crosshair editor (Valorant-like)
-- [ ] Real scoreboard: per-actor kills on a leaderboard (+ username/account)
+- [x] Real scoreboard (per-actor kills on TAB) + editable, persisted username
 
 > If multiplayer is broken after the join system, that jumps to the top.

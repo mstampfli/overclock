@@ -929,6 +929,24 @@ fn bot_name(i: i64) -> str {
     return "BOT"
 }
 
+// Typed-text helpers for name/address fields: is a char code allowed, and its 1-char string.
+fn is_name_char(c: i64) -> i64 {
+    if c >= 48 and c <= 57 { return 1 }
+    if c >= 65 and c <= 90 { return 1 }
+    if c >= 97 and c <= 122 { return 1 }
+    if c == 46 or c == 45 or c == 95 or c == 32 { return 1 }
+    return 0
+}
+fn code_char(c: i64) -> str {
+    if c >= 48 and c <= 57 { return substr("0123456789", c - 48, 1) }
+    if c >= 65 and c <= 90 { return substr("ABCDEFGHIJKLMNOPQRSTUVWXYZ", c - 65, 1) }
+    if c >= 97 and c <= 122 { return substr("abcdefghijklmnopqrstuvwxyz", c - 97, 1) }
+    if c == 46 { return "." }
+    if c == 45 { return "-" }
+    if c == 95 { return "_" }
+    return " "
+}
+
 // A settings slider bar: neon fill over a dark track. Returns 1 if the cursor is over
 // it (so the caller can let a click set the value directly).
 fn draw_bar(x: i64, y: i64, w: i64, h: i64, frac: f64, mx: i64, my: i64) -> i64 {
@@ -1259,7 +1277,11 @@ fn main() {
     let mut vol = 70           // master volume 0..100
     let mut disp_mode = 0      // display: 0 windowed, 1 borderless fullscreen, 2 exclusive
     let mut disp_applied = 0   // apply the saved display mode once at startup
-    let mut settings = [0.0; 20]
+    let mut lobby_focus = 0    // which lobby text field is being typed into (0 none, 1 name, 2 host)
+    let mut username = ""       // scoreboard name (editable in the lobby, persisted); empty = "Player"
+    let mut uname_len = 0
+    let mut uname_codes = [0; 16]
+    let mut settings = [0.0; 40]
     if load_settings(settings) > 2 {
         sens = settings[0]
         vol = (settings[1]) as i64
@@ -1269,6 +1291,12 @@ fn main() {
         // restore the default so the new action isn't silently bound to a junk key.
         if bind_code[act_melee] < 1.0 { bind_code[act_melee] = 19.0 }
         disp_mode = (settings[18]) as i64
+        uname_len = settings[20] as i64
+        if uname_len > 16 { uname_len = 16 }
+        if uname_len < 0 { uname_len = 0 }
+        username = ""
+        let mut ui = 0
+        while ui < uname_len { uname_codes[ui] = settings[21 + ui] as i64; username = username + code_char(uname_codes[ui]); ui = ui + 1 }
     }
     let mut bi = 0
     while bi < act_n {
@@ -1333,8 +1361,6 @@ fn main() {
     let mut deaths = 0
     let mut akills = [0; 9]     // per-actor kills (scoreboard)
     let mut adeaths = [0; 9]    // per-actor deaths (scoreboard)
-    let mut username = "Player" // your name on the scoreboard (editable in the lobby)
-    let mut uname_len = 6
     let mut kill_target = 15        // lobby-set: kills to win
     let mut round_len = 120.0       // lobby-set: round length (seconds)
     let mut bot_count = 5           // lobby-set: number of active bots (0..bot_n)
@@ -1571,7 +1597,7 @@ fn main() {
             draw_text(cx - tw / 2, cy - 175, "OVERCLOCK", 64, gold)
             let bx = cx - 110
             let bc = cx   // button centre x (buttons are centred on cx, width 220)
-            if menu_btn(bx, cy - 30, 220, 48, mx, my) == 1 { if clicked == 1 { screen = s_lobby } }
+            if menu_btn(bx, cy - 30, 220, 48, mx, my) == 1 { if clicked == 1 { screen = s_lobby; lobby_focus = 0 } }
             draw_text(bc - text_width("PLAY", 28) / 2, cy - 30 + 8, "PLAY", 28, wht)
             if menu_btn(bx, cy + 34, 220, 48, mx, my) == 1 { if clicked == 1 { set_back = s_title; screen = s_settings } }
             draw_text(bc - text_width("SETTINGS", 28) / 2, cy + 34 + 8, "SETTINGS", 28, wht)
@@ -1596,6 +1622,24 @@ fn main() {
             // ---- LOBBY / MATCH SETUP: pick the match settings + network mode, then START ----
             draw_text(cx - text_width("MATCH SETUP", 44) / 2, 36, "MATCH SETUP", 44, gold)
             let cl = cx - 230
+            // Route typed characters to whichever text field is focused (name = 1, host = 2).
+            let mut tc = input_char()
+            while tc != 0 {
+                if lobby_focus == 1 {
+                    if tc == 8 { if uname_len > 0 { uname_len = uname_len - 1; username = substr(username, 0, uname_len) } } else { if is_name_char(tc) == 1 and uname_len < 16 { uname_codes[uname_len] = tc; uname_len = uname_len + 1; username = username + code_char(tc) } }
+                } else { if lobby_focus == 2 {
+                    if tc == 8 { if addr_len > 0 { addr_len = addr_len - 1; join_addr = substr(join_addr, 0, addr_len) } } else { if is_name_char(tc) == 1 and addr_len < 40 { join_addr = join_addr + code_char(tc); addr_len = addr_len + 1 } }
+                } }
+                tc = input_char()
+            }
+            // Name field (click to edit; empty shows as PLAYER on the scoreboard).
+            draw_text(cl, 78, "Name", 24, wht)
+            let mut ncol = gold
+            if lobby_focus == 1 { ncol = 255 * 65536 + 120 * 256 + 120 }
+            if menu_btn(cl + 110, 74, 300, 30, mx, my) == 1 { if clicked == 1 { lobby_focus = 1 } }
+            let mut nshow = username
+            if uname_len == 0 { nshow = "PLAYER" }
+            draw_text(cl + 120, 80, nshow, 22, ncol)
             draw_text(cl, 116, "Bots", 24, wht)
             if menu_btn(cl + 210, 112, 32, 32, mx, my) == 1 { if clicked == 1 { bot_count = bot_count - 1; if bot_count < 0 { bot_count = 0 } } }
             draw_text(cl + 222, 117, "-", 24, wht)
@@ -1628,27 +1672,13 @@ fn main() {
             if menu_btn(cl + 320, 276, 78, 34, mx, my) == 1 { if clicked == 1 { net_mode = 2 } }
             draw_text(cl + 340, 282, "JOIN", 20, mc2)
             if net_mode == 2 {
-                // Host-address text field: type an IP or a hostname (e.g. overclock.mstampfli.com).
-                // Drain the typed-char queue and edit join_addr (Backspace = code 8).
-                let mut tc = input_char()
-                while tc != 0 {
-                    if tc == 8 {
-                        if addr_len > 0 { join_addr = substr(join_addr, 0, addr_len - 1); addr_len = addr_len - 1 }
-                    } else {
-                        let mut ch = "?"
-                        let mut got = 0
-                        if tc >= 48 and tc <= 57 { ch = substr("0123456789", tc - 48, 1); got = 1 } else {
-                        if tc >= 97 and tc <= 122 { ch = substr("abcdefghijklmnopqrstuvwxyz", tc - 97, 1); got = 1 } else {
-                        if tc >= 65 and tc <= 90 { ch = substr("ABCDEFGHIJKLMNOPQRSTUVWXYZ", tc - 65, 1); got = 1 } else {
-                        if tc == 46 { ch = "."; got = 1 } else {
-                        if tc == 45 { ch = "-"; got = 1 } } } } }
-                        if got == 1 { join_addr = join_addr + ch; addr_len = addr_len + 1 }
-                    }
-                    tc = input_char()
-                }
-                draw_text(cl, 340, "Host:", 22, wht)
-                draw_text(cl + 86, 340, join_addr, 22, gold)
-                draw_text(cl, 372, "(type an IP or hostname like overclock.mstampfli.com)", 14, wht)
+                // Host-address text field (click to edit) - type an IP or a hostname.
+                draw_text(cl, 340, "Host", 22, wht)
+                let mut hcol = gold
+                if lobby_focus == 2 { hcol = 255 * 65536 + 120 * 256 + 120 }
+                if menu_btn(cl + 86, 334, 330, 28, mx, my) == 1 { if clicked == 1 { lobby_focus = 2 } }
+                draw_text(cl + 94, 340, join_addr, 22, hcol)
+                draw_text(cl, 372, "(IP or hostname, e.g. overclock.mstampfli.com)", 14, wht)
             }
             if net_started { draw_text(cx - 150, fbh - 150, "connected (settings reapply on start)", 16, wht) }
             if menu_btn(cx - 90, fbh - 72, 180, 46, mx, my) == 1 {
@@ -1666,6 +1696,11 @@ fn main() {
                         net_spawn_at(0.0, 0.9, 45.0)
                         net_started = true
                     }
+                    // Persist the username (length + char codes) into the settings file.
+                    settings[20] = uname_len as f64
+                    let mut us = 0
+                    while us < uname_len { settings[21 + us] = uname_codes[us] as f64; us = us + 1 }
+                    save_settings(settings)
                     do_reset = true
                     screen = s_game
                 }
@@ -3664,7 +3699,7 @@ fn main() {
                 let s = order[row]
                 let ry = ly + 54 + row * 32
                 let mut nm = bot_name(s)
-                if s == pl_i { nm = username } else { if s > pl_i { nm = "GUEST" } }
+                if s == pl_i { if uname_len > 0 { nm = username } else { nm = "PLAYER" } } else { if s > pl_i { nm = "GUEST" } }
                 let mut rc = col_white
                 if s == pl_i { rc = col_gold }
                 draw_text(lx + 20, ry, nm, 22, rc)
