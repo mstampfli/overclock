@@ -850,6 +850,16 @@ struct Brain {
     face: f64        // yaw the body should face (set toward its aim target; for the model draw)
 }
 
+// Draw `text` centred BOTH horizontally and vertically inside the box (bx,by,bw,bh).
+// One helper for every label / field / button so centring is consistent everywhere.
+// The vertical term backs off the baseline a touch (px/8) so glyphs sit optically
+// centred rather than slightly low. (text_width now works for runtime strings too.)
+fn draw_centered(text: str, bx: i64, by: i64, bw: i64, bh: i64, px: i64, color: i64) {
+    let tx = bx + (bw - text_width(text, px)) / 2
+    let ty = by + (bh - px) / 2 - px / 8
+    draw_text(tx, ty, text, px, color)
+}
+
 fn menu_btn(x: i64, y: i64, w: i64, h: i64, mx: i64, my: i64) -> i64 {
     let mut hov = 0
     if mx >= x and mx <= x + w and my >= y and my <= y + h { hov = 1 }
@@ -1609,11 +1619,11 @@ fn main() {
             let bx = cx - 110
             let bc = cx   // button centre x (buttons are centred on cx, width 220)
             if menu_btn(bx, cy - 30, 220, 48, mx, my) == 1 { if clicked == 1 { screen = s_lobby; lobby_focus = 0 } }
-            draw_text(bc - text_width("PLAY", 28) / 2, cy - 30 + 8, "PLAY", 28, wht)
+            draw_centered("PLAY", bx, cy - 30, 220, 48, 28, wht)
             if menu_btn(bx, cy + 34, 220, 48, mx, my) == 1 { if clicked == 1 { set_back = s_title; screen = s_settings } }
-            draw_text(bc - text_width("SETTINGS", 28) / 2, cy + 34 + 8, "SETTINGS", 28, wht)
+            draw_centered("SETTINGS", bx, cy + 34, 220, 48, 28, wht)
             if menu_btn(bx, cy + 98, 220, 48, mx, my) == 1 { if clicked == 1 { screen = s_quit } }
-            draw_text(bc - text_width("QUIT", 28) / 2, cy + 98 + 8, "QUIT", 28, wht)
+            draw_centered("QUIT", bx, cy + 98, 220, 48, 28, wht)
         } else { if screen == s_pause {
             // ---- PAUSE (Escape during play): resume / settings / quit to title ----
             draw_text(cx - text_width("PAUSED", 56) / 2, cy - 175, "PAUSED", 56, gold)
@@ -1650,7 +1660,7 @@ fn main() {
             if menu_btn(cl + 110, 74, 300, 30, mx, my) == 1 { if clicked == 1 { lobby_focus = 1 } }
             let mut nshow = username
             if uname_len == 0 { nshow = "PLAYER" }
-            draw_text(cl + 120, 80, nshow, 22, ncol)
+            draw_centered(nshow, cl + 110, 74, 300, 30, 22, ncol)
             draw_text(cl, 116, "Bots", 24, wht)
             if menu_btn(cl + 210, 112, 32, 32, mx, my) == 1 { if clicked == 1 { bot_count = bot_count - 1; if bot_count < 0 { bot_count = 0 } } }
             draw_text(cl + 222, 117, "-", 24, wht)
@@ -1688,7 +1698,7 @@ fn main() {
                 let mut hcol = gold
                 if lobby_focus == 2 { hcol = 255 * 65536 + 120 * 256 + 120 }
                 if menu_btn(cl + 86, 334, 330, 28, mx, my) == 1 { if clicked == 1 { lobby_focus = 2 } }
-                draw_text(cl + 94, 340, join_addr, 22, hcol)
+                draw_centered(join_addr, cl + 86, 334, 330, 28, 22, hcol)
                 draw_text(cl, 372, "(IP or hostname, e.g. overclock.mstampfli.com)", 14, wht)
             }
             if net_started { draw_text(cx - text_width("connected (settings reapply on start)", 16) / 2, fbh - 150, "connected (settings reapply on start)", 16, wht) }
@@ -3912,9 +3922,9 @@ fn main() {
                     if net_mode == 0 { draw_text(cx - text_width("practice - sim frozen", 16) / 2, ply + 74, "practice - sim frozen", 16, col_white) }
                     if net_mode != 0 { draw_text(cx - text_width("online - match still live", 16) / 2, ply + 74, "online - match still live", 16, col_white) }
                     if menu_btn(cx - 110, ply + 110, 220, 44, pmx, pmy) == 1 { if pclick == 1 { paused = false; grab_mouse(1); input_suppress(0); r3d_blur(0.0); was_paused = false } }
-                    draw_text(cx - text_width("RESUME", 24) / 2, ply + 120, "RESUME", 24, col_white)
+                    draw_centered("RESUME", cx - 110, ply + 110, 220, 44, 24, col_white)
                     if menu_btn(cx - 110, ply + 168, 220, 44, pmx, pmy) == 1 { if pclick == 1 { input_suppress(0); r3d_blur(0.0); screen = s_title } }
-                    draw_text(cx - text_width("QUIT TO TITLE", 24) / 2, ply + 178, "QUIT TO TITLE", 24, col_white)
+                    draw_centered("QUIT TO TITLE", cx - 110, ply + 168, 220, 44, 24, col_white)
                 }
                 if screen != s_game { break }
             }
