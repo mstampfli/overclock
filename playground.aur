@@ -3403,6 +3403,56 @@ fn main() {
             r3d_draw(exmesh[exd], exx[exd], exy[exd], exz[exd], 0.0, exrx[exd], exrz[exd], 1.0)
             exd = exd + 1
         }
+        // Crate <-> actor knockback: a FLYING crate (e.g. blast-flung) shoves anyone it
+        // hits (you get knocked around a bit), and an actor walking into a crate pushes it.
+        let mut cki = 0
+        while cki < crate_n {
+            let chh3 = crates[cki] as i64
+            let ccx = phys3d_x(chh3)
+            let ccy = phys3d_y(chh3)
+            let ccz = phys3d_z(chh3)
+            let cvx = phys3d_vel_x(chh3)
+            let cvz = phys3d_vel_z(chh3)
+            let cspd = sqrt(cvx * cvx + cvz * cvz)
+            let mut cai = 0
+            while cai < bot_n + 1 {
+                if actors[cai].hp > 0.0 {
+                    let apx = phys3d_x(actors[cai].hdl as i64)
+                    let apz = phys3d_z(actors[cai].hdl as i64)
+                    let ddx = apx - ccx
+                    let ddz = apz - ccz
+                    let dd = sqrt(ddx * ddx + ddz * ddz)
+                    if dd < 1.5 and dd > 0.01 {
+                        // Flying crate -> knock the actor along the crate's travel (capped, gentle).
+                        if cspd > 3.5 {
+                            let mut kf = cspd * 0.4
+                            if kf > 8.0 { kf = 8.0 }
+                            if cai == pl_i {
+                                if dead == false {
+                                    blast_ix = blast_ix + cvx / cspd * kf
+                                    blast_iz = blast_iz + cvz / cspd * kf
+                                    blast_iy = blast_iy + 2.5
+                                }
+                            } else {
+                                brains[cai].kx = brains[cai].kx + cvx / cspd * kf
+                                brains[cai].kz = brains[cai].kz + cvz / cspd * kf
+                                brains[cai].ky = brains[cai].ky + 1.8
+                            }
+                        }
+                        // Actor -> shove the crate away (scaled by the player's own speed).
+                        let mut pushf = 4.0
+                        if cai == pl_i {
+                            let pvx = net_local_state(4)
+                            let pvz = net_local_state(6)
+                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.6 + 2.0
+                        }
+                        phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 1.5, 0.0 - ddz / dd * pushf)
+                    }
+                }
+                cai = cai + 1
+            }
+            cki = cki + 1
+        }
         // Loose crates at their live (blast-flung) physics positions.
         let mut cd2 = 0
         while cd2 < crate_n {
