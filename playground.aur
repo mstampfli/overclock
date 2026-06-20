@@ -1186,7 +1186,7 @@ fn main() {
     let vm_rifle = r3d_load_model("models/rifle.glb")
     let vm_launcher = r3d_load_model("models/launcher.glb")
     let vm_katana = r3d_load_model("models/katana.glb")
-    let rifle_scale = 0.12      // mesh is ~5.2 units long -> ~0.62m
+    let rifle_scale = 0.18      // 1.5x bigger (was 0.12) per eye-tune
     let lnch_scale = 0.33       // mesh is ~1.8 units long
     let kat_scale = 0.12        // mesh is ~7.6 units tall
     let gun_yaw = 0.0 - 1.5708  // +X barrel -> forward
@@ -1203,12 +1203,13 @@ fn main() {
     // eye, so these are LIVE-TUNABLE in-game: hold T and use arrows (pitch/yaw) + O/U (roll) +
     // I/K (forward-back) + J/L (left-right) + Y/H (up-down). The values are drawn on-screen; once
     // it seats right, tell me the numbers and I bake them in as the defaults below.
-    let mut hand_ox = 0.0
-    let mut hand_oy = 0.0
+    // Eye-tuned in-game via tune mode (T): the weapon now seats correctly in the hand.
+    let mut hand_ox = 0.0 - 0.04
+    let mut hand_oy = 0.07
     let mut hand_oz = 0.0
-    let mut hand_oyaw = 0.0 - 1.5708
-    let mut hand_opitch = 0.0 - 1.5708
-    let mut hand_oroll = 0.0
+    let mut hand_oyaw = 0.0 - 1.57
+    let mut hand_opitch = 2.98
+    let mut hand_oroll = 0.0 - 1.82
     // TUNE MODE (toggle with T, practice only): freezes + pacifies + makes bots immortal so they
     // stand as static dummies holding the weapon (can't kill you), and enables the weapon tuner.
     // TEMPORARY debug aid - remove once the weapon offset is dialled in.
