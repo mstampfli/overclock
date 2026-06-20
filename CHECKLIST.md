@@ -33,7 +33,16 @@ Cadence: compile + commit + push after each item.
 - [x] Lobby title no longer overlaps the Name field
 - [x] Kill feed (top-right, "KILLER > VICTIM")
 - [x] Confirmed: rollback + server authority already in the netcode
+
+## Round 3 (feedback)
+- [x] Tint via additive OFFSET (was multiply -> enemies went black); blue shield / red OC keep brightness
+- [x] Bots spawn/respawn with NO shield (must find cells + pop their own)
+- [x] Center YOU DIED, OVERCLOCKED, OVERCLOCK[F], connected label
+- [x] Kill feed: killer/victim no longer overlap; entries pack up as they fade
+- [x] Escape backs out of settings (one level) and lobby (to title); pause Escape only resumes
+- [x] Pause: blurred live scene behind an in-loop overlay (engine r3d_blur shader)
+- [x] Pause freezes ONLY in practice (dt=0 + input_suppress); online stays live/synced
+- [ ] Electric/Fresnel rim shield shader (do LAST, per request)
 - [ ] Sync names + shield/OC state to remote players (no metadata channel yet)
 - [ ] Menu reorg + submenus (settings is cramped)
-- [ ] Center text everywhere (proper pass)
 - [ ] Crosshair editor · weapon bone-attach · portable build (font)
