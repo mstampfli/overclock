@@ -2380,45 +2380,104 @@ fn main() {
                 sh = sh + 1
             }
             net_server_hits_clear()
-            // ...and each client's EXPLOSION (rocket/grenade): apply authoritative radial damage
-            // to our bots, same falloff as a local blast, crediting the shooter. The client
-            // predicted its own blast visuals + knockback; the host owns the bot hp.
-            let nse = net_server_explosion_count()
-            let mut se = 0
-            while se < nse {
-                let exx = net_server_explosion_x(se)
-                let exy = net_server_explosion_y(se)
-                let exz = net_server_explosion_z(se)
-                let gi = net_server_explosion_intensity(se)
-                let espid = net_server_explosion_shooter(se)
-                let mut esai = 0 - 1
-                let mut era = bot_n + 1
-                while era < nactors { if apid[era] == espid { esai = era } era = era + 1 }
-                let erad = nade_radius * gi
-                let mut eej = 0
-                while eej < bot_n {
-                    if actors[eej].hp > 0.0 {
-                        let eghh = actors[eej].hdl as i64
-                        let ebdx = phys3d_x(eghh) - exx
-                        let ebdy = (phys3d_y(eghh) + 0.5) - exy
-                        let ebdz = phys3d_z(eghh) - exz
-                        let ebdd = sqrt(ebdx * ebdx + ebdy * ebdy + ebdz * ebdz)
-                        if ebdd < erad {
-                            let mut eedmg = nade_dmg * gi * (1.0 - 0.30 * ebdd / erad)
-                            if actors[eej].sh > 0.0 {
-                                if actors[eej].sh >= eedmg { actors[eej].sh = actors[eej].sh - eedmg; eedmg = 0.0 }
-                                else { eedmg = eedmg - actors[eej].sh; actors[eej].sh = 0.0 }
+            // ...and each client's PROJECTILE LAUNCH (rocket/grenade INTENT). The host SIMULATES
+            // the flight in its OWN world to decide WHERE it detonates (a rocket by raycast, a
+            // grenade by re-running the arc) and applies the weapon's FIXED intensity - never a
+            // client-claimed point or strength, so a cheat can't blow up arbitrary places. Then
+            // it applies authoritative radial damage to our bots, crediting the shooter. The
+            // guest still flew + detonated its own copy locally as prediction.
+            let nsp = net_server_projectile_count()
+            let mut spi = 0
+            while spi < nsp {
+                let pkind = net_server_projectile_kind(spi)
+                let pox = net_server_projectile_ox(spi)
+                let poy = net_server_projectile_oy(spi)
+                let poz = net_server_projectile_oz(spi)
+                let pvx = net_server_projectile_vx(spi)
+                let pvy = net_server_projectile_vy(spi)
+                let pvz = net_server_projectile_vz(spi)
+                let pspid = net_server_projectile_shooter(spi)
+                let mut psai = 0 - 1
+                let mut pra = bot_n + 1
+                while pra < nactors { if apid[pra] == pspid { psai = pra } pra = pra + 1 }
+                if psai >= 0 {
+                    let pexcl = actors[psai].hdl as i64
+                    let mut det = 0
+                    let mut dx = pox
+                    let mut dy = poy
+                    let mut dz = poz
+                    let mut pgi = rocket_intensity
+                    if pkind == 0 {
+                        // ROCKET: raycast straight from the launch origin along the aim direction.
+                        let pvl = sqrt(pvx * pvx + pvy * pvy + pvz * pvz)
+                        if pvl > 0.001 {
+                            let phb = phys3d_raycast_ex(pexcl, pox, poy, poz, pvx / pvl, pvy / pvl, pvz / pvl, 120.0)
+                            if phb >= 0 { dx = phys3d_hit_x(); dy = phys3d_hit_y(); dz = phys3d_hit_z(); det = 1 }
+                        }
+                    } else {
+                        // GRENADE: re-simulate the arc (gravity + bounce + fuse) to its detonation.
+                        let mut gx = pox
+                        let mut gy = poy
+                        let mut gz = poz
+                        let mut gvx = pvx
+                        let mut gvy = pvy
+                        let mut gvz = pvz
+                        let mut gfu = nade_fuse
+                        while gfu > 0.0 {
+                            gfu = gfu - 0.016
+                            gvy = gvy - nade_grav * 0.016
+                            let gsp = sqrt(gvx * gvx + gvy * gvy + gvz * gvz)
+                            if gsp > 0.001 {
+                                let ghb = phys3d_raycast_ex(pexcl, gx, gy, gz, gvx / gsp, gvy / gsp, gvz / gsp, gsp * 0.016 + 0.08)
+                                if ghb >= 0 {
+                                    let gnx = phys3d_hit_nx()
+                                    let gny = phys3d_hit_ny()
+                                    let gnz = phys3d_hit_nz()
+                                    gx = phys3d_hit_x() + gnx * 0.06
+                                    gy = phys3d_hit_y() + gny * 0.06
+                                    gz = phys3d_hit_z() + gnz * 0.06
+                                    let gvd = gvx * gnx + gvy * gny + gvz * gnz
+                                    gvx = (gvx - 2.0 * gvd * gnx) * 0.45
+                                    gvy = (gvy - 2.0 * gvd * gny) * 0.45
+                                    gvz = (gvz - 2.0 * gvd * gnz) * 0.45
+                                } else {
+                                    gx = gx + gvx * 0.016
+                                    gy = gy + gvy * 0.016
+                                    gz = gz + gvz * 0.016
+                                }
                             }
-                            actors[eej].hp = actors[eej].hp - eedmg
-                            brains[eej].pop = 0.15
-                            if esai >= 0 { last_hit[eej] = esai; kr_oc[eej] = 0.0; kr_mark[eej] = 0.0 }
+                        }
+                        dx = gx; dy = gy; dz = gz; det = 1
+                        pgi = nade_intensity
+                    }
+                    if det == 1 {
+                        let erad = nade_radius * pgi
+                        let mut eej = 0
+                        while eej < bot_n {
+                            if actors[eej].hp > 0.0 {
+                                let eghh = actors[eej].hdl as i64
+                                let ebdx = phys3d_x(eghh) - dx
+                                let ebdy = (phys3d_y(eghh) + 0.5) - dy
+                                let ebdz = phys3d_z(eghh) - dz
+                                let ebdd = sqrt(ebdx * ebdx + ebdy * ebdy + ebdz * ebdz)
+                                if ebdd < erad {
+                                    let mut eedmg = nade_dmg * pgi * (1.0 - 0.30 * ebdd / erad)
+                                    if actors[eej].sh > 0.0 {
+                                        if actors[eej].sh >= eedmg { actors[eej].sh = actors[eej].sh - eedmg; eedmg = 0.0 }
+                                        else { eedmg = eedmg - actors[eej].sh; actors[eej].sh = 0.0 }
+                                    }
+                                    actors[eej].hp = actors[eej].hp - eedmg
+                                    brains[eej].pop = 0.15
+                                    last_hit[eej] = psai; kr_oc[eej] = 0.0; kr_mark[eej] = 0.0
+                                }
+                            }
+                            eej = eej + 1
                         }
                     }
-                    eej = eej + 1
                 }
-                se = se + 1
+                spi = spi + 1
             }
-            net_server_explosions_clear()
+            net_server_projectiles_clear()
         }
         // Bounced by a full lobby: drop back to the menu with a clear message.
         if net_rejected() > 0 {
@@ -2665,6 +2724,10 @@ fn main() {
             nade_live = true
             nade_cd = nade_cooldown
             play_sound(0 - 14, 90, 0)   // soft throw pop
+            // GUEST: send the LAUNCH INTENT (origin + throw velocity). The host re-simulates the
+            // arc itself to decide where it detonates - we never tell it the result. We still fly
+            // + detonate our own copy locally as prediction.
+            if net_mode == 2 { net_projectile_intent(1, grx, gry, grz, grvx, grvy, grvz) }
         }
         nade_prev = nkey
 
@@ -2755,9 +2818,9 @@ fn main() {
             let gi = ex_int
             let rad = nade_radius * gi    // damage radius
             let krad = nade_kb_radius * gi  // knockback reach
-            // GUEST: tell the host about MY blast so IT applies authoritative damage to its bots.
-            // My local radial damage below is prediction (overwritten by replicated bot hp).
-            if net_mode == 2 and ex_src < 0.5 { net_explosion(ex_x, ex_y, ex_z, gi) }
+            // (Host authority for a guest's blast is driven by the LAUNCH intent sent at fire/
+            // throw time - NOT by reporting this predicted result. The radial damage below is
+            // pure local PREDICTION on a guest, corrected by the host's replicated bot hp.)
             boom_t = 0.6
             boom_int = gi
             boomx = ex_x
@@ -3380,6 +3443,10 @@ fn main() {
                         let mut lg = 45
                         if mine == 1 { lg = 55 }
                         play_sound_at(0 - 8, 70, lg, ox, oy, oz)
+                        // GUEST: send the rocket LAUNCH INTENT (origin + aim direction). The host
+                        // raycasts it itself to decide the impact - we never claim the result. Our
+                        // own travel-time rocket below is local prediction.
+                        if mine == 1 and net_mode == 2 { net_projectile_intent(0, ox, oy, oz, ax, ay, az) }
                     }
                     actors[ci].fcd = fire_w[wp]
                     if mine == 1 and oc_active { actors[ci].fcd = actors[ci].fcd * 0.55 }
