@@ -61,6 +61,8 @@ Cadence: compile + commit + push after each item.
       host-owned so remotes interact with them properly.
 - [ ] Bot/entity authority: bots run on the HOST only and replicate to clients as remotes (today they may
       run locally on every client = desync). Part of the same host-authority pass.
+- [ ] Crate (physics) authority: crates simulated on the HOST and replicated; today they're local per
+      client (cosmetic), so remote crate interaction was reverted until this lands.
 
 ## Visual / polish (do LAST, per request)
 - [ ] Electric/Fresnel rim shield shader (LAST)

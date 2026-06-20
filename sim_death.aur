@@ -1,0 +1,89 @@
+// Headless verification of the UNIFIED death sweep's bookkeeping (no physics/audio):
+// every damage path just records last_hit[victim] (+ player-kill reward context), then ONE
+// sweep does deaths/credit/drops. Checks: player credit, bot-vs-bot credit, EXPLOSIVE kills
+// now scoring (the old bug), suicide = no self-credit, drop counts, un-popped cells lost.
+
+fn main() {
+    let pl_i = 5
+    let bot_count = 5
+
+    let mut hp = [100.0; 9]
+    let mut cells = [0; 9]
+    let mut last_hit = [0; 9]
+    let mut death_done = [0; 9]
+    let mut kr_oc = [0.0; 9]
+    let mut kr_mark = [0.0; 9]
+    let mut akills = [0; 9]
+    let mut adeaths = [0; 9]
+    let mut kills = 0
+    let mut kf = 0          // kill-feed entries emitted
+    let mut drops = 0       // drop pickups spawned
+    let mut oc_meter = 0.0
+    let mut deaths = 0
+    let mut dead = 0
+
+    // reset sentinels (as the game does on (re)spawn / reset)
+    let mut r = 0
+    while r < 9 { last_hit[r] = 0 - 1; r = r + 1 }
+
+    // --- stage damage outcomes (what the per-weapon sites would have recorded) ---
+    // bot 0 killed by the PLAYER's rifle while airborne (oc 20), had 2 cells
+    hp[0] = 0.0; last_hit[0] = pl_i; kr_oc[0] = 20.0; kr_mark[0] = 0.35; cells[0] = 2
+    // bot 1 killed by BOT 2 (bot-vs-bot), no cells
+    hp[1] = 0.0; last_hit[1] = 2
+    // bot 3 killed by the PLAYER's ROCKET (explosive) - used to NOT score at all
+    hp[3] = 0.0; last_hit[3] = pl_i; kr_oc[3] = 16.0; kr_mark[3] = 0.35
+    // player SUICIDES with their own rocket (last_hit == self) - death, no self-credit
+    hp[pl_i] = 0.0; last_hit[pl_i] = pl_i; cells[pl_i] = 1
+
+    // ===== the sweep (lifted verbatim minus phys3d/play_sound) =====
+    let mut dv = 0
+    while dv < bot_count + 1 {
+        if hp[dv] <= 0.0 and death_done[dv] == 0 and (dv == pl_i or dv < bot_count) {
+            death_done[dv] = 1
+            adeaths[dv] = adeaths[dv] + 1
+            let kk = last_hit[dv]
+            if dv == pl_i {
+                if cells[dv] > 0 { drops = drops + 1 }       // player drops a shield if held
+            } else {
+                drops = drops + 2                            // bot: health + ammo
+                if cells[dv] > 0 { drops = drops + 1 }       // + shield if held
+            }
+            cells[dv] = 0
+            if dv == pl_i { dead = 1; deaths = deaths + 1 }
+            if kk >= 0 and kk != dv {
+                akills[kk] = akills[kk] + 1
+                kf = kf + 1
+                if kk == pl_i {
+                    kills = kills + 1
+                    oc_meter = oc_meter + kr_oc[dv]
+                }
+            }
+            dv = dv + 1
+        } else {
+            dv = dv + 1
+        }
+    }
+
+    println("player akills (expect 2: bot0 rifle + bot3 rocket): ")
+    println(str(akills[pl_i]))
+    println("player round kills (expect 2): ")
+    println(str(kills))
+    println("bot2 akills (expect 1: killed bot1): ")
+    println(str(akills[2]))
+    println("oc_meter (expect 36 = 20 + 16): ")
+    println(str(oc_meter as i64))
+    println("kill-feed entries (expect 3: suicide credited to nobody): ")
+    println(str(kf))
+    println("deaths total (player suicide, expect 1): ")
+    println(str(deaths))
+    println("adeaths bot0/bot1/bot3/player (expect 1 each): ")
+    println(str(adeaths[0]))
+    println(str(adeaths[1]))
+    println(str(adeaths[3]))
+    println(str(adeaths[pl_i]))
+    println("drops (bot0 2+1, bot1 2, bot3 2, player 1 = 8): ")
+    println(str(drops))
+    println("player cells after death (expect 0): ")
+    println(str(cells[pl_i]))
+}

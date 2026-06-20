@@ -1440,6 +1440,12 @@ fn main() {
     let mut deaths = 0
     let mut akills = [0; 9]     // per-actor kills (scoreboard)
     let mut adeaths = [0; 9]    // per-actor deaths (scoreboard)
+    // Unified death handling: every damage path records who last hit each actor + the
+    // killer-reward context; one per-frame sweep then runs ALL death consequences once.
+    let mut last_hit = [0; 9]    // killer of this actor's current life (-1 = none/environment)
+    let mut death_done = [0; 9]  // 1 once a death's consequences ran (reset on respawn)
+    let mut kr_oc = [0.0; 9]     // OC meter gain to grant IF the killer is the player
+    let mut kr_mark = [0.0; 9]   // killmark value for a player kill (weapon-specific)
     let mut kf_killer = [0; 6]  // kill feed ring: killer slot
     let mut kf_victim = [0; 6]  // victim slot
     let mut kf_time = [0.0; 6]  // seconds left to show
@@ -2060,6 +2066,8 @@ fn main() {
                 rp = 0
                 while rp < 6 { kf_time[rp] = 0.0; rp = rp + 1 }   // clear the kill feed on a fresh game
                 kf_cur = 0
+                rp = 0
+                while rp < 9 { death_done[rp] = 0; last_hit[rp] = 0 - 1; rp = rp + 1 }   // re-arm death sweep
                 let mut rb = 0
                 while rb < bot_n {
                     actors[rb].hp = enemy_hp_max
@@ -2331,28 +2339,11 @@ fn main() {
                         brains[mvk].kx = fx * 14.0
                         brains[mvk].ky = 6.0
                         brains[mvk].kz = fz * 14.0
-                        if actors[mvk].hp <= 0.0 {
-                            actors[mvk].hp = 0.0
-                            if round_over == false { akills[pl_i] = akills[pl_i] + 1 }   // scoreboard: player melee
-                            adeaths[mvk] = adeaths[mvk] + 1
-                            kf_killer[kf_cur] = pl_i; kf_victim[kf_cur] = mvk; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
-                            brains[mvk].resp = enemy_respawn
-                            dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64); dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                            dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64) - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                            if actors[mvk].cells > 0 {
-                                dropx[dropcur] = phys3d_x(actors[mvk].hdl as i64) + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[mvk].hdl as i64); droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                            }
-                            actors[mvk].cells = 0   // un-popped reserve shields are lost on death
-                            killmark = 0.4
-                            if round_over == false { kills = kills + 1 }
-                            if oc_active { oc_timer = oc_timer + 2.5 } else {
-                                oc_meter = oc_meter + 22.0
-                                if oc_meter > 100.0 { oc_meter = 100.0 }
-                                oc_gain_t = 0.0
-                            }
-                            play_sound(12, 110, 0)
-                            play_sound(7, 110, 0)
-                        }
+                        // Record the killer + the player-kill reward context; the unified
+                        // per-frame death sweep runs ALL the death consequences once.
+                        last_hit[mvk] = pl_i
+                        kr_oc[mvk] = 22.0
+                        kr_mark[mvk] = 0.4
                     }
                 }
                 mvk = mvk + 1
@@ -2535,48 +2526,16 @@ fn main() {
                         }
                         actors[ej].hp = actors[ej].hp - edmg
                         brains[ej].pop = 0.15
-                        if actors[ej].hp <= 0.0 {
-                            actors[ej].hp = 0.0
-                            brains[ej].resp = enemy_respawn
-                            dropx[dropcur] = phys3d_x(actors[ej].hdl as i64)
-                            dropy[dropcur] = 0.6
-                            dropz[dropcur] = phys3d_z(actors[ej].hdl as i64)
-                            droptype[dropcur] = 0.0
-                            droplife[dropcur] = drop_life
-                            dropcur = dropcur + 1
-                            if dropcur >= drop_n { dropcur = 0 }
-                            dropx[dropcur] = phys3d_x(actors[ej].hdl as i64) - 0.6
-                            dropy[dropcur] = 0.6
-                            dropz[dropcur] = phys3d_z(actors[ej].hdl as i64)
-                            droptype[dropcur] = 2.0
-                            droplife[dropcur] = drop_life
-                            dropcur = dropcur + 1
-                            if dropcur >= drop_n { dropcur = 0 }
-                            if actors[ej].cells > 0 {
-                                dropx[dropcur] = phys3d_x(actors[ej].hdl as i64) + 0.6
-                                dropy[dropcur] = 0.6
-                                dropz[dropcur] = phys3d_z(actors[ej].hdl as i64)
-                                droptype[dropcur] = 1.0
-                                droplife[dropcur] = drop_life
-                                dropcur = dropcur + 1
-                                if dropcur >= drop_n { dropcur = 0 }
-                            }
-                            actors[ej].cells = 0   // un-popped reserve shields are lost on death
-                            // Only credit the PLAYER (score, Overclock, kill marker) when
-                            // the player caused the blast - not a bot's rocket.
-                            if ex_src < 0.5 {
-                                killmark = 0.35
-                                if round_over == false { kills = kills + 1 }
-                                if oc_active {
-                                    oc_timer = oc_timer + 2.5
-                                } else {
-                                    oc_meter = oc_meter + 16.0
-                                    if oc_meter > 100.0 { oc_meter = 100.0 }
-                                    oc_gain_t = 0.0
-                                }
-                                play_sound(12, 110, 0)
-                                play_sound(7, 110, 0)
-                            }
+                        // Record the killer for the unified death sweep. ex_src<0.5 = the
+                        // player's blast (credits score/OC/kill-feed - explosive kills now
+                        // count, which they didn't before); a bot's rocket has no tracked
+                        // owner, so the kill is uncredited (-1) but the death still counts.
+                        if ex_src < 0.5 {
+                            last_hit[ej] = pl_i
+                            kr_oc[ej] = 16.0
+                            kr_mark[ej] = 0.35
+                        } else {
+                            last_hit[ej] = 0 - 1
                         }
                     }
                     if bdd < krad and bdd > 0.01 {
@@ -2616,17 +2575,9 @@ fn main() {
                 actors[5].hp = actors[5].hp - sd
                 dmg_timer = 0.0
                 hurt_flash = 0.6
-                if actors[5].hp <= 0.0 {
-                    dead = true
-                    respawn_cd = 3.0
-                    deaths = deaths + 1
-                    adeaths[pl_i] = adeaths[pl_i] + 1
-                    play_sound(0 - 26, 260, 0)
-                    if actors[pl_i].cells > 0 {
-                        dropx[dropcur] = phys3d_x(actors[pl_i].hdl as i64) + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[pl_i].hdl as i64); droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                    }
-                    actors[pl_i].cells = 0   // lose un-popped reserve shields on death
-                }
+                // Killer attribution for the unified death sweep: a bot's rocket
+                // (ex_src>=0.5) is an uncredited death; your own rocket is a suicide.
+                if ex_src < 0.5 { last_hit[pl_i] = pl_i } else { last_hit[pl_i] = 0 - 1 }
             }
             if pbd < krad and pbd > 0.01 and dead == false {
                 let pf = player_kb * gi * (1.0 - pbd / krad)
@@ -2870,6 +2821,7 @@ fn main() {
                 brains[ei2].resp = brains[ei2].resp - dt
                 if brains[ei2].resp <= 0.0 and ei2 < bot_count {
                     actors[ei2].hp = enemy_hp_max
+                    death_done[ei2] = 0; last_hit[ei2] = 0 - 1   // re-arm the death sweep
                     actors[ei2].sh = 0.0   // respawn with no shield: must find + pop cells again
                     actors[ei2].mag[0] = mag_size_w[0]; actors[ei2].mag[1] = mag_size_w[1]
                     actors[ei2].res[0] = 60; actors[ei2].res[1] = 2
@@ -3098,40 +3050,15 @@ fn main() {
                                         let rgt_c = rcx * cos(yaw) + rcz * sin(yaw)
                                         dmg_dir = atan2(rgt_c, fwd_c)
                                     }
-                                    if actors[vk].hp <= 0.0 {
-                                        actors[vk].hp = 0.0
-                                        if round_over == false { akills[ci] = akills[ci] + 1 }   // scoreboard: killer
-                                        adeaths[vk] = adeaths[vk] + 1
-                                        kf_killer[kf_cur] = ci; kf_victim[kf_cur] = vk; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
-                                        if vk == pl_i {
-                                            dead = true; respawn_cd = 3.0; deaths = deaths + 1
-                                            play_sound(0 - 26, 260, 0)
-                                            if actors[pl_i].cells > 0 {
-                                                dropx[dropcur] = phys3d_x(actors[pl_i].hdl as i64) + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[pl_i].hdl as i64); droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                                            }
-                                            actors[pl_i].cells = 0   // lose un-popped reserve shields on death
-                                        } else {
-                                            brains[vk].resp = enemy_respawn
-                                            dropx[dropcur] = phys3d_x(actors[vk].hdl as i64); dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[vk].hdl as i64); droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                                            dropx[dropcur] = phys3d_x(actors[vk].hdl as i64) - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[vk].hdl as i64); droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                                            if actors[vk].cells > 0 {
-                                                dropx[dropcur] = phys3d_x(actors[vk].hdl as i64) + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = phys3d_z(actors[vk].hdl as i64); droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                                            }
-                                            actors[vk].cells = 0   // lose un-popped reserve shields on death
-                                            if mine == 1 {
-                                                killmark = 0.35
-                                                if round_over == false { kills = kills + 1 }
-                                                if oc_active { oc_timer = oc_timer + 2.5 } else {
-                                                    let mut ocg = 13.0
-                                                    if net_local_state(7) < 0.5 { ocg = 20.0 }
-                                                    oc_meter = oc_meter + ocg
-                                                    if oc_meter > 100.0 { oc_meter = 100.0 }
-                                                    oc_gain_t = 0.0
-                                                }
-                                                play_sound(12, 110, 0)
-                                                play_sound(7, 110, 0)
-                                            }
-                                        }
+                                    // Killer + player-kill reward context for the unified
+                                    // death sweep (records on every hit, so the LAST damager
+                                    // is the killer). The airborne OC bonus is captured here.
+                                    last_hit[vk] = ci
+                                    if mine == 1 {
+                                        kr_mark[vk] = 0.35
+                                        let mut ocg = 13.0
+                                        if net_local_state(7) < 0.5 { ocg = 20.0 }
+                                        kr_oc[vk] = ocg
                                     }
                                 }
                                 vk = vk + 1
@@ -3217,6 +3144,56 @@ fn main() {
             ci = ci + 1
         }
 
+        // ===== UNIFIED DEATH SWEEP =====
+        // One place that runs every local actor's death consequences EXACTLY ONCE, no
+        // matter which weapon (hitscan / melee / explosive) dropped them. Each damage path
+        // only records last_hit[victim] (+ the player-kill reward context); this sweep does
+        // the drops, clears un-popped shield cells, sets the respawn/dead state, counts the
+        // death, and credits the killer (scoreboard + kill feed, plus kill marker / round
+        // kill / Overclock / sound when the killer is the local player). death_done gates it
+        // to once per life; respawn clears it. Remotes are excluded (net-authoritative).
+        let mut dv = 0
+        while dv < bot_n + 1 {
+            // Only the player + ACTIVE bots; inactive bot slots sit at hp=0 permanently.
+            if actors[dv].hp <= 0.0 and death_done[dv] == 0 and (dv == pl_i or dv < bot_count) {
+                death_done[dv] = 1
+                actors[dv].hp = 0.0
+                adeaths[dv] = adeaths[dv] + 1
+                let kk = last_hit[dv]
+                let dbx = phys3d_x(actors[dv].hdl as i64)
+                let dbz = phys3d_z(actors[dv].hdl as i64)
+                if dv == pl_i {
+                    if actors[dv].cells > 0 { dropx[dropcur] = dbx + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 } }
+                } else {
+                    dropx[dropcur] = dbx; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
+                    dropx[dropcur] = dbx - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
+                    if actors[dv].cells > 0 { dropx[dropcur] = dbx + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 } }
+                }
+                actors[dv].cells = 0
+                if dv == pl_i {
+                    dead = true; respawn_cd = 3.0; deaths = deaths + 1; play_sound(0 - 26, 260, 0)
+                } else {
+                    brains[dv].resp = enemy_respawn
+                }
+                if kk >= 0 and kk != dv {
+                    if round_over == false { akills[kk] = akills[kk] + 1 }
+                    kf_killer[kf_cur] = kk; kf_victim[kf_cur] = dv; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
+                    if kk == pl_i {
+                        killmark = kr_mark[dv]
+                        if round_over == false { kills = kills + 1 }
+                        if oc_active { oc_timer = oc_timer + 2.5 } else {
+                            oc_meter = oc_meter + kr_oc[dv]
+                            if oc_meter > 100.0 { oc_meter = 100.0 }
+                            oc_gain_t = 0.0
+                        }
+                        play_sound(12, 110, 0)
+                        play_sound(7, 110, 0)
+                    }
+                }
+            }
+            dv = dv + 1
+        }
+
         // NO passive regen: health/shield come only from pickups. Health pads + drops
         // heal instantly; SHIELD comes from cells you carry and APPLY (Apex-style).
         dmg_timer = dmg_timer + dt
@@ -3241,30 +3218,8 @@ fn main() {
 
         // Death respawn cooldown: restore + teleport to spawn when it elapses.
         if dead {
-            // The frame you die: drop your UNUSED shield cells at the body (others - or
-            // you, after respawn - can loot them). Shields are scarce, so they recycle.
-            if prev_dead == false {
-                let mut dcd = 0
-                while dcd < actors[5].cells {
-                    dropx[dropcur] = px
-                    dropy[dropcur] = py - 0.3
-                    dropz[dropcur] = pz
-                    droptype[dropcur] = 1.0
-                    droplife[dropcur] = drop_life
-                    dropcur = dropcur + 1
-                    if dropcur >= drop_n { dropcur = 0 }
-                    dcd = dcd + 1
-                }
-                actors[5].cells = 0
-                // Also drop an ammo box at the body.
-                dropx[dropcur] = px + 0.6
-                dropy[dropcur] = py - 0.3
-                dropz[dropcur] = pz
-                droptype[dropcur] = 2.0
-                droplife[dropcur] = drop_life
-                dropcur = dropcur + 1
-                if dropcur >= drop_n { dropcur = 0 }
-            }
+            // Player death drops are handled by the unified death sweep above (a shield if
+            // you had a cell); the cooldown below restores + respawns you when it elapses.
             // Death wipes Overclock - the bar AND the active state. No banking a meter
             // through deaths; you start every life fresh.
             oc_meter = 0.0
@@ -3273,6 +3228,7 @@ fn main() {
             respawn_cd = respawn_cd - dt
             if respawn_cd <= 0.0 {
                 dead = false
+                death_done[pl_i] = 0; last_hit[pl_i] = 0 - 1   // re-arm the death sweep
                 actors[5].hp = php_max
                 actors[5].sh = 0.0   // respawn SHIELDLESS - shields are scarce; find/loot cells
                 actors[5].mag[0] = 30; actors[5].mag[1] = 1; actors[5].res[0] = 60; actors[5].res[1] = 2   // ammo back to start
@@ -3373,6 +3329,8 @@ fn main() {
                 oc_timer = 0.0
                 let mut rdr = 0
                 while rdr < drop_n { droplife[rdr] = 0.0; rdr = rdr + 1 }
+                rdr = 0
+                while rdr < 9 { death_done[rdr] = 0; last_hit[rdr] = 0 - 1; rdr = rdr + 1 }   // re-arm death sweep
                 let mut rb = 0
                 while rb < bot_n {
                     actors[rb].hp = enemy_hp_max
