@@ -1192,7 +1192,8 @@ fn main() {
     let mut prev_playing = 0 - 1
     let rifle_scale = 0.12      // FIRST-PERSON viewmodel size (original)
     let rifle_scale_tp = 0.18   // THIRD-PERSON (on others) - 1.5x bigger so it reads at range
-    let lnch_scale = 0.33       // mesh is ~1.8 units long
+    let lnch_scale = 0.33       // mesh is ~1.8 units long (first-person)
+    let lnch_scale_tp = 0.495   // third-person launcher - 1.5x bigger to read on others
     let kat_scale = 0.12        // mesh is ~7.6 units tall (first-person)
     let kat_scale_tp = 0.18     // third-person katana - bigger so it reads on others
     let gun_yaw = 0.0 - 1.5708  // +X barrel -> forward
@@ -4096,7 +4097,7 @@ fn main() {
                     // the hand, so reload/aim/run hand motion comes from the animation itself.
                     let mut twm = vm_rifle
                     let mut twsc = rifle_scale_tp
-                    if actors[ed].wpn == 1 { twm = vm_launcher; twsc = lnch_scale }
+                    if actors[ed].wpn == 1 { twm = vm_launcher; twsc = lnch_scale_tp }
                     r3d_draw_on_joint(twm, actor_models[ed], hand_joint, bx, by + actor_yoff, bz, ayaw[ed], 0.0, 0.0, actor_scale, hand_ox, hand_oy, hand_oz, hand_oyaw, hand_opitch, hand_oroll, twsc)
                     aprevx[ed] = bx
                     aprevz[ed] = bz
@@ -4230,7 +4231,7 @@ fn main() {
             let mut pwyaw = hand_oyaw
             let mut pwpit = hand_opitch
             let mut pwrol = hand_oroll
-            if tune_weapon == 1 { pwm = vm_launcher; pwsc = lnch_scale }
+            if tune_weapon == 1 { pwm = vm_launcher; pwsc = lnch_scale_tp }
             if tune_weapon == 2 { pwm = vm_katana; pwsc = kat_scale_tp; pwx = kat_hand_ox; pwy = kat_hand_oy; pwz = kat_hand_oz; pwyaw = kat_hand_oyaw; pwpit = kat_hand_opitch; pwrol = kat_hand_oroll }
             r3d_draw_on_joint(pwm, preview_model, hand_joint, pvx, py + actor_yoff, pvz, pvyaw + actor_yaw_off, 0.0, 0.0, actor_scale, pwx, pwy, pwz, pwyaw, pwpit, pwrol, pwsc)
         }
