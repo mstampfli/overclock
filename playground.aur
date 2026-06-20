@@ -1599,6 +1599,9 @@ fn main() {
     let mut g_hp_prev = 100.0    // last reconciled hp (for the incoming-damage hurt flash)
     let mut g_resp_wait = 0      // 1 while awaiting the host's respawn ACK (ignore stale hp=0 only then)
     let mut g_resp_wait_t = 0.0  // backstop timer so the wait can never get stuck (clears after this)
+    let mut g_joined = 0         // 0 = JOIN HANDSHAKE (waiting for the host to init my character);
+                                 // flips to 1 on the first snapshot with hp>0 = I've SPAWNED.
+    let mut g_disc_t = 0.0       // seconds the host has been unreachable (guest) -> show + bail to menu
     let mut akills = [0; 9]     // per-actor kills (scoreboard)
     let mut adeaths = [0; 9]    // per-actor deaths (scoreboard)
     // Unified death handling: every damage path records who last hit each actor + the
@@ -1952,6 +1955,7 @@ fn main() {
                         lobby_full = false
                         if net_mode == 2 {
                             net_join(join_addr, net_port)
+                            g_joined = 0   // re-run the join handshake (wait for character init) on every join
                         } else {
                             if net_host(net_port) == 0 { net_join("127.0.0.1", net_port) }
                             // Cap joiners to the opponent budget: bots get replaced by players,
@@ -2472,17 +2476,27 @@ fn main() {
             // Clear the wait when the host ACKS our respawn (echoed counter meta 9 caught up to
             // ours) - robust against reordered/old snapshots that briefly show hp>0. A timeout
             // backstop guarantees we never get stuck ignoring hp if an ack is somehow lost.
-            if g_resp_wait == 1 {
-                g_resp_wait_t = g_resp_wait_t - dt
-                if net_player_meta(amy, 9) >= g_resp_ctr - 0.5 or g_resp_wait_t <= 0.0 { g_resp_wait = 0 }
+            if g_joined == 0 {
+                // JOIN HANDSHAKE: I have NOT spawned until the host has initialised my character
+                // (replicated hp > 0). Until then, ignore the placeholder 0 hp - applying it would
+                // instantly "kill" me the moment I join (the regression). Stay full + shieldless +
+                // alive in the joining state; flip to spawned on the first real hp.
+                if newhp > 0.0 { g_joined = 1; g_hp_prev = newhp; dead = false; respawn_cd = 0.0 }
+                actors[pl_i].hp = php_max
+                actors[pl_i].sh = 0.0
+            } else {
+                if g_resp_wait == 1 {
+                    g_resp_wait_t = g_resp_wait_t - dt
+                    if net_player_meta(amy, 9) >= g_resp_ctr - 0.5 or g_resp_wait_t <= 0.0 { g_resp_wait = 0 }
+                }
+                if g_resp_wait == 0 {
+                    if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05 }   // took damage
+                    g_hp_prev = newhp
+                    actors[pl_i].hp = newhp
+                }
+                actors[pl_i].sh = net_player_meta(amy, 1)
+                actors[pl_i].cells = net_player_meta(amy, 4) as i64
             }
-            if g_resp_wait == 0 {
-                if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05 }   // took damage
-                g_hp_prev = newhp
-                actors[pl_i].hp = newhp
-            }
-            actors[pl_i].sh = net_player_meta(amy, 1)
-            actors[pl_i].cells = net_player_meta(amy, 4) as i64
         }
         // GUEST: consume the host's authoritative KILL events. This only DISPLAYS them (kill
         // feed + the killer's red marker/sound/score) - the kill itself was decided host-side,
@@ -3854,6 +3868,8 @@ fn main() {
             if actors[dv].hp <= 0.0 and death_done[dv] == 0 and dv_live {
                 death_done[dv] = 1
                 actors[dv].hp = 0.0
+                actors[dv].sh = 0.0   // shield ALWAYS clears on death (incl. an overclock overshield),
+                                      // so it can never carry into the next life / round for anyone
                 adeaths[dv] = adeaths[dv] + 1
                 let kk = last_hit[dv]
                 let dbx = phys3d_x(actors[dv].hdl as i64)
@@ -4700,7 +4716,22 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-17", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-18", 18, 65280)
+        // GUEST join/disconnect banner: "joining" until the host inits our character, and a clear
+        // "disconnected" -> back to the menu if the host vanishes (net_connected goes false).
+        if net_mode == 2 {
+            if g_joined == 0 {
+                draw_text(cx - text_width("JOINING LOBBY...", 30) / 2, cy - 30, "JOINING LOBBY...", 30, 255 * 65536 + 200 * 256 + 60)
+            } else {
+                if net_connected() == 0 {
+                    g_disc_t = g_disc_t + dt
+                    draw_text(cx - text_width("DISCONNECTED FROM HOST", 30) / 2, cy - 30, "DISCONNECTED FROM HOST", 30, 235 * 65536 + 70 * 256 + 60)
+                    if g_disc_t > 2.0 { net_leave(); screen = s_title; net_started = false }
+                } else {
+                    g_disc_t = 0.0
+                }
+            }
+        }
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
