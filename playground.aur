@@ -1444,7 +1444,7 @@ fn main() {
     // on a fast-moving target. 125 dmg = a full green bar (100) + half a shield bar (25);
     // shield absorbs first, so a fully-shielded foe survives by a sliver, off-shield = oneshot.
     let melee_dmg = 125.0
-    let melee_range = 5.0       // katana lunge reach (metres)
+    let melee_range = 4.0       // katana lunge reach (metres)
     let melee_cooldown = 0.7    // seconds between swings (no spam)
     let shot_kb = 2.2          // per-bullet impulse on a hit crate (impulse/mass)
     // Explosion INTENSITY per source (scales damage, radius, knockback + visual): 1.0
