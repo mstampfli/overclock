@@ -2758,6 +2758,12 @@ fn main() {
                             while vk < bot_n + 1 {
                                 if vk != ci and hb == (actors[vk].hdl as i64) and actors[vk].hp > 0.0 {
                                     let mut dmg = gun_dmg
+                                    // Hit location (height of the impact vs the capsule centre):
+                                    // head = 2x, low legs = 0.65x, torso = 1x.
+                                    let hrel = hY - phys3d_y(actors[vk].hdl as i64)
+                                    let mut headshot = 0
+                                    if hrel > 0.5 { dmg = dmg * 2.0; headshot = 1 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+                                    if headshot == 1 and mine == 1 { play_sound(12, 90, 0) }   // headshot ding
                                     if actors[vk].sh > 0.0 {
                                         if actors[vk].sh >= dmg { actors[vk].sh = actors[vk].sh - dmg; dmg = 0.0 }
                                         else { dmg = dmg - actors[vk].sh; actors[vk].sh = 0.0 }

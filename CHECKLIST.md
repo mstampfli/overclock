@@ -12,7 +12,7 @@ Cadence: compile + commit + push after each item.
 - [x] Velocity bar grey (so it's not confused with the blue shield bar)
 - [x] Explosive: smaller range damage-falloff (more damage in the vicinity)
 - [x] Overclock: faster reload + unlimited reserve mags
-- [ ] Hit-location damage: headshot > torso > legs/arms
+- [x] Hit-location damage: headshot 2x > torso 1x > legs 0.65x
 
 ### Medium
 - [ ] Center text EVERYWHERE
