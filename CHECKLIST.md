@@ -46,7 +46,28 @@ Cadence: compile + commit + push after each item.
 - [x] draw_centered helper used uniformly across all menu buttons/steppers/fields (H+V centre)
 - [x] Crosshair editor (own screen): size/gap/thickness/dot/colour + live preview, persisted
 - [x] Engine: FULL lexical block scoping (let scoped to its block; was a flat function scope)
-- [ ] Electric/Fresnel rim shield shader (do LAST, per request)
-- [ ] Sync names + shield/OC state to remote players (needs a netcode metadata channel + live MP test)
-- [ ] Menu reorg + submenus (settings still cramped)
-- [ ] weapon bone-attach · portable build (bundle a free font, system-AGENCYB fallback)
+- [x] Crosshair presets (6 slots saved to disk) + portable font (bundled OFL Saira Condensed Black fallback)
+- [x] Death drops a reserve shield only if you had >=1; un-popped reserves lost on death (player + bots)
+- [x] HUD: fatter/wider bars; kill feed top-left + player name highlighted + clears on fresh game
+- [x] Dash: 0 cooldown, top speed DERIVED from the slide max (auto-synced)
+- [x] Unified bullet tracers (player drawn once from the eye, no double-draw)
+- [x] Crate <-> actor knockback (local movers only; flying crates only knock if moving toward you)
+
+## MP / netcode (the big remaining block - needs live 2-client testing)
+- [ ] Host-authoritative combat branch: on the host, apply damage to ALL players + bots and replicate;
+      clients only predict feedback (hitmarker/tracer) and reconcile. Uses existing predict.rs + lagcomp.rs.
+- [ ] Replicated combat state channel: per-player hp/shield/cells/OC + names (the missing metadata channel).
+      Once this exists, melee/explosive/hitscan can include remotes (host-authoritatively) and crates can be
+      host-owned so remotes interact with them properly.
+- [ ] Bot/entity authority: bots run on the HOST only and replicate to clients as remotes (today they may
+      run locally on every client = desync). Part of the same host-authority pass.
+
+## Visual / polish (do LAST, per request)
+- [ ] Electric/Fresnel rim shield shader (LAST)
+- [ ] Mantle mechanic (LAST-LAST)
+- [ ] weapon bone-attach (needs an engine joint-transform builtin)
+- [ ] Menu reorg + submenus (user said menu is fine for now - deprioritised)
+
+## Refactor
+- [ ] Death-centralization: one last_hit + per-frame death sweep replacing the 3 duplicated death sites
+      (also fixes explosive kills not scoring). Verify with a headless death-sim.
