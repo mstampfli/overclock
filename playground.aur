@@ -1663,35 +1663,35 @@ fn main() {
             draw_centered(nshow, cl + 110, 74, 300, 30, 22, ncol)
             draw_text(cl, 116, "Bots", 24, wht)
             if menu_btn(cl + 210, 112, 32, 32, mx, my) == 1 { if clicked == 1 { bot_count = bot_count - 1; if bot_count < 0 { bot_count = 0 } } }
-            draw_text(cl + 222, 117, "-", 24, wht)
+            draw_centered("-", cl + 210, 112, 32, 32, 24, wht)
             draw_int(cl + 258, 117, bot_count, 24, gold)
             if menu_btn(cl + 300, 112, 32, 32, mx, my) == 1 { if clicked == 1 { bot_count = bot_count + 1; if bot_count > bot_n { bot_count = bot_n } } }
-            draw_text(cl + 312, 117, "+", 24, wht)
+            draw_centered("+", cl + 300, 112, 32, 32, 24, wht)
             draw_text(cl, 166, "Round (s)", 24, wht)
             if menu_btn(cl + 210, 162, 32, 32, mx, my) == 1 { if clicked == 1 { round_len = round_len - 30.0; if round_len < 30.0 { round_len = 30.0 } } }
-            draw_text(cl + 222, 167, "-", 24, wht)
+            draw_centered("-", cl + 210, 162, 32, 32, 24, wht)
             draw_int(cl + 250, 167, round_len as i64, 24, gold)
             if menu_btn(cl + 300, 162, 32, 32, mx, my) == 1 { if clicked == 1 { round_len = round_len + 30.0; if round_len > 600.0 { round_len = 600.0 } } }
-            draw_text(cl + 312, 167, "+", 24, wht)
+            draw_centered("+", cl + 300, 162, 32, 32, 24, wht)
             draw_text(cl, 216, "Kills to win", 24, wht)
             if menu_btn(cl + 210, 212, 32, 32, mx, my) == 1 { if clicked == 1 { kill_target = kill_target - 5; if kill_target < 5 { kill_target = 5 } } }
-            draw_text(cl + 222, 217, "-", 24, wht)
+            draw_centered("-", cl + 210, 212, 32, 32, 24, wht)
             draw_int(cl + 258, 217, kill_target, 24, gold)
             if menu_btn(cl + 300, 212, 32, 32, mx, my) == 1 { if clicked == 1 { kill_target = kill_target + 5; if kill_target > 50 { kill_target = 50 } } }
-            draw_text(cl + 312, 217, "+", 24, wht)
+            draw_centered("+", cl + 300, 212, 32, 32, 24, wht)
             draw_text(cl, 280, "Mode", 24, wht)
             let mut mc0 = wht
             if net_mode == 0 { mc0 = gold }
             if menu_btn(cl + 110, 276, 116, 34, mx, my) == 1 { if clicked == 1 { net_mode = 0 } }
-            draw_text(cl + 124, 282, "PRACTICE", 20, mc0)
+            draw_centered("PRACTICE", cl + 110, 276, 116, 34, 20, mc0)
             let mut mc1 = wht
             if net_mode == 1 { mc1 = gold }
             if menu_btn(cl + 234, 276, 78, 34, mx, my) == 1 { if clicked == 1 { net_mode = 1 } }
-            draw_text(cl + 252, 282, "HOST", 20, mc1)
+            draw_centered("HOST", cl + 234, 276, 78, 34, 20, mc1)
             let mut mc2 = wht
             if net_mode == 2 { mc2 = gold }
             if menu_btn(cl + 320, 276, 78, 34, mx, my) == 1 { if clicked == 1 { net_mode = 2 } }
-            draw_text(cl + 340, 282, "JOIN", 20, mc2)
+            draw_centered("JOIN", cl + 320, 276, 78, 34, 20, mc2)
             if net_mode == 2 {
                 // Host-address text field (click to edit) - type an IP or a hostname.
                 draw_text(cl, 340, "Host", 22, wht)
@@ -1726,9 +1726,9 @@ fn main() {
                     screen = s_game
                 }
             }
-            draw_text(cx - text_width("START", 28) / 2, fbh - 60, "START", 28, wht)
+            draw_centered("START", cx - 90, fbh - 72, 180, 46, 28, wht)
             if menu_btn(cx - 90, fbh - 128, 180, 40, mx, my) == 1 { if clicked == 1 { screen = s_title } }
-            draw_text(cx - text_width("BACK", 22) / 2, fbh - 118, "BACK", 22, wht)
+            draw_centered("BACK", cx - 90, fbh - 128, 180, 40, 22, wht)
             // Escape backs out of the lobby to the title.
             let esc_l = key_down(20)
             if esc_l > 0 and esc_prev == 0 { screen = s_title }
@@ -1744,22 +1744,22 @@ fn main() {
             let cl = cx - 260
             draw_text(cl, 108, "Sensitivity", 22, wht)
             if menu_btn(cl + 160, 104, 34, 30, mx, my) == 1 { if clicked == 1 { sens = sens - sens_unit; if sens < sens_unit { sens = sens_unit } } }
-            draw_text(cl + 177 - text_width("-", 22) / 2, 108, "-", 22, wht)
+            draw_centered("-", cl + 160, 104, 34, 30, 22, wht)
             let sbx = cl + 202
             let sbw = 230
             if draw_bar(sbx, 108, sbw, 22, sens / sens_max, mx, my) == 1 { if clicked == 1 { let sf = ((mx - sbx) as f64) / (sbw as f64) * sens_max; let slv = (sf / sens_unit + 0.5) as i64; sens = (slv as f64) * sens_unit; if sens < sens_unit { sens = sens_unit } if sens > sens_max { sens = sens_max } } }
             if menu_btn(cl + 440, 104, 34, 30, mx, my) == 1 { if clicked == 1 { sens = sens + sens_unit; if sens > sens_max { sens = sens_max } } }
-            draw_text(cl + 457 - text_width("+", 22) / 2, 108, "+", 22, wht)
+            draw_centered("+", cl + 440, 104, 34, 30, 22, wht)
             draw_int(cl + 486, 108, (sens / sens_unit + 0.5) as i64, 22, gold)
             // Volume: a bar, 0..100, stepped by EXACTLY 1.
             draw_text(cl, 158, "Volume", 22, wht)
             if menu_btn(cl + 160, 154, 34, 30, mx, my) == 1 { if clicked == 1 { vol = vol - 1; if vol < 0 { vol = 0 } audio_volume(vol) } }
-            draw_text(cl + 177 - text_width("-", 22) / 2, 158, "-", 22, wht)
+            draw_centered("-", cl + 160, 154, 34, 30, 22, wht)
             let vbx = cl + 202
             let vbw = 230
             if draw_bar(vbx, 158, vbw, 22, (vol as f64) / 100.0, mx, my) == 1 { if clicked == 1 { let vf = ((mx - vbx) as f64) / (vbw as f64) * 100.0; vol = vf as i64; if vol < 0 { vol = 0 } if vol > 100 { vol = 100 } audio_volume(vol) } }
             if menu_btn(cl + 440, 154, 34, 30, mx, my) == 1 { if clicked == 1 { vol = vol + 1; if vol > 100 { vol = 100 } audio_volume(vol) } }
-            draw_text(cl + 457 - text_width("+", 22) / 2, 158, "+", 22, wht)
+            draw_centered("+", cl + 440, 154, 34, 30, 22, wht)
             draw_int(cl + 486, 158, vol, 22, gold)
             // Keybinds: click a code box, then press a key.
             draw_text(cl, 206, "Keybinds - click a box, then press a key", 18, gold)
@@ -1770,7 +1770,7 @@ fn main() {
                 let mut kc = gold
                 if rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
                 if menu_btn(cl + 220, ry, 90, 24, mx, my) == 1 { if clicked == 1 { rebind = ki; rebind_armed = 0 } }
-                draw_text(cl + 234, ry + 4, key_name(bind_code[ki] as i64), 18, kc)
+                draw_centered(key_name(bind_code[ki] as i64), cl + 220, ry, 90, 24, 18, kc)
                 ki = ki + 1
             }
             // Capture the next key for the action being rebound.
@@ -1813,7 +1813,7 @@ fn main() {
                 settings[18] = disp_mode as f64
                 save_settings(settings)
             } }
-            draw_text(cx - text_width(dlabel, 22) / 2, fbh - 108, dlabel, 22, wht)
+            draw_centered(dlabel, cx - 130, fbh - 116, 260, 38, 22, wht)
             if menu_btn(cx - 60, fbh - 62, 120, 44, mx, my) == 1 {
                 if clicked == 1 {
                     settings[0] = sens
@@ -1825,7 +1825,7 @@ fn main() {
                     screen = set_back
                 }
             }
-            draw_text(cx - text_width("BACK", 24) / 2, fbh - 52, "BACK", 24, wht)
+            draw_centered("BACK", cx - 60, fbh - 62, 120, 44, 24, wht)
             // Escape also backs out one level (saves first; ignored mid-rebind).
             let esc_s = key_down(20)
             if esc_s > 0 and esc_prev == 0 and rebind < 0 {
