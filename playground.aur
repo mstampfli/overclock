@@ -4571,7 +4571,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-8", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-9", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
@@ -4772,12 +4772,15 @@ fn main() {
             let mut sbd = [0; 9]
             let mut sbi = 0
             while sbi < nactors {
-                if net_started {
+                if net_started and (net_mode != 1 or sbi >= bot_n) {
+                    // Player + networked actors: read the replicated, host-authoritative score.
                     let mut spid = apid[sbi]
                     if sbi == pl_i { spid = net_my_id() }
                     sbk[sbi] = net_player_meta(spid, 6) as i64
                     sbd[sbi] = net_player_meta(spid, 7) as i64
                 } else {
+                    // HOST's LOCAL bots (slots 0..bot_n-1) - their apid isn't a real net id, so read
+                    // their score straight from the local akills/adeaths (also the practice path).
                     sbk[sbi] = akills[sbi]; sbd[sbi] = adeaths[sbi]
                 }
                 sbi = sbi + 1
