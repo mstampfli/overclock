@@ -1909,12 +1909,15 @@ fn main() {
             }
             grab_mouse(1)               // capture the cursor for play
             esc_prev = 1                // ignore an Escape still held from the menu
+            let mut paused = false      // pause overlay open?
+            let mut was_paused = false  // edge-detect for blur/grab/suppress transitions
+            let mut pmprev = 0          // overlay click edge-detect
 
             loop {
                 if r3d_present() == 0 { screen = s_quit; break }
                 r3d_begin()
         // Real frame time (clamped) so movement is frame-rate independent.
-        let dt = frame_dt()
+        let mut dt = frame_dt()
 
         // Size the HUD framebuffer to the live window (crisp 1:1; re-creates it
         // when the window is resized). The crosshair/HUD are laid out from fbw/fbh.
@@ -1928,11 +1931,32 @@ fn main() {
         let cx = fbw / 2
         let cy = fbh / 2
 
-        // Mouse look.
-        yaw = yaw + mouse_dx() * sens
-        pitch = pitch - mouse_dy() * sens
-        if pitch > 1.4 { pitch = 1.4 }
-        if pitch < 0.0 - 1.4 { pitch = 0.0 - 1.4 }
+        // ----- Pause overlay (Escape). PRACTICE freezes the whole sim (dt -> 0) and
+        // suppresses player input; ONLINE stays live (the match keeps running so you
+        // don't desync) - only the blurred backdrop + overlay menu show. The blur,
+        // mouse-release and input-suppress are flipped once on each transition.
+        let pesc = key_down(20)
+        if pesc > 0 and esc_prev == 0 { if paused { paused = false } else { paused = true } }
+        esc_prev = pesc
+        let mut frozen = false
+        if paused and net_mode == 0 { frozen = true }
+        if frozen { dt = 0.0 }
+        if paused and was_paused == false { grab_mouse(0); input_suppress(1); r3d_blur(8.0) }
+        if paused == false and was_paused { grab_mouse(1); input_suppress(0); r3d_blur(0.0) }
+        was_paused = paused
+        // Safe divisor for the per-frame run-speed calc: a tiny floor so a frozen (dt=0)
+        // or ultra-short frame can't divide by zero. When frozen the actor hasn't moved,
+        // so the numerator is ~0 and the speed reads 0 (idle pose) regardless.
+        let mut safedt = dt
+        if safedt < 0.0001 { safedt = 0.0001 }
+
+        // Mouse look (skipped while paused so the released cursor doesn't swing the view).
+        if paused == false {
+            yaw = yaw + mouse_dx() * sens
+            pitch = pitch - mouse_dy() * sens
+            if pitch > 1.4 { pitch = 1.4 }
+            if pitch < 0.0 - 1.4 { pitch = 0.0 - 1.4 }
+        }
 
         // Gather rebindable input into this tick's blob and run the sim. While DEAD,
         // movement is frozen (zeroed) until respawn.
@@ -3241,7 +3265,7 @@ fn main() {
                 if actor_models[ed] >= 0 {
                     let svx = bx - aprevx[ed]
                     let svz = bz - aprevz[ed]
-                    let mut inst = sqrt(svx * svx + svz * svz) / dt
+                    let mut inst = sqrt(svx * svx + svz * svz) / safedt
                     if inst > 40.0 { inst = 0.0 }   // ignore respawn teleports
                     aspd[ed] = aspd[ed] + (inst - aspd[ed]) * 0.12   // low-pass smooth
                     let spd = aspd[ed]
@@ -3348,7 +3372,7 @@ fn main() {
                 if actor_models[ai] >= 0 {
                     let rvx = ex - aprevx[ai]
                     let rvz = ez - aprevz[ai]
-                    let mut rinst = sqrt(rvx * rvx + rvz * rvz) / dt
+                    let mut rinst = sqrt(rvx * rvx + rvz * rvz) / safedt
                     if rinst > 40.0 { rinst = 0.0 }
                     aspd[ai] = aspd[ai] + (rinst - aspd[ai]) * 0.12
                     let rspd = aspd[ai]
@@ -3862,13 +3886,37 @@ fn main() {
             }
         }
 
-                // Pause on Escape (rising edge) -> break to the menu loop, which shows
-                // the PAUSE screen (resume / settings / quit to title). The engine has
-                // already released the mouse on the Escape press.
-                let esc_g = key_down(20)
-                if esc_g > 0 and esc_prev == 0 { screen = s_pause }
-                esc_prev = esc_g
-                if screen == s_pause or screen == s_quit { break }
+                // Pause overlay: drawn ON TOP of the (blurred) live scene. Escape toggles
+                // `paused` at the top of the loop; here we render the panel + buttons.
+                if paused {
+                    let pmx = mouse_x()
+                    let pmy = mouse_y()
+                    let pmd = mouse_down()
+                    let mut pclick = 0
+                    if pmd > 0 and pmprev == 0 { pclick = 1 }
+                    pmprev = pmd
+                    // Dim translucent panel (checkerboard) behind the menu so it reads over
+                    // the blur. Only ~400x260 px and only while paused (the sim is idle).
+                    let plx = cx - 200
+                    let ply = cy - 130
+                    let mut qy = 0
+                    while qy < 260 {
+                        let mut qx = 0
+                        while qx < 400 {
+                            if (plx + qx + ply + qy) % 2 == 0 { pixel(plx + qx, ply + qy, 5, 7, 11) }
+                            qx = qx + 1
+                        }
+                        qy = qy + 1
+                    }
+                    draw_text(cx - text_width("PAUSED", 46) / 2, ply + 20, "PAUSED", 46, col_gold)
+                    if net_mode == 0 { draw_text(cx - text_width("practice - sim frozen", 16) / 2, ply + 74, "practice - sim frozen", 16, col_white) }
+                    if net_mode != 0 { draw_text(cx - text_width("online - match still live", 16) / 2, ply + 74, "online - match still live", 16, col_white) }
+                    if menu_btn(cx - 110, ply + 110, 220, 44, pmx, pmy) == 1 { if pclick == 1 { paused = false; grab_mouse(1); input_suppress(0); r3d_blur(0.0); was_paused = false } }
+                    draw_text(cx - text_width("RESUME", 24) / 2, ply + 120, "RESUME", 24, col_white)
+                    if menu_btn(cx - 110, ply + 168, 220, 44, pmx, pmy) == 1 { if pclick == 1 { input_suppress(0); r3d_blur(0.0); screen = s_title } }
+                    draw_text(cx - text_width("QUIT TO TITLE", 24) / 2, ply + 178, "QUIT TO TITLE", 24, col_white)
+                }
+                if screen != s_game { break }
             }
         }
     }
