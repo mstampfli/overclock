@@ -617,7 +617,10 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
             let cvx = f32_load(state, 4)
             let cvz = f32_load(state, 6)
             let cur = sqrt(cvx * cvx + cvz * cvz)
-            let mut newsp = cfg[10] * ocm
+            // Dash top speed is DERIVED from the slide so they always match: the slide
+            // launch caps at ground_speed + slide_boost + 2 (see the slide block), so the
+            // dash redirects to that same ceiling.
+            let mut newsp = (cfg[2] + cfg[7] + 2.0) * ocm
             if cur > newsp { newsp = cur }
             f32_store(state, 4, dxx * newsp)
             f32_store(state, 6, dzz * newsp)
@@ -1393,7 +1396,7 @@ fn main() {
         7.0,    // slide_boost    (big lurch - slide is THE ground speed tool now)
         1.2,    // slide_friction
         5.0,    // slide_min
-        14.0,   // dash_speed     (punchy midair boost)
+        17.5,   // dash_speed     (UNUSED - dash now derives its top speed from the slide)
         0.0,    // dash_cd        (no cooldown - dash whenever)
         1.0,    // air_jumps
         4.0,    // wall_gravity   (idle slide-down rate)
@@ -3439,14 +3442,15 @@ fn main() {
                                 brains[cai].ky = brains[cai].ky + 1.8
                             }
                         }
-                        // Actor -> shove the crate away (scaled by the player's own speed).
-                        let mut pushf = 4.0
+                        // Actor -> shove the crate away (scaled by the player's own speed, so
+                        // running/sliding into a box sends it flying; bots give a steady shove).
+                        let mut pushf = 6.0
                         if cai == pl_i {
                             let pvx = net_local_state(4)
                             let pvz = net_local_state(6)
-                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.6 + 2.0
+                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.9 + 6.0
                         }
-                        phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 1.5, 0.0 - ddz / dd * pushf)
+                        phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 1.4, 0.0 - ddz / dd * pushf)
                     }
                 }
                 cai = cai + 1
