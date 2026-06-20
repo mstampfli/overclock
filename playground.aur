@@ -1285,19 +1285,21 @@ fn main() {
         3.0     // wall_min_speed (must move this fast to attach to a wall)
     ]
 
-    // Auto host-or-join: the first instance hosts; a second instance on the same
-    // machine finds the port taken (net_host returns 0) and JOINS instead. Run two
-    // copies for a 2-player game on one box (loopback).
-    if net_host(45123) == 0 {
-        net_join("127.0.0.1", 45123)
-    }
+    // Networking is established from the in-game LOBBY (host / join by IP), not at startup, so
+    // the player picks. net_sim is registered here; the connection + spawn happen on match START.
+    let net_port = 45123
+    let mut net_mode = 0        // 0 = practice (host local), 1 = host, 2 = join
+    let mut net_started = false
+    let mut ip0 = 127           // join-target IP octets (default loopback for local testing)
+    let mut ip1 = 0
+    let mut ip2 = 0
+    let mut ip3 = 1
     // Register the shared Aurora movement step (21 replicated state floats, 8 input
     // floats). The sim creates each player's own physics character on demand.
     net_sim(|state, input| {
         sim_step(state, input, cfg)
         0
     }, 21, 17)
-    net_spawn_at(0.0, 0.9, 45.0)
 
     let mut yaw = 0.0
     let mut pitch = 0.0
@@ -1319,8 +1321,10 @@ fn main() {
     // FFA round state: reach the kill target before the timer runs out.
     let mut kills = 0
     let mut deaths = 0
-    let kill_target = 15
-    let mut round_timer = 120.0
+    let mut kill_target = 15        // lobby-set: kills to win
+    let mut round_len = 120.0       // lobby-set: round length (seconds)
+    let mut bot_count = 5           // lobby-set: number of active bots (0..bot_n)
+    let mut round_timer = round_len
     let mut round_over = false
     let mut over_t = 0.0
     let mut won = false
@@ -1493,6 +1497,7 @@ fn main() {
     let s_pause = 2
     let s_game = 3
     let s_quit = 4
+    let s_lobby = 5
     let mut screen = s_title
     let mut set_back = s_title  // where SETTINGS' BACK returns (title or pause)
     let mut do_reset = true     // PLAY arms a fresh round; RESUME leaves it false
@@ -1549,7 +1554,7 @@ fn main() {
             draw_text(cx - tw / 2, cy - 175, "OVERCLOCK", 64, gold)
             let bx = cx - 110
             let bc = cx   // button centre x (buttons are centred on cx, width 220)
-            if menu_btn(bx, cy - 30, 220, 48, mx, my) == 1 { if clicked == 1 { do_reset = true; screen = s_game } }
+            if menu_btn(bx, cy - 30, 220, 48, mx, my) == 1 { if clicked == 1 { screen = s_lobby } }
             draw_text(bc - text_width("PLAY", 28) / 2, cy - 30 + 8, "PLAY", 28, wht)
             if menu_btn(bx, cy + 34, 220, 48, mx, my) == 1 { if clicked == 1 { set_back = s_title; screen = s_settings } }
             draw_text(bc - text_width("SETTINGS", 28) / 2, cy + 34 + 8, "SETTINGS", 28, wht)
@@ -1570,6 +1575,80 @@ fn main() {
             let esc_now = key_down(20)
             if esc_now > 0 and esc_prev == 0 { screen = s_game }
             esc_prev = esc_now
+        } else { if screen == s_lobby {
+            // ---- LOBBY / MATCH SETUP: pick the match settings + network mode, then START ----
+            draw_text(cx - text_width("MATCH SETUP", 44) / 2, 36, "MATCH SETUP", 44, gold)
+            let cl = cx - 230
+            draw_text(cl, 116, "Bots", 24, wht)
+            if menu_btn(cl + 210, 112, 32, 32, mx, my) == 1 { if clicked == 1 { bot_count = bot_count - 1; if bot_count < 0 { bot_count = 0 } } }
+            draw_text(cl + 222, 117, "-", 24, wht)
+            draw_int(cl + 258, 117, bot_count, 24, gold)
+            if menu_btn(cl + 300, 112, 32, 32, mx, my) == 1 { if clicked == 1 { bot_count = bot_count + 1; if bot_count > bot_n { bot_count = bot_n } } }
+            draw_text(cl + 312, 117, "+", 24, wht)
+            draw_text(cl, 166, "Round (s)", 24, wht)
+            if menu_btn(cl + 210, 162, 32, 32, mx, my) == 1 { if clicked == 1 { round_len = round_len - 30.0; if round_len < 30.0 { round_len = 30.0 } } }
+            draw_text(cl + 222, 167, "-", 24, wht)
+            draw_int(cl + 250, 167, round_len as i64, 24, gold)
+            if menu_btn(cl + 300, 162, 32, 32, mx, my) == 1 { if clicked == 1 { round_len = round_len + 30.0; if round_len > 600.0 { round_len = 600.0 } } }
+            draw_text(cl + 312, 167, "+", 24, wht)
+            draw_text(cl, 216, "Kills to win", 24, wht)
+            if menu_btn(cl + 210, 212, 32, 32, mx, my) == 1 { if clicked == 1 { kill_target = kill_target - 5; if kill_target < 5 { kill_target = 5 } } }
+            draw_text(cl + 222, 217, "-", 24, wht)
+            draw_int(cl + 258, 217, kill_target, 24, gold)
+            if menu_btn(cl + 300, 212, 32, 32, mx, my) == 1 { if clicked == 1 { kill_target = kill_target + 5; if kill_target > 50 { kill_target = 50 } } }
+            draw_text(cl + 312, 217, "+", 24, wht)
+            draw_text(cl, 280, "Mode", 24, wht)
+            let mut mc0 = wht
+            if net_mode == 0 { mc0 = gold }
+            if menu_btn(cl + 110, 276, 116, 34, mx, my) == 1 { if clicked == 1 { net_mode = 0 } }
+            draw_text(cl + 124, 282, "PRACTICE", 20, mc0)
+            let mut mc1 = wht
+            if net_mode == 1 { mc1 = gold }
+            if menu_btn(cl + 234, 276, 78, 34, mx, my) == 1 { if clicked == 1 { net_mode = 1 } }
+            draw_text(cl + 252, 282, "HOST", 20, mc1)
+            let mut mc2 = wht
+            if net_mode == 2 { mc2 = gold }
+            if menu_btn(cl + 320, 276, 78, 34, mx, my) == 1 { if clicked == 1 { net_mode = 2 } }
+            draw_text(cl + 340, 282, "JOIN", 20, mc2)
+            if net_mode == 2 {
+                let ipy = 332
+                draw_text(cl, ipy + 4, "IP", 22, wht)
+                if menu_btn(cl + 44, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip0 = ip0 - 1; if ip0 < 0 { ip0 = 0 } } }
+                draw_text(cl + 51, ipy + 5, "-", 18, wht)
+                draw_int(cl + 72, ipy + 5, ip0, 20, gold)
+                if menu_btn(cl + 106, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip0 = ip0 + 1; if ip0 > 255 { ip0 = 255 } } }
+                draw_text(cl + 113, ipy + 5, "+", 18, wht)
+                if menu_btn(cl + 140, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip1 = ip1 - 1; if ip1 < 0 { ip1 = 0 } } }
+                draw_text(cl + 147, ipy + 5, "-", 18, wht)
+                draw_int(cl + 168, ipy + 5, ip1, 20, gold)
+                if menu_btn(cl + 202, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip1 = ip1 + 1; if ip1 > 255 { ip1 = 255 } } }
+                draw_text(cl + 209, ipy + 5, "+", 18, wht)
+                if menu_btn(cl + 236, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip2 = ip2 - 1; if ip2 < 0 { ip2 = 0 } } }
+                draw_text(cl + 243, ipy + 5, "-", 18, wht)
+                draw_int(cl + 264, ipy + 5, ip2, 20, gold)
+                if menu_btn(cl + 298, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip2 = ip2 + 1; if ip2 > 255 { ip2 = 255 } } }
+                draw_text(cl + 305, ipy + 5, "+", 18, wht)
+                if menu_btn(cl + 332, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip3 = ip3 - 1; if ip3 < 0 { ip3 = 0 } } }
+                draw_text(cl + 339, ipy + 5, "-", 18, wht)
+                draw_int(cl + 360, ipy + 5, ip3, 20, gold)
+                if menu_btn(cl + 394, ipy, 22, 28, mx, my) == 1 { if clicked == 1 { ip3 = ip3 + 1; if ip3 > 255 { ip3 = 255 } } }
+                draw_text(cl + 401, ipy + 5, "+", 18, wht)
+            }
+            if net_started { draw_text(cx - 150, fbh - 150, "connected (settings reapply on start)", 16, wht) }
+            if menu_btn(cx - 90, fbh - 72, 180, 46, mx, my) == 1 {
+                if clicked == 1 {
+                    if net_started == false {
+                        if net_mode == 2 { net_join(str(ip0) + "." + str(ip1) + "." + str(ip2) + "." + str(ip3), net_port) } else { net_host(net_port) }
+                        net_spawn_at(0.0, 0.9, 45.0)
+                        net_started = true
+                    }
+                    do_reset = true
+                    screen = s_game
+                }
+            }
+            draw_text(cx - text_width("START", 28) / 2, fbh - 60, "START", 28, wht)
+            if menu_btn(cx - 90, fbh - 128, 180, 40, mx, my) == 1 { if clicked == 1 { screen = s_title } }
+            draw_text(cx - text_width("BACK", 22) / 2, fbh - 118, "BACK", 22, wht)
         } else {
             draw_text(cx - text_width("SETTINGS", 44) / 2, 30, "SETTINGS", 44, gold)
             // Sensitivity: a bar adjusted in steps of EXACTLY 1 (one unit = 0.0001), so it
@@ -1642,7 +1721,7 @@ fn main() {
                 }
             }
             draw_text(cx - text_width("BACK", 24) / 2, fbh - 52, "BACK", 24, wht)
-        } }
+        } } }
             // Leave the menu loop only once a non-menu screen is chosen: PLAY/RESUME ->
             // game, QUIT/window-close -> quit. title/settings/pause keep looping here.
             if screen == s_game or screen == s_quit { break }
@@ -1657,7 +1736,7 @@ fn main() {
             if do_reset {
                 kills = 0
                 deaths = 0
-                round_timer = 120.0
+                round_timer = round_len
                 round_over = false
                 over_t = 0.0
                 won = false
@@ -1701,6 +1780,7 @@ fn main() {
                 let mut rb = 0
                 while rb < bot_n {
                     actors[rb].hp = enemy_hp_max
+                    if rb >= bot_count { actors[rb].hp = 0.0; brains[rb].resp = 1000000.0 }   // inactive bot
                     actors[rb].sh = actors[rb].shmax
                     actors[rb].mag[0] = mag_size_w[0]; actors[rb].mag[1] = mag_size_w[1]
                     actors[rb].res[0] = 60; actors[rb].res[1] = 2
@@ -2468,7 +2548,7 @@ fn main() {
                 // Dead: park below the map; on respawn, pop back to the spawn point.
                 phys3d_set_pos(h, esx[ei2], 0.0 - 50.0, esz[ei2])
                 brains[ei2].resp = brains[ei2].resp - dt
-                if brains[ei2].resp <= 0.0 {
+                if brains[ei2].resp <= 0.0 and ei2 < bot_count {
                     actors[ei2].hp = enemy_hp_max
                     actors[ei2].sh = actors[ei2].shmax   // respawn with a full shield
                     actors[ei2].mag[0] = mag_size_w[0]; actors[ei2].mag[1] = mag_size_w[1]
@@ -2930,7 +3010,7 @@ fn main() {
             if over_t <= 0.0 {
                 kills = 0
                 deaths = 0
-                round_timer = 120.0
+                round_timer = round_len
                 round_over = false
                 won = false
                 respawn_req = 1.0
