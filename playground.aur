@@ -1252,7 +1252,7 @@ fn main() {
     let pkz = [0.0, 45.0, 0.0, 0.0 - 40.0, 0.0 - 40.0, 40.0, 40.0, 42.0, 0.0 - 42.0, 0.0, 0.0]
     // 0 heal (centre tower), 1 heal (corner), 2 shield (roof, scarce), 3-6 ammo (quadrants),
     // 7 heal, 8 ammo, 9 ammo, 10 heal - ammo + heal are common, shields rare.
-    let pktype = [0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 0.0, 0.0, 2.0, 2.0, 0.0]
+    let pktype = [1.0, 0.0, 1.0, 2.0, 2.0, 1.0, 1.0, 0.0, 1.0, 2.0, 0.0]
     let mut pkcd = [0.0; 11]   // respawn cooldown; 0 = available
     let pk_respawn = 4.0   // pickups respawn fast so ammo stays available for everyone
 
@@ -1393,8 +1393,8 @@ fn main() {
         7.0,    // slide_boost    (big lurch - slide is THE ground speed tool now)
         1.2,    // slide_friction
         5.0,    // slide_min
-        14.0,   // dash_speed     (punchy midair boost)
-        1.1,    // dash_cd
+        21.0,   // dash_speed     (bigger punchy midair boost)
+        0.0,    // dash_cd        (no cooldown - dash whenever)
         1.0,    // air_jumps
         4.0,    // wall_gravity   (idle slide-down rate)
         5.0,    // wall_speed     (run-along speed; overspeed is preserved)
@@ -2054,6 +2054,9 @@ fn main() {
                 while rp < 28 { plife[rp] = 0.0; rp = rp + 1 }
                 rp = 0
                 while rp < drop_n { droplife[rp] = 0.0; rp = rp + 1 }
+                rp = 0
+                while rp < 6 { kf_time[rp] = 0.0; rp = rp + 1 }   // clear the kill feed on a fresh game
+                kf_cur = 0
                 let mut rb = 0
                 while rb < bot_n {
                     actors[rb].hp = enemy_hp_max
@@ -3778,9 +3781,8 @@ fn main() {
         }
         let mut b = 0
         while b < bar {
-            pixel(40 + b, fbh - 42, cr, cg, cb)
-            pixel(40 + b, fbh - 41, cr, cg, cb)
-            pixel(40 + b, fbh - 40, cr, cg, cb)
+            let mut vrow = 0
+            while vrow < 8 { pixel(40 + b, fbh - 53 + vrow, cr, cg, cb); vrow = vrow + 1 }
             b = b + 1
         }
 
@@ -3811,35 +3813,32 @@ fn main() {
         }
 
         // Health (green) + shield (cyan) bars, bottom-left.
-        let mut hwi = (actors[5].hp / php_max * 240.0) as i64
+        let mut hwi = (actors[5].hp / php_max * 300.0) as i64
         if hwi < 0 { hwi = 0 }
         let mut hb2 = 0
         while hb2 < hwi {
-            pixel(40 + hb2, fbh - 20, 70, 210, 90)
-            pixel(40 + hb2, fbh - 19, 70, 210, 90)
-            pixel(40 + hb2, fbh - 18, 70, 210, 90)
-            pixel(40 + hb2, fbh - 17, 70, 210, 90)
+            let mut hrow = 0
+            while hrow < 11 { pixel(40 + hb2, fbh - 25 + hrow, 70, 210, 90); hrow = hrow + 1 }
             hb2 = hb2 + 1
         }
-        let mut swi = (actors[5].sh / psh_max * 240.0) as i64
+        let mut swi = (actors[5].sh / psh_max * 300.0) as i64
         if swi < 0 { swi = 0 }
-        if swi > 240 { swi = 240 }   // overshield reads as a full bar
+        if swi > 300 { swi = 300 }   // overshield reads as a full bar
         let mut sb2 = 0
         while sb2 < swi {
-            pixel(40 + sb2, fbh - 30, 120, 200, 255)
-            pixel(40 + sb2, fbh - 29, 120, 200, 255)
-            pixel(40 + sb2, fbh - 28, 120, 200, 255)
+            let mut srow = 0
+            while srow < 11 { pixel(40 + sb2, fbh - 39 + srow, 120, 200, 255); srow = srow + 1 }
             sb2 = sb2 + 1
         }
-        // Shield CELLS carried (Apex-style): cyan pips right of the shield bar.
+        // Shield CELLS carried (Apex-style): cyan pips right of the (wider) shield bar.
         let mut cc = 0
         while cc < actors[5].cells {
-            let cpx = 290 + cc * 14
+            let cpx = 352 + cc * 16
             let mut cpy = 0
-            while cpy < 9 {
+            while cpy < 11 {
                 let mut cpw = 0
-                while cpw < 10 {
-                    pixel(cpx + cpw, fbh - 31 + cpy, 90, 215, 255)
+                while cpw < 12 {
+                    pixel(cpx + cpw, fbh - 39 + cpy, 90, 215, 255)
                     cpw = cpw + 1
                 }
                 cpy = cpy + 1
@@ -3893,14 +3892,19 @@ fn main() {
         while ko < 6 {
             let ksl = (kf_cur + ko) % 6   // start at the oldest active slot, walk to newest
             if kf_time[ksl] > 0.0 {
-                let kfy = 100 + krow * 24
+                let kfy = 92 + krow * 24
                 let kn = slot_name(kf_killer[ksl], pl_i, username, uname_len)
                 let vn = slot_name(kf_victim[ksl], pl_i, username, uname_len)
                 let kw = text_width(kn, 18)
-                let fullw = kw + text_width(" > ", 18) + text_width(vn, 18)
-                let kx = fbw - 16 - fullw
-                draw_text(kx, kfy, kn, 18, col_gold)
-                draw_text(kx + kw, kfy, " > " + vn, 18, col_white)
+                // The local player's name is specially highlighted: bright cyan when YOU
+                // got the kill, red when YOU were the victim; everyone else gold/white.
+                let mut kc = col_gold
+                if kf_killer[ksl] == pl_i { kc = 90 * 65536 + 230 * 256 + 255 }
+                let mut vc = col_white
+                if kf_victim[ksl] == pl_i { vc = 255 * 65536 + 90 * 256 + 90 }
+                draw_text(16, kfy, kn, 18, kc)
+                draw_text(16 + kw, kfy, " > ", 18, col_white)
+                draw_text(16 + kw + text_width(" > ", 18), kfy, vn, 18, vc)
                 krow = krow + 1
             }
             ko = ko + 1
