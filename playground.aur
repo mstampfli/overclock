@@ -2436,9 +2436,11 @@ fn main() {
         }
         net_send_input(blob)
         net_update(dt)
-        // GUEST: reconcile local boxes to the host's authoritative positions. BLEND toward them
-        // (smooth) when close, SNAP when far off (a fresh/teleported box), so a sliding crate
-        // reads smoothly instead of stair-stepping at the snapshot rate.
+        // GUEST: boxes are PREDICTED locally (they're dynamic bodies the guest's phys3d steps each
+        // frame, incl. your own predicted shove/shot impulses) and only RECONCILED toward the host's
+        // authoritative positions. The old reconcile yanked them 35%/frame toward the host's STALE
+        // (RTT-old) position, overriding the local sim = the lag. Now the local prediction drives,
+        // and we apply only a GENTLE pull to cancel drift (snap if it diverges badly).
         if net_mode == 2 and net_object_count() >= crate_n {
             let mut gci = 0
             while gci < crate_n {
@@ -2450,7 +2452,9 @@ fn main() {
                 let ccy = phys3d_y(cch)
                 let ccz = phys3d_z(cch)
                 let cofs = sqrt((tcx - ccx) * (tcx - ccx) + (tcy - ccy) * (tcy - ccy) + (tcz - ccz) * (tcz - ccz))
-                if cofs > 2.0 { phys3d_set_pos(cch, tcx, tcy, tcz) } else { phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.35, ccy + (tcy - ccy) * 0.35, ccz + (tcz - ccz) * 0.35) }
+                // Snap only on a big divergence (a box you never touched that the host moved far);
+                // otherwise nudge softly so YOUR boxes stay crisp and local instead of rubber-banding.
+                if cofs > 3.0 { phys3d_set_pos(cch, tcx, tcy, tcz) } else { if cofs > 0.04 { phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.1, ccy + (tcy - ccy) * 0.1, ccz + (tcz - ccz) * 0.1) } }
                 gci = gci + 1
             }
         }
@@ -3936,7 +3940,7 @@ fn main() {
                 pinvuln = 2.0
                 respawn_req = 1.0
                 // GUEST: signal the host that I respawned (it owns my hp -> resets it to full).
-                if net_mode == 2 { g_resp_ctr = g_resp_ctr + 1.0; g_hp_prev = php_max; g_resp_wait = 1; g_resp_wait_t = 0.6 }
+                if net_mode == 2 { g_resp_ctr = g_resp_ctr + 1.0; g_hp_prev = php_max; g_resp_wait = 1; g_resp_wait_t = 1.5 }
             }
         }
         prev_dead = dead
@@ -4001,7 +4005,7 @@ fn main() {
             // flows through the normal respawn handshake).
             if round_over and g_over == false {
                 oc_meter = 0.0; oc_active = false; oc_timer = 0.0
-                respawn_req = 1.0; g_resp_ctr = g_resp_ctr + 1.0; g_resp_wait = 1; g_resp_wait_t = 0.6
+                respawn_req = 1.0; g_resp_ctr = g_resp_ctr + 1.0; g_resp_wait = 1; g_resp_wait_t = 1.5
             }
             round_over = g_over
         } else {
@@ -4690,7 +4694,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-15", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-16", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
@@ -5074,7 +5078,7 @@ fn main() {
                     if net_mode != 0 { draw_text(cx - text_width("online - match still live", 16) / 2, ply + 74, "online - match still live", 16, col_white) }
                     if menu_btn(cx - 110, ply + 110, 220, 44, pmx, pmy) == 1 { if pclick == 1 { paused = false; grab_mouse(1); input_suppress(0); r3d_blur(0.0); was_paused = false } }
                     draw_centered("RESUME", cx - 110, ply + 110, 220, 44, 24, col_white)
-                    if menu_btn(cx - 110, ply + 168, 220, 44, pmx, pmy) == 1 { if pclick == 1 { input_suppress(0); r3d_blur(0.0); screen = s_title } }
+                    if menu_btn(cx - 110, ply + 168, 220, 44, pmx, pmy) == 1 { if pclick == 1 { if net_started { net_leave() } input_suppress(0); r3d_blur(0.0); screen = s_title; net_started = false } }
                     draw_centered("QUIT TO TITLE", cx - 110, ply + 168, 220, 44, 24, col_white)
                 }
                 if screen != s_game { break }
