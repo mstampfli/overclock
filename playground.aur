@@ -2245,8 +2245,29 @@ fn main() {
         if oc_active { oc_m = 1.0 }
         net_set_meta(2, oc_m)
         if uname_len > 0 { net_set_name(username) }
+        // HOST: replicate authoritative crate positions (boxes are static until shot, so the
+        // engine's change-detection keeps this near-zero traffic). Clients snap to these, and
+        // the host also records them in lag-comp so a rewound shot is blocked by where a box WAS.
+        if net_mode == 1 {
+            net_set_object_count(crate_n)
+            let mut oci = 0
+            while oci < crate_n {
+                let ohh = crates[oci] as i64
+                net_set_object(oci, phys3d_x(ohh), phys3d_y(ohh), phys3d_z(ohh))
+                oci = oci + 1
+            }
+        }
         net_send_input(blob)
         net_update(dt)
+        // GUEST: snap local boxes to the host's authoritative positions, so every machine sees
+        // the same world. Local crate physics is prediction the host corrects here each frame.
+        if net_mode == 2 and net_object_count() >= crate_n {
+            let mut gci = 0
+            while gci < crate_n {
+                phys3d_set_pos(crates[gci] as i64, net_object_x(gci), net_object_y(gci), net_object_z(gci))
+                gci = gci + 1
+            }
+        }
         // Players REPLACE bots: active bots = opponent budget (bot_count) minus connected
         // remotes, so a joining player frees a bot slot and a leaving player gets a bot back.
         let mut num_remotes = net_player_count() - 1
