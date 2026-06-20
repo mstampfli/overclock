@@ -4117,8 +4117,16 @@ fn main() {
             let cvz = phys3d_vel_z(chh3)
             let cspd = sqrt(cvx * cvx + cvz * cvz)
             let mut cai = 0
-            while cai < bot_n + 1 {
-                if actors[cai].hp > 0.0 {
+            while cai < nactors {
+                // Who shoves crates: the local player always; host/practice bots; and on the HOST,
+                // connected CLIENTS (their bodies sit at the guests' net positions) - so a guest
+                // sliding into a box now moves the AUTHORITATIVE box, matching its prediction. On a
+                // guest only OUR push is predicted; other players' crate effects reconcile in.
+                let mut cinteract = 0
+                if cai == pl_i { cinteract = 1 }
+                if cai < bot_n and net_mode != 2 { cinteract = 1 }
+                if cai > pl_i and net_mode == 1 and apid[cai] != 9999 { cinteract = 1 }
+                if cinteract == 1 and actors[cai].hp > 0.0 {
                     let apx = phys3d_x(actors[cai].hdl as i64)
                     let apz = phys3d_z(actors[cai].hdl as i64)
                     let ddx = apx - ccx
@@ -4131,7 +4139,7 @@ fn main() {
                         // The whole crate interaction is local movers only (bots + you):
                         // remotes are net-authoritative and crates aren't replicated yet.
                         let toward = cvx * ddx + cvz * ddz
-                        if cspd > 3.5 and toward > 0.0 {
+                        if cspd > 3.5 and toward > 0.0 and cai <= pl_i {
                             let mut kf = cspd * 0.2
                             if kf > 4.0 { kf = 4.0 }
                             if cai == pl_i {
@@ -4148,12 +4156,10 @@ fn main() {
                         }
                         // Actor -> shove the crate away (a SMALL nudge, scaled lightly by the
                         // player's speed so a fast slide moves it just a little further).
-                        let mut pushf = 0.6
-                        if cai == pl_i {
-                            let pvx = net_local_state(4)
-                            let pvz = net_local_state(6)
-                            pushf = sqrt(pvx * pvx + pvz * pvz) * 0.07 + 0.6
-                        }
+                        let mut psp = 0.0
+                        if cai == pl_i { psp = sqrt(net_local_state(4) * net_local_state(4) + net_local_state(6) * net_local_state(6)) }
+                        else { if cai > pl_i { psp = sqrt(net_player_state(apid[cai], 4) * net_player_state(apid[cai], 4) + net_player_state(apid[cai], 6) * net_player_state(apid[cai], 6)) } }
+                        let pushf = psp * 0.07 + 0.6
                         phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 0.35, 0.0 - ddz / dd * pushf)
                     }
                 }
@@ -4694,7 +4700,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-16", 18, 65280)
+        draw_text(12, 12, "BUILD FLOATFIX-17", 18, 65280)
         let vx = net_local_state(4)
         let vz = net_local_state(6)
         let spd = sqrt(vx * vx + vz * vz)
