@@ -4152,7 +4152,14 @@ fn main() {
                 let ex = net_player_x(pid)
                 let ey = net_player_y(pid)
                 let ez = net_player_z(pid)
-                let eyaw = net_player_yaw(pid)
+                let mut eyaw = net_player_yaw(pid)
+                // HUMAN remotes broadcast their raw LOOK-yaw, whose forward is (sin,-cos)
+                // (see sim_step hx/hz). But r3d_draw + the bot `face` convention is atan2(dx,dz).
+                // Feed look-yaw straight in and the model+weapon render 180-mirrored ("I look
+                // left, the guest sees me looking right"). Convert into face-space so a guest
+                // renders EXACTLY like a bot facing the same way. Bots (pid>=1000) already
+                // broadcast `face`, so leave them untouched.
+                if pid < 1000 { eyaw = atan2(sin(eyaw), 0.0 - cos(eyaw)) }
                 // GUEST displays the host's replicated hp/shield. HOST OWNS this client's hp/
                 // shield (managed in the survivability block above), so it stays host-owned here.
                 if net_mode == 2 { actors[ai].hp = rhp; actors[ai].sh = net_player_meta(pid, 1) }
