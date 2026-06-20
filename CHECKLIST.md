@@ -42,7 +42,11 @@ Cadence: compile + commit + push after each item.
 - [x] Escape backs out of settings (one level) and lobby (to title); pause Escape only resumes
 - [x] Pause: blurred live scene behind an in-loop overlay (engine r3d_blur shader)
 - [x] Pause freezes ONLY in practice (dt=0 + input_suppress); online stays live/synced
+- [x] text_width works for runtime strings (was literal-only -> fixed kill-feed/label centering)
+- [x] draw_centered helper used uniformly across all menu buttons/steppers/fields (H+V centre)
+- [x] Crosshair editor (own screen): size/gap/thickness/dot/colour + live preview, persisted
+- [x] Engine: FULL lexical block scoping (let scoped to its block; was a flat function scope)
 - [ ] Electric/Fresnel rim shield shader (do LAST, per request)
-- [ ] Sync names + shield/OC state to remote players (no metadata channel yet)
-- [ ] Menu reorg + submenus (settings is cramped)
-- [ ] Crosshair editor · weapon bone-attach · portable build (font)
+- [ ] Sync names + shield/OC state to remote players (needs a netcode metadata channel + live MP test)
+- [ ] Menu reorg + submenus (settings still cramped)
+- [ ] weapon bone-attach · portable build (bundle a free font, system-AGENCYB fallback)
