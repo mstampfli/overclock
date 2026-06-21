@@ -1,0 +1,21 @@
+// Verify net_serve runs an Aurora closure on a SEPARATE thread, concurrently with main.
+// Expect [server] and [client] lines to interleave.
+fn main() {
+    net_serve(|| {
+        let mut i = 0
+        while i < 6 {
+            println("[server thread] tick " + str(i))
+            sleep_ms(35)
+            i = i + 1
+        }
+        0
+    })
+    let mut j = 0
+    while j < 6 {
+        println("[client/main]  tick " + str(j))
+        sleep_ms(35)
+        j = j + 1
+    }
+    sleep_ms(150)   // let the server thread finish so we see its output
+    println("done")
+}
