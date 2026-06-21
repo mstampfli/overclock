@@ -1,0 +1,22 @@
+// Loot: bots fight + die -> the server spawns drops at the bodies and broadcasts them over the fx
+// channel; the client must SEE drops appear (net_fx_count > 0).
+fn main() {
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    net_join("127.0.0.1", 45300)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    let input = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let mut max_fx = 0
+    let mut saw_drop = 0
+    let mut t = 0
+    while t < 500 {
+        net_send_input(input); net_update(0.016)
+        let fc = net_fx_count()
+        if fc > max_fx { max_fx = fc }
+        if fc > 0 { saw_drop = 1 }
+        net_kills_clear(); net_shots_clear()
+        t = t + 1; sleep_ms(10)
+    }
+    println("max drops seen at once = " + str(max_fx) + " (expect > 0 once a bot dies)")
+    println("RESULT saw-loot-drops=" + str(saw_drop) + " (expect 1)")
+}

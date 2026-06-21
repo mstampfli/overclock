@@ -117,6 +117,86 @@ fn round_tick(w: world::World, dt: f64) -> i64 {
     0
 }
 
+// Spawn a loot drop (type 0 health / 1 shield cell / 2 ammo) at (x,z) in the first free drop slot.
+fn spawn_drop(w: world::World, x: f64, z: f64, dtype: f64) -> i64 {
+    let mut i = 0
+    while i < 6 {
+        if w.droplife[i] <= 0.0 {
+            w.dropx[i] = x
+            w.dropy[i] = 0.6
+            w.dropz[i] = z
+            w.droptype[i] = dtype
+            w.droplife[i] = 12.0
+            return 0
+        }
+        i = i + 1
+    }
+    0
+}
+
+// LOOT: age out drops, and let any live actor (bot or client) standing on one collect it - health
+// to full, ammo to reserve, a shield cell to inventory. Authoritative on the server; clients render
+// the drops from the fx channel and never collect locally (so loot never doubles or desyncs).
+fn loot_tick(w: world::World, dt: f64) -> i64 {
+    let mut i = 0
+    while i < 6 {
+        if w.droplife[i] > 0.0 { w.droplife[i] = w.droplife[i] - dt }
+        i = i + 1
+    }
+    let mut a = 0
+    while a < 9 {
+        let alive = ((a < w.round.bots) or (a >= 6 and w.apid[a] != 9999)) and w.actors[a].hp > 0.0
+        if alive {
+            let ax = phys3d_x(w.actors[a].hdl)
+            let az = phys3d_z(w.actors[a].hdl)
+            let mut d = 0
+            while d < 6 {
+                if w.droplife[d] > 0.0 {
+                    let dx = ax - w.dropx[d]
+                    let dz = az - w.dropz[d]
+                    if sqrt(dx * dx + dz * dz) < 1.4 {
+                        let ty = w.droptype[d]
+                        if ty < 0.5 {
+                            if w.actors[a].hp < 100.0 { w.actors[a].hp = 100.0; w.droplife[d] = 0.0 }
+                        } else {
+                            if ty < 1.5 {
+                                if w.actors[a].cells < 4 { w.actors[a].cells = w.actors[a].cells + 1; w.droplife[d] = 0.0 }
+                            } else {
+                                w.actors[a].res[0] = w.actors[a].res[0] + 30
+                                w.droplife[d] = 0.0
+                            }
+                        }
+                    }
+                }
+                d = d + 1
+            }
+        }
+        a = a + 1
+    }
+    0
+}
+
+// Broadcast the live loot drops over the fx channel (clients render them; kind = droptype 0/1/2).
+fn broadcast_fx(w: world::World) -> i64 {
+    let mut n = 0
+    let mut i = 0
+    while i < 6 {
+        if w.droplife[i] > 0.0 { n = n + 1 }
+        i = i + 1
+    }
+    net_set_fx_count(n)
+    let mut wi = 0
+    let mut d = 0
+    while d < 6 {
+        if w.droplife[d] > 0.0 {
+            net_set_fx(wi, w.dropx[d], w.dropy[d], w.dropz[d], w.droptype[d])
+            wi = wi + 1
+        }
+        d = d + 1
+    }
+    0
+}
+
 // The net id of an actor slot: bots (0..4) are 1000+slot, client slots (6..8) are their mapped net
 // id (apid), 9999 if free. Used to credit kills over the wire in the same id space as the broadcast.
 fn slot_netid(w: world::World, slot: i64) -> i64 {
@@ -138,8 +218,15 @@ fn deaths_tick(w: world::World) -> i64 {
             w.death_done[dv] = 1
             w.actors[dv].hp = 0.0
             w.actors[dv].sh = 0.0
-            w.actors[dv].cells = 0
             w.adeaths[dv] = w.adeaths[dv] + 1
+            // Loot at the body: a health pickup + an ammo box always, plus a shield cell if it
+            // was carrying one (so the kill returns the resource to the arena).
+            let dbx = phys3d_x(w.actors[dv].hdl)
+            let dbz = phys3d_z(w.actors[dv].hdl)
+            spawn_drop(w, dbx, dbz, 0.0)
+            spawn_drop(w, dbx - 0.6, dbz, 2.0)
+            if w.actors[dv].cells > 0 { spawn_drop(w, dbx + 0.6, dbz, 1.0) }
+            w.actors[dv].cells = 0
             if dv < w.round.bots {
                 w.brains[dv].resp = 3.0   // enemy_respawn; the bot pops back via bots_tick
             }
@@ -474,8 +561,10 @@ fn server_main() -> i64 {
         combat_tick(w, 0.016)
         client_shots_tick(w)
         deaths_tick(w)
+        loot_tick(w, 0.016)
         round_tick(w, 0.016)
         broadcast_bots(w)
+        broadcast_fx(w)
         net_update(0.016)   // re-sim connected clients (steps physics) + broadcast snapshots
         net_shots_clear()   // flush this tick's shot announcements to clients
         sleep_ms(16)
