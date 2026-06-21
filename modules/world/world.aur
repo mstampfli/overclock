@@ -119,3 +119,23 @@ struct World {
     // Bot-AI clock (drives aim wobble / fire windows).
     etime: f64
 }
+
+// A zeroed/default World baseline. The caller (server_main) fills in the rest: creates the physics
+// characters and stores each Actor.hdl, sets the bot aim/fire configs in brains[0..bots], lays out
+// the arena + crates, and applies the lobby settings (round.target/len/bots, bot anchors esx/esz).
+// Every actor starts empty (hdl -1, hp 0) and every client slot is free (apid/cpid_h 9999).
+fn new_world() -> World {
+    World {
+        actors: [ Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
+        brains: [ Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 } ; 9 ],
+        round: Round { kills: 0, deaths: 0, timer: 120.0, over: 0, over_t: 0.0, won: 0, target: 15, len: 120.0, bots: 5 },
+        last_hit: [0 - 1; 9], death_done: [0; 9], kr_oc: [0.0; 9], kr_mark: [0.0; 9], akills: [0; 9], adeaths: [0; 9],
+        pkcd: [0.0; 11],
+        dropx: [0.0; 6], dropy: [0.0; 6], dropz: [0.0; 6], droptype: [0.0; 6], droplife: [0.0; 6],
+        prjx: [0.0; 12], prjy: [0.0; 12], prjz: [0.0; 12], prjvx: [0.0; 12], prjvy: [0.0; 12], prjvz: [0.0; 12], prjlife: [0.0; 12], prjsrc: [0.0; 12], prjcur: 0,
+        grx: 0.0, gry: 0.0, grz: 0.0, grvx: 0.0, grvy: 0.0, grvz: 0.0, nfuse: 0.0, nade_live: 0, nade_cd: 0.0,
+        crates: [0 - 1; 12], esx: [0.0; 5], esz: [0.0; 5],
+        apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9],
+        etime: 0.0
+    }
+}

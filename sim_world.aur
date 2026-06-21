@@ -1,0 +1,11 @@
+// Verify world::new_world() builds a valid default World and its fields read back.
+fn main() {
+    let mut w = world::new_world()
+    w.actors[2].hp = 88.0
+    w.brains[2].aim = 0.05
+    w.round.target = 20
+    w.esx[1] = 14.0
+    println("default a0.hdl=" + str(w.actors[0].hdl) + " a0.shmax=" + str((w.actors[0].shmax) as i64) + " apid0=" + str(w.apid[0]) + " crates0=" + str(w.crates[0]) + " last_hit0=" + str(w.last_hit[0]))
+    println("set a2.hp=" + str((w.actors[2].hp) as i64) + " aim*100=" + str((w.brains[2].aim * 100.0) as i64) + " target=" + str(w.round.target) + " esx1=" + str((w.esx[1]) as i64))
+    println("(want hdl=-1 shmax=50 apid0=9999 crates0=-1 last_hit0=-1 | a2.hp=88 aim=5 target=20 esx1=14)")
+}
