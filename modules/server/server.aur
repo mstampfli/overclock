@@ -394,6 +394,122 @@ fn client_shots_tick(w: world::World) -> i64 {
     0
 }
 
+// Radial explosion: damage every live actor within the blast radius (shield then health, linear
+// falloff), scaled by intensity, crediting the source slot for the death sweep. Used by client (and
+// later bot) rockets/grenades. The visual (boom + sparks + sound) is the client's job via the boom
+// channel; this is the authoritative DAMAGE only.
+fn explode(w: world::World, dx: f64, dy: f64, dz: f64, gi: f64, src_slot: i64) -> i64 {
+    let erad = 5.0 * gi   // nade_radius
+    let mut eej = 0
+    while eej < 9 {
+        let live = (eej < w.round.bots) or (eej >= 6 and w.apid[eej] != 9999)
+        if live and w.actors[eej].hp > 0.0 {
+            let h = w.actors[eej].hdl
+            let bdx = phys3d_x(h) - dx
+            let bdy = (phys3d_y(h) + 0.5) - dy
+            let bdz = phys3d_z(h) - dz
+            let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
+            if bdd < erad {
+                let mut dmg = 180.0 * gi * (1.0 - 0.30 * bdd / erad)   // nade_dmg
+                if w.actors[eej].sh > 0.0 {
+                    if w.actors[eej].sh >= dmg { w.actors[eej].sh = w.actors[eej].sh - dmg; dmg = 0.0 }
+                    else { dmg = dmg - w.actors[eej].sh; w.actors[eej].sh = 0.0 }
+                }
+                w.actors[eej].hp = w.actors[eej].hp - dmg
+                if eej < w.round.bots { w.brains[eej].pop = 0.15 }
+                w.last_hit[eej] = src_slot
+            }
+        }
+        eej = eej + 1
+    }
+    0
+}
+
+// CLIENT projectiles: a client launches a rocket/grenade (net_projectile_intent); the host SIMULATES
+// the flight in its OWN world to decide WHERE it detonates (a rocket by raycast, a grenade by
+// re-running the arc) and applies the weapon's FIXED intensity - never a client-claimed point or
+// strength, so a cheat can't blow up arbitrary places. Then it announces the boom + applies the
+// authoritative radial damage. The launching client already predicted its own blast locally.
+fn client_projectiles_tick(w: world::World) -> i64 {
+    let nsp = net_server_projectile_count()
+    let mut spi = 0
+    while spi < nsp {
+        let pkind = net_server_projectile_kind(spi)
+        let pox = net_server_projectile_ox(spi)
+        let poy = net_server_projectile_oy(spi)
+        let poz = net_server_projectile_oz(spi)
+        let pvx = net_server_projectile_vx(spi)
+        let pvy = net_server_projectile_vy(spi)
+        let pvz = net_server_projectile_vz(spi)
+        let pspid = net_server_projectile_shooter(spi)
+        let mut psai = 0 - 1
+        let mut pra = 6
+        while pra < 9 {
+            if w.apid[pra] == pspid { psai = pra }
+            pra = pra + 1
+        }
+        if psai >= 0 {
+            let pexcl = w.actors[psai].hdl
+            let mut det = 0
+            let mut dx = pox
+            let mut dy = poy
+            let mut dz = poz
+            let mut pgi = 1.1   // rocket_intensity
+            if pkind == 0 {
+                let pvl = sqrt(pvx * pvx + pvy * pvy + pvz * pvz)
+                if pvl > 0.001 {
+                    let phb = phys3d_raycast_ex(pexcl, pox, poy, poz, pvx / pvl, pvy / pvl, pvz / pvl, 120.0)
+                    if phb >= 0 { dx = phys3d_hit_x(); dy = phys3d_hit_y(); dz = phys3d_hit_z(); det = 1 }
+                }
+            } else {
+                let mut gx = pox
+                let mut gy = poy
+                let mut gz = poz
+                let mut gvx = pvx
+                let mut gvy = pvy
+                let mut gvz = pvz
+                let mut gfu = 1.4   // nade_fuse
+                while gfu > 0.0 {
+                    gfu = gfu - 0.016
+                    gvy = gvy - 20.0 * 0.016   // nade_grav
+                    let gsp = sqrt(gvx * gvx + gvy * gvy + gvz * gvz)
+                    if gsp > 0.001 {
+                        let ghb = phys3d_raycast_ex(pexcl, gx, gy, gz, gvx / gsp, gvy / gsp, gvz / gsp, gsp * 0.016 + 0.08)
+                        if ghb >= 0 {
+                            let gnx = phys3d_hit_nx()
+                            let gny = phys3d_hit_ny()
+                            let gnz = phys3d_hit_nz()
+                            gx = phys3d_hit_x() + gnx * 0.06
+                            gy = phys3d_hit_y() + gny * 0.06
+                            gz = phys3d_hit_z() + gnz * 0.06
+                            let gvd = gvx * gnx + gvy * gny + gvz * gnz
+                            gvx = (gvx - 2.0 * gvd * gnx) * 0.45
+                            gvy = (gvy - 2.0 * gvd * gny) * 0.45
+                            gvz = (gvz - 2.0 * gvd * gnz) * 0.45
+                        } else {
+                            gx = gx + gvx * 0.016
+                            gy = gy + gvy * 0.016
+                            gz = gz + gvz * 0.016
+                        }
+                    }
+                }
+                dx = gx
+                dy = gy
+                dz = gz
+                det = 1
+                pgi = 1.0   // nade_intensity
+            }
+            if det == 1 {
+                net_push_boom(pspid, dx, dy, dz, pgi)
+                explode(w, dx, dy, dz, pgi, psai)
+            }
+        }
+        spi = spi + 1
+    }
+    net_server_projectiles_clear()
+    0
+}
+
 // Bot AI MOVEMENT (ported from the playground bot loop, adapted to the server: the "enemy" is the
 // nearest connected CLIENT or other bot, read over the net / physics). Hunt + standoff ring + juke
 // + gravity + jump + knockback decay + collide-and-slide. Goals (pickups), grapple layer on later.
@@ -560,6 +676,7 @@ fn server_main() -> i64 {
         bots_tick(w, 0.016)
         combat_tick(w, 0.016)
         client_shots_tick(w)
+        client_projectiles_tick(w)
         deaths_tick(w)
         loot_tick(w, 0.016)
         round_tick(w, 0.016)
