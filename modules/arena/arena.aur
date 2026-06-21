@@ -1,0 +1,82 @@
+// OVERCLOCK - the arena geometry, SHARED between the server (builds colliders) and the client
+// (builds render meshes from the same data) so the host's authoritative arena exactly matches what
+// every machine renders. Layout: a 110x110 walled+roofed hall - 0-3 perimeter walls (24m tall),
+// 4..27 an 8-fold ring of outer towers (r38) / mid buildings (r20) / low cover (r11), 28 a central
+// high-ground tower, 29 the roof slab; plus 8 tilted ramps/perches. One source of truth = no drift.
+
+fn geo_count() -> i64 { 30 }
+fn ext_count() -> i64 { 8 }
+
+// Fill the 30-box static-geometry arrays (centre gc*, half-extents gh*) by reference - the procedural
+// ring layout. Both the server (colliders) and the client (meshes) call this for identical geometry.
+fn fill_geo(gcx: [f64; 30], gcy: [f64; 30], gcz: [f64; 30], ghx: [f64; 30], ghy: [f64; 30], ghz: [f64; 30]) {
+    gcx[0] = 0.0; gcy[0] = 12.0; gcz[0] = 0.0 - 55.0; ghx[0] = 55.0; ghy[0] = 12.0; ghz[0] = 0.5
+    gcx[1] = 0.0; gcy[1] = 12.0; gcz[1] = 55.0; ghx[1] = 55.0; ghy[1] = 12.0; ghz[1] = 0.5
+    gcx[2] = 55.0; gcy[2] = 12.0; gcz[2] = 0.0; ghx[2] = 0.5; ghy[2] = 12.0; ghz[2] = 55.0
+    gcx[3] = 0.0 - 55.0; gcy[3] = 12.0; gcz[3] = 0.0; ghx[3] = 0.5; ghy[3] = 12.0; ghz[3] = 55.0
+    let mut gi = 4
+    let mut ti = 0
+    while ti < 8 {
+        let ao = (ti as f64) * 0.7854
+        let th = 5.0 + ((ti % 4) as f64) * 3.0
+        gcx[gi] = cos(ao) * 38.0; gcy[gi] = th; gcz[gi] = sin(ao) * 38.0
+        ghx[gi] = 3.0; ghy[gi] = th; ghz[gi] = 3.0
+        gi = gi + 1
+        let am = ao + 0.3927
+        let bh = 3.0 + ((ti % 3) as f64) * 2.0
+        gcx[gi] = cos(am) * 20.0; gcy[gi] = bh; gcz[gi] = sin(am) * 20.0
+        ghx[gi] = 3.5; ghy[gi] = bh; ghz[gi] = 3.5
+        gi = gi + 1
+        gcx[gi] = cos(ao) * 11.0; gcy[gi] = 1.0; gcz[gi] = sin(ao) * 11.0
+        ghx[gi] = 1.5; ghy[gi] = 1.0; ghz[gi] = 1.5
+        gi = gi + 1
+        ti = ti + 1
+    }
+    gcx[gi] = 0.0; gcy[gi] = 5.0; gcz[gi] = 0.0; ghx[gi] = 4.0; ghy[gi] = 5.0; ghz[gi] = 4.0
+    gcx[29] = 0.0; gcy[29] = 24.3; gcz[29] = 0.0; ghx[29] = 55.0; ghy[29] = 0.3; ghz[29] = 55.0
+}
+
+// Fill the 8 tilted ramp/perch arrays by reference (centre ex*, half-extents exh*, single-axis tilt
+// exr*). Ramps 0-3 rise to mid-level teal perches 4-7. exry is always 0 (single-axis tilt).
+fn fill_ext(exx: [f64; 8], exy: [f64; 8], exz: [f64; 8], exhx: [f64; 8], exhy: [f64; 8], exhz: [f64; 8], exrx: [f64; 8], exrz: [f64; 8]) {
+    exx[0] = 0.0; exx[1] = 0.0; exx[2] = 21.75; exx[3] = 0.0 - 21.75; exx[4] = 0.0; exx[5] = 0.0; exx[6] = 28.0; exx[7] = 0.0 - 28.0
+    exy[0] = 2.0; exy[1] = 2.0; exy[2] = 2.0; exy[3] = 2.0; exy[4] = 4.0; exy[5] = 4.0; exy[6] = 4.0; exy[7] = 4.0
+    exz[0] = 21.75; exz[1] = 0.0 - 21.75; exz[2] = 0.0; exz[3] = 0.0; exz[4] = 28.0; exz[5] = 0.0 - 28.0; exz[6] = 0.0; exz[7] = 0.0
+    exhx[0] = 3.0; exhx[1] = 3.0; exhx[2] = 3.4; exhx[3] = 3.4; exhx[4] = 3.5; exhx[5] = 3.5; exhx[6] = 3.5; exhx[7] = 3.5
+    exhy[0] = 0.3; exhy[1] = 0.3; exhy[2] = 0.3; exhy[3] = 0.3; exhy[4] = 0.3; exhy[5] = 0.3; exhy[6] = 0.3; exhy[7] = 0.3
+    exhz[0] = 3.4; exhz[1] = 3.4; exhz[2] = 3.0; exhz[3] = 3.0; exhz[4] = 3.5; exhz[5] = 3.5; exhz[6] = 3.5; exhz[7] = 3.5
+    exrx[0] = 0.0 - 0.63; exrx[1] = 0.63; exrx[2] = 0.0; exrx[3] = 0.0; exrx[4] = 0.0; exrx[5] = 0.0; exrx[6] = 0.0; exrx[7] = 0.0
+    exrz[0] = 0.0; exrz[1] = 0.0; exrz[2] = 0.63; exrz[3] = 0.0 - 0.63; exrz[4] = 0.0; exrz[5] = 0.0; exrz[6] = 0.0; exrz[7] = 0.0
+}
+
+// Build ALL the static arena colliders (floor + geo + ramps) into the CURRENT phys3d world. The
+// server calls this on its thread; the client calls it for its own movement-prediction physics.
+fn build_colliders() {
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 100.0, 0.5, 100.0, 0)   // ground
+    let mut gcx = [0.0; 30]
+    let mut gcy = [0.0; 30]
+    let mut gcz = [0.0; 30]
+    let mut ghx = [0.0; 30]
+    let mut ghy = [0.0; 30]
+    let mut ghz = [0.0; 30]
+    fill_geo(gcx, gcy, gcz, ghx, ghy, ghz)
+    let mut gbi = 0
+    while gbi < 30 {
+        phys3d_add_box(gcx[gbi], gcy[gbi], gcz[gbi], ghx[gbi], ghy[gbi], ghz[gbi], 0)
+        gbi = gbi + 1
+    }
+    let mut exx = [0.0; 8]
+    let mut exy = [0.0; 8]
+    let mut exz = [0.0; 8]
+    let mut exhx = [0.0; 8]
+    let mut exhy = [0.0; 8]
+    let mut exhz = [0.0; 8]
+    let mut exrx = [0.0; 8]
+    let mut exrz = [0.0; 8]
+    fill_ext(exx, exy, exz, exhx, exhy, exhz, exrx, exrz)
+    let mut exi = 0
+    while exi < 8 {
+        phys3d_add_box_rot(exx[exi], exy[exi], exz[exi], exhx[exi], exhy[exi], exhz[exi], exrx[exi], 0.0, exrz[exi], 0)
+        exi = exi + 1
+    }
+}

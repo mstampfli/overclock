@@ -1,22 +1,38 @@
-// Headless client-server proof: server runs bots + combat + DEATH SWEEP + respawn handshake. The
-// client moves into the fight; a bot kills it -> it receives a KILL event (victim = me, killer a
-// bot); after it signals a respawn (++ meta 3) the host restores its hp.
+// Headless client-server proof in the REAL arena: server runs bots + combat + death sweep + respawn.
+// The client CHARGES the nearest bot (faces it + runs in) so it gets into close combat, dies, gets a
+// kill event (victim=me, killer a bot), and after signaling a respawn the host restores its hp.
 fn main() {
     net_serve(|| { server::server_main() })
     sleep_ms(250)
     net_join("127.0.0.1", 45300)
     net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
-    let input = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    net_spawn_at(0.0, 0.9, 45.0)
     let mut t = 0
-    while t < 40 { net_send_input(input); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    while t < 40 { net_send_input([0.0; 20]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
     let myid = net_my_id()
     let mut killed_by_bot = 0
     let mut min_hp = 1000.0
     let mut resp_signaled = 0
     let mut hp_after_resp = 0.0
     t = 0
-    while t < 460 {
-        net_send_input(input); net_update(0.016)
+    while t < 600 {
+        let ex = net_local_x()
+        let ez = net_local_z()
+        let mut bestd = 100000.0
+        let mut yaw = 0.0
+        let mut bi = 0
+        while bi < 3 {
+            let bid = 1000 + bi
+            if net_player_meta(bid, 0) > 0.0 {
+                let bx = net_player_x(bid)
+                let bz = net_player_z(bid)
+                let d = sqrt((bx - ex) * (bx - ex) + (bz - ez) * (bz - ez))
+                if d < bestd { bestd = d; yaw = atan2(bx - ex, 0.0 - (bz - ez)) }
+            }
+            bi = bi + 1
+        }
+        net_send_input([1.0, 0.0, yaw, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        net_update(0.016)
         let kc = net_kill_count()
         let mut ki = 0
         while ki < kc { if net_kill_victim(ki) == myid and net_kill_killer(ki) >= 1000 { killed_by_bot = 1 } ki = ki + 1 }

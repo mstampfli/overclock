@@ -638,17 +638,11 @@ fn broadcast_bots(w: world::World) -> i64 {
 // now (a host->server control channel for lobby settings comes later). Loops until the process exits.
 fn server_main() -> i64 {
     phys3d_init(0.0, 0.0 - 16.0, 0.0)   // own physics world; gravity matches sim cfg[0]
-    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 30.0, 0.5, 30.0, 0)   // static floor (flag 0)
-    // Perimeter walls so combatants stay in the arena (placeholder; the real arena geometry is a
-    // later step). A 50x50 box bounded by 4 static walls.
-    phys3d_add_box(25.0, 4.0, 0.0, 0.5, 4.0, 25.0, 0)
-    phys3d_add_box(0.0 - 25.0, 4.0, 0.0, 0.5, 4.0, 25.0, 0)
-    phys3d_add_box(0.0, 4.0, 25.0, 25.0, 4.0, 0.5, 0)
-    phys3d_add_box(0.0, 4.0, 0.0 - 25.0, 25.0, 4.0, 0.5, 0)
+    arena::build_colliders()            // the REAL arena (floor + 30 static boxes + 8 ramps)
     let mut w = world::new_world()
     w.round.bots = 3
-    let anchx = [0.0 - 6.0, 6.0, 0.0]
-    let anchz = [10.0, 10.0, 0.0 - 8.0]
+    let anchx = [0.0 - 20.0, 20.0, 0.0]
+    let anchz = [20.0, 20.0, 0.0 - 25.0]
     let mut bi = 0
     while bi < w.round.bots {
         w.esx[bi] = anchx[bi]
@@ -664,7 +658,7 @@ fn server_main() -> i64 {
     }
     net_host(45300)
     net_dedicated()
-    net_spawn_at(0.0, 0.9, 0.0)
+    net_spawn_at(0.0, 0.9, 45.0)   // the real arena spawn (matches the game)
     net_sim(|state, input| {
         sim::sim_step(state, input, sim::default_cfg())
         0

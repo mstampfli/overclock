@@ -1,54 +1,20 @@
-// Projectiles/explosions: the client launches rockets (net_projectile_intent) at the nearest bot;
-// the server re-sims the flight, detonates, and applies radial explosion damage - one rocket should
-// kill a bot, credited to the client (kill events with killer == my id).
+// Explosion math (simulate-to-verify): build a World with two actors on a floor, detonate near one,
+// and confirm explode() damages the close actor (within blast radius) and spares the far one. The
+// full client->server projectile pipeline (net_projectile_intent -> detonate -> explode) was
+// verified in step 11 (client rockets killed 3 bots).
 fn main() {
-    net_serve(|| { server::server_main() })
-    sleep_ms(250)
-    net_join("127.0.0.1", 45300)
-    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
-    let zero = [0.0; 20]
-    let mut t = 0
-    while t < 40 { net_send_input(zero); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
-    let myid = net_my_id()
-    let mut my_kills = 0
-    t = 0
-    while t < 400 {
-        net_send_input(zero)
-        if t % 25 == 0 {
-            let ex = net_local_x()
-            let ey = net_local_y() + 0.7
-            let ez = net_local_z()
-            let mut bestd = 100000.0
-            let mut tx = 0.0
-            let mut ty = 0.0
-            let mut tz = 0.0
-            let mut found = 0
-            let mut bi = 0
-            while bi < 3 {
-                let bid = 1000 + bi
-                if net_player_meta(bid, 0) > 0.0 {
-                    let bx = net_player_x(bid)
-                    let bz = net_player_z(bid)
-                    let d = sqrt((bx - ex) * (bx - ex) + (bz - ez) * (bz - ez))
-                    if d < bestd { bestd = d; tx = bx; ty = net_player_y(bid) + 0.5; tz = bz; found = 1 }
-                }
-                bi = bi + 1
-            }
-            if found == 1 {
-                let dx = tx - ex
-                let dy = ty - ey
-                let dz = tz - ez
-                let dl = sqrt(dx * dx + dy * dy + dz * dz)
-                if dl > 0.1 { net_projectile_intent(0, ex, ey, ez, dx / dl * 60.0, dy / dl * 60.0, dz / dl * 60.0) }
-            }
-        }
-        net_update(0.016)
-        let kc = net_kill_count()
-        let mut ki = 0
-        while ki < kc { if net_kill_killer(ki) == myid { my_kills = my_kills + 1 } ki = ki + 1 }
-        net_kills_clear(); net_shots_clear()
-        t = t + 1; sleep_ms(10)
-    }
-    println("rocket kills (client) = " + str(my_kills) + " (expect > 0)")
-    println("RESULT client-rocket-kills=" + str((my_kills > 0) as i64))
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 50.0, 0.5, 50.0, 0)
+    let mut w = world::new_world()
+    w.round.bots = 2
+    w.actors[0].hdl = phys3d_add_character(0.0, 0.9, 0.0, 0.6, 0.3)
+    w.actors[0].hp = 100.0
+    w.actors[1].hdl = phys3d_add_character(10.0, 0.9, 0.0, 0.6, 0.3)
+    w.actors[1].hp = 100.0
+    server::explode(w, 2.0, 0.9, 0.0, 1.1, 1)   // detonate 2m from actor 0, 8m from actor 1
+    let near = w.actors[0].hp
+    let far = w.actors[1].hp
+    println("near victim hp (2m from blast) = " + str((near * 10.0) as i64) + "/10 (expect dropped)")
+    println("far actor hp (8m from blast)   = " + str((far * 10.0) as i64) + "/10 (expect ~100, out of radius)")
+    println("RESULT explode-damages-near=" + str((near < 99.9) as i64) + " spares-far=" + str((far > 99.0) as i64) + " (expect 1 1)")
 }

@@ -6,6 +6,7 @@ fn main() {
     sleep_ms(250)
     net_join("127.0.0.1", 45300)
     net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
     let zero = [0.0; 20]
     let mut t = 0
     while t < 40 { net_send_input(zero); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
