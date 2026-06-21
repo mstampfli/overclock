@@ -3694,7 +3694,10 @@ fn main() {
                     if net_player_meta(pid, 8) > 0.5 { ruwant = kat_swing_clip }
                     if ushoot[ai] != ruwant { r3d_anim_play_upper(actor_models[ai], ruwant, 1, 1.0, 0.1, upper_mask_root); ushoot[ai] = ruwant }
                     r3d_anim_update(actor_models[ai], dt)
-                    if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.5), ptint(apid[ai], 1, 1.5), ptint(apid[ai], 2, 1.5)) } else { if actors[ai].sh > 0.0 { r3d_draw_shield(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.0), ptint(apid[ai], 1, 1.0), ptint(apid[ai], 2, 1.0)) } }
+                    // A remote that is ITSELF overclocked (its replicated meta 2) glows a bright pulsing
+                    // GOLD so everyone can read who's powered up - independent of my own overclock. Checked
+                    // first; otherwise the existing tint (orange pop while I'M overclocked, shield, or plain).
+                    if net_player_meta(pid, 2) > 0.5 { let ocg = 1.9 + sin(etime * 11.0) * 0.45; r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ocg, ocg * 0.74, 0.28) } else { if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.5), ptint(apid[ai], 1, 1.5), ptint(apid[ai], 2, 1.5)) } else { if actors[ai].sh > 0.0 { r3d_draw_shield(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.0), ptint(apid[ai], 1, 1.0), ptint(apid[ai], 2, 1.0)) } } }
                     // Third-person weapon ATTACHED to the remote's right-hand bone (joint 29).
                     let ryr = eyaw + actor_yaw_off
                     // Draw the katana while swinging (its own offset/scale), the held blue cube while
