@@ -741,6 +741,8 @@ fn main() {
     let mut g_resp_ctr = 0.0     // ++ each time I respawn (meta 3)
     let mut g_heal_ctr = 0.0     // ++ each time I finish a shield-cell channel (meta 5)
     let mut g_hp_prev = 100.0    // last reconciled hp (for the incoming-damage hurt flash)
+    let mut g_pk_cells = 0       // last cells - rises = shield-cell pickup -> play the sound (host==guest)
+    let mut g_pk_res = 60        // last reserve of the equipped weapon - rises = ammo pickup -> sound
     let mut g_hurt = 0           // guest took reconciled damage THIS frame -> resolve the hit
                                  // direction from the incoming shot in the shot-drain loop below
     // Host damage diagnostics (shown small on the HUD when hosting): how the host resolved its own
@@ -1664,11 +1666,21 @@ fn main() {
                 }
                 if g_resp_wait == 0 {
                     if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05; g_hurt = 1 }   // took damage; resolve direction below
+                    // SERVER-DRIVEN pickup sounds: the host owns collection, so play the sound when my
+                    // replicated hp/cells (or local ammo refill) goes UP. Reliable, vs the old local-
+                    // prediction sound that raced the host's collect + usually lost (= "no sound").
+                    if newhp > g_hp_prev + 0.5 and g_hp_prev > 0.5 and dead == false and prev_dead == false { play_sound(7, 80, 0) }   // health pad
                     g_hp_prev = newhp
                     actors[pl_i].hp = newhp
                 }
                 actors[pl_i].sh = net_player_meta(amy, 1)
-                actors[pl_i].cells = net_player_meta(amy, 4) as i64
+                let cells_now = net_player_meta(amy, 4) as i64
+                if cells_now > g_pk_cells and dead == false and prev_dead == false { play_sound(14, 90, 0) }   // shield cell
+                g_pk_cells = cells_now
+                actors[pl_i].cells = cells_now
+                let res_now = actors[pl_i].res[0] + actors[pl_i].res[1]   // total reserve (weapon-switch safe)
+                if res_now > g_pk_res and dead == false and prev_dead == false { play_sound(10, 80, 0) }   // ammo box
+                g_pk_res = res_now
             }
         }
         // GUEST: consume the host's authoritative KILL events. This only DISPLAYS them (kill
@@ -3033,12 +3045,12 @@ fn main() {
                         let fdz = apz - pkz[fp]
                         if sqrt(fdx * fdx + fdz * fdz) < 1.4 {
                             if pktype[fp] < 0.5 {
-                                if actors[ci].hp < php_max { actors[ci].hp = php_max; pkcd[fp] = pk_respawn; if mine == 1 { play_sound(7, 80, 0) } }
+                                if actors[ci].hp < php_max { actors[ci].hp = php_max; pkcd[fp] = pk_respawn; if mine == 1 and net_mode != 2 { play_sound(7, 80, 0) } }
                             } else { if pktype[fp] < 1.5 {
-                                if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; pkcd[fp] = pk_respawn; if mine == 1 { play_sound(14, 90, 0) } }
+                                if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; pkcd[fp] = pk_respawn; if mine == 1 and net_mode != 2 { play_sound(14, 90, 0) } }
                             } else {
                                 // Ammo: refill the EQUIPPED weapon's reserve (same rule for all).
-                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } pkcd[fp] = pk_respawn; if mine == 1 { play_sound(10, 80, 0) } }
+                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } pkcd[fp] = pk_respawn; if mine == 1 and net_mode != 2 { play_sound(10, 80, 0) } }
                             } }
                         }
                     }
@@ -3051,11 +3063,11 @@ fn main() {
                         let gdz = apz - dropz[gp]
                         if sqrt(gdx * gdx + gdz * gdz) < 1.4 {
                             if droptype[gp] < 0.5 {
-                                if actors[ci].hp < php_max { actors[ci].hp = php_max; droplife[gp] = 0.0; if mine == 1 { play_sound(7, 80, 0) } }
+                                if actors[ci].hp < php_max { actors[ci].hp = php_max; droplife[gp] = 0.0; if mine == 1 and net_mode != 2 { play_sound(7, 80, 0) } }
                             } else { if droptype[gp] < 1.5 {
-                                if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; droplife[gp] = 0.0; if mine == 1 { play_sound(14, 90, 0) } }
+                                if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; droplife[gp] = 0.0; if mine == 1 and net_mode != 2 { play_sound(14, 90, 0) } }
                             } else {
-                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
+                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } droplife[gp] = 0.0; if mine == 1 and net_mode != 2 { play_sound(10, 80, 0) } }
                             } }
                         }
                     }
