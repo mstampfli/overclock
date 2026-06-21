@@ -640,9 +640,9 @@ fn server_main() -> i64 {
     phys3d_init(0.0, 0.0 - 16.0, 0.0)   // own physics world; gravity matches sim cfg[0]
     arena::build_colliders()            // the REAL arena (floor + 30 static boxes + 8 ramps)
     let mut w = world::new_world()
-    w.round.bots = 3
-    let anchx = [0.0 - 20.0, 20.0, 0.0]
-    let anchz = [20.0, 20.0, 0.0 - 25.0]
+    w.round.bots = 5
+    let anchx = [0.0 - 20.0, 20.0, 0.0, 0.0 - 25.0, 25.0]
+    let anchz = [20.0, 20.0, 0.0 - 25.0, 0.0 - 10.0, 0.0 - 10.0]
     let mut bi = 0
     while bi < w.round.bots {
         w.esx[bi] = anchx[bi]
@@ -656,8 +656,9 @@ fn server_main() -> i64 {
         w.brains[bi].aim = 0.05
         bi = bi + 1
     }
-    net_host(45300)
+    net_host(45123)                // the game's port (binds 0.0.0.0 so remote clients can join)
     net_dedicated()
+    net_max_clients(3)             // admit up to max_remote human clients
     net_spawn_at(0.0, 0.9, 45.0)   // the real arena spawn (matches the game)
     net_sim(|state, input| {
         sim::sim_step(state, input, sim::default_cfg())

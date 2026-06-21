@@ -3,7 +3,7 @@
 fn main() {
     net_serve(|| { server::server_main() })
     sleep_ms(250)
-    net_join("127.0.0.1", 45300)
+    net_join("127.0.0.1", 45123)
     net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
     net_spawn_at(0.0, 0.9, 45.0)
     let input = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

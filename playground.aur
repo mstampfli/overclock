@@ -1107,12 +1107,17 @@ fn main() {
                             net_join(join_addr, net_port)
                             g_joined = 0   // re-run the join handshake (wait for character init) on every join
                         } else {
-                            if net_host(net_port) == 0 { net_join("127.0.0.1", net_port) }
-                            // Cap joiners to the opponent budget: bots get replaced by players,
-                            // so at most min(bot_count, remote slots) clients are admitted.
-                            let mut cap = bot_count
-                            if cap > max_remote { cap = max_remote }
-                            net_max_clients(cap)
+                            // HOST == GUEST: a host (or practice) launches the DEDICATED server on its
+                            // own thread - it owns the authoritative World and runs the entire sim
+                            // (bots, combat, explosions, projectiles, deaths, round, loot) - then joins
+                            // it as a PURE client over loopback, exactly like a remote guest. The server
+                            // binds 0.0.0.0, so port-forwarded remote players join the very same way.
+                            // Everyone, including the host, now receives the identical net stream.
+                            net_serve(|| { server::server_main() })
+                            sleep_ms(200)   // let the server thread bind before we connect
+                            net_join("127.0.0.1", net_port)
+                            g_joined = 0
+                            net_mode = 2    // we are now just a client; main runs the net_mode==2 path
                         }
                         net_sim(|state, input| {
                             sim::sim_step(state, input, cfg)
@@ -3987,7 +3992,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD NETV2-04 HITFIX+VIG", 18, 65280)
+        draw_text(12, 12, "BUILD NETV2-SWITCH host==guest", 18, 65280)
         // Host hit-resolution diagnostics (tiny, top-left under the stamp): how the host's own
         // shots at players resolved. lc = lag-comp hits, fb = local-ray fallback hits (the fix for
         // "can't damage players"), dx = shots that found a victim already DEAD. If you can't damage
