@@ -2,3 +2,4 @@ entry = "playground.aur"
 
 [dependencies]
 sim = "modules/sim"
+world = "modules/world"

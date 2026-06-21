@@ -1,0 +1,47 @@
+// OVERCLOCK - world data types (extracted from playground.aur).
+// The shared authoritative game types. Actor is the combat model for EVERY combatant
+// (player + bots + remote players are the same thing); Brain is bot-only behaviour state.
+// The World struct (all authoritative state) will join these here as the restructure proceeds.
+
+// The shared COMBAT model for EVERY combatant - the player and the bots are the same
+// thing here: health, a shield (depletes before health), per-weapon mag + reserve,
+// reload, shield cells, and the same weapon config (gun_dmg / fire_w / mag_size_w /
+// reload_w / res_*). The player is `me`; the bots are `actors[]`. Both run the same combat.
+struct Actor {
+    hdl: i64,        // phys3d collider handle
+    hp: f64,
+    sh: f64,         // shield (absorbs damage before health)
+    shmax: f64,      // shield capacity
+    wpn: i64,        // current weapon: 0 rifle / 1 launcher
+    mag: [i64; 2],   // loaded rounds per weapon
+    res: [i64; 2],   // spare reserve per weapon
+    rl: f64,         // reload timer (>0 = reloading)
+    rlw: i64,        // which weapon is mid-reload
+    fcd: f64,        // fire cooldown
+    cells: i64,      // shield cells carried
+    heal: f64,       // shield-apply channel timer
+    gax: f64,        // current grapple anchor (so EVERY actor's grapple rope can be drawn)
+    gay: f64,
+    gaz: f64,
+    gat: f64         // grapple-rope draw timer (>0 = draw a rope to the anchor)
+}
+
+// Bot-only CONTROLLER / behaviour state (the player has none of this - the netcode sim
+// is the player's mover and the mouse is the player's aim). One Brain per bot, parallel
+// to actors[]. This is where smarter AI (state machine, target memory, pathfinding, aim
+// lead, reaction delay) would live; today it is just the mover + aim spread.
+struct Brain {
+    aim: f64,        // AIM STRENGTH - shot spread in radians (their skill; lower = sharper)
+    resp: f64,       // respawn timer
+    vy: f64,         // vertical velocity (AI gravity / jump)
+    px0: f64,        // last x (stuck detection)
+    pz0: f64,        // last z
+    jcd: f64,        // jump cooldown
+    kx: f64,
+    ky: f64,
+    kz: f64,         // blast knockback velocity (decays) - also reused for a grapple-leap
+    pop: f64,        // hit-flinch scale pop (draw)
+    gcd: f64,        // grapple cooldown (a bot grapple-leaps to close big gaps, like a player)
+    getrifle: f64,   // 1 = heading for ammo, so equip the rifle to top it up (not the launcher)
+    face: f64        // yaw the body should face (set toward its aim target; for the model draw)
+}

@@ -44,48 +44,6 @@
 
 // Draw a filled UI button into the HUD framebuffer; returns 1 if the cursor is over
 // it (brighter when hovered). Used by the main menu + settings screen.
-// The shared COMBAT model for EVERY combatant - the player and the bots are the same
-// thing here: health, a shield (depletes before health), per-weapon mag + reserve,
-// reload, shield cells, and the same weapon config (gun_dmg / fire_w / mag_size_w /
-// reload_w / res_*). The player is `me`; the bots are `actors[]`. Both run the same combat.
-struct Actor {
-    hdl: i64,        // phys3d collider handle
-    hp: f64,
-    sh: f64,         // shield (absorbs damage before health)
-    shmax: f64,      // shield capacity
-    wpn: i64,        // current weapon: 0 rifle / 1 launcher
-    mag: [i64; 2],   // loaded rounds per weapon
-    res: [i64; 2],   // spare reserve per weapon
-    rl: f64,         // reload timer (>0 = reloading)
-    rlw: i64,        // which weapon is mid-reload
-    fcd: f64,        // fire cooldown
-    cells: i64,      // shield cells carried
-    heal: f64,       // shield-apply channel timer
-    gax: f64,        // current grapple anchor (so EVERY actor's grapple rope can be drawn)
-    gay: f64,
-    gaz: f64,
-    gat: f64         // grapple-rope draw timer (>0 = draw a rope to the anchor)
-}
-
-// Bot-only CONTROLLER / behaviour state (the player has none of this - the netcode sim
-// is the player's mover and the mouse is the player's aim). One Brain per bot, parallel
-// to actors[]. This is where smarter AI (state machine, target memory, pathfinding, aim
-// lead, reaction delay) would live; today it is just the mover + aim spread.
-struct Brain {
-    aim: f64,        // AIM STRENGTH - shot spread in radians (their skill; lower = sharper)
-    resp: f64,       // respawn timer
-    vy: f64,         // vertical velocity (AI gravity / jump)
-    px0: f64,        // last x (stuck detection)
-    pz0: f64,        // last z
-    jcd: f64,        // jump cooldown
-    kx: f64,
-    ky: f64,
-    kz: f64,         // blast knockback velocity (decays) - also reused for a grapple-leap
-    pop: f64,        // hit-flinch scale pop (draw)
-    gcd: f64,        // grapple cooldown (a bot grapple-leaps to close big gaps, like a player)
-    getrifle: f64,   // 1 = heading for ammo, so equip the rifle to top it up (not the launcher)
-    face: f64        // yaw the body should face (set toward its aim target; for the model draw)
-}
 
 // Draw `text` centred BOTH horizontally and vertically inside the box (bx,by,bw,bh).
 // One helper for every label / field / button so centring is consistent everywhere.
@@ -630,29 +588,29 @@ fn main() {
         aml = aml + 1
     }
     let mut actors = [
-        Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        Actor { hdl: 0 - 1, hp: 100.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 }
+        world::Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: 0 - 1, hp: 100.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 }
     ]
     // Per-actor AI/behaviour, parallel to actors[]. Only the bots (0..bot_n-1) use a real
     // Brain; the player + remote slots get a dummy (aim 0, unused). `aim` (shot spread) is a
     // bot's skill - the ONLY thing distinguishing a bot from the player in a fight.
     let mut brains = [
-        Brain { aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
-        Brain { aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
-        Brain { aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
-        Brain { aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
-        Brain { aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
-        Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 }
+        world::Brain { aim: 0.05, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        world::Brain { aim: 0.062, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        world::Brain { aim: 0.044, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        world::Brain { aim: 0.072, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        world::Brain { aim: 0.055, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 },
+        world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 }
     ]
     // Per-player characters are created lazily by the sim (see sim_step).
 
