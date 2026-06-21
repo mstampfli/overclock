@@ -367,7 +367,7 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
             // window opens, lob a travel-time rocket (dodgeable) instead of the rifle. Consumes a
             // rocket (mag[1] reloads from res[1]) and takes the slow fire cooldown.
             let mut launched = 0
-            if tgv >= 0 and w.actors[ci].fcd <= 0.0 and bestd > 25.0 and w.actors[ci].mag[1] > 0 and sin(w.etime * 0.7 + (ci as f64) * 1.9) > 0.9 {
+            if tgv >= 0 and w.actors[ci].fcd <= 0.0 and bestd > 25.0 and w.actors[ci].mag[1] > 0 and w.actors[ci].heal <= 0.0 and sin(w.etime * 0.7 + (ci as f64) * 1.9) > 0.9 {
                 let ddx = tgx - bsx
                 let ddy = tgy - bsy
                 let ddz = tgz - bsz
@@ -381,7 +381,7 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                 }
             }
             // Fire if armed + off cooldown + we have a target (and we didn't just launch a rocket).
-            if launched == 0 and tgv >= 0 and w.actors[ci].fcd <= 0.0 and w.actors[ci].mag[0] > 0 and w.actors[ci].rl <= 0.0 {
+            if launched == 0 and tgv >= 0 and w.actors[ci].fcd <= 0.0 and w.actors[ci].mag[0] > 0 and w.actors[ci].rl <= 0.0 and w.actors[ci].heal <= 0.0 {
                 let ddx = tgx - bsx
                 let ddy = tgy - bsy
                 let ddz = tgz - bsz
@@ -724,6 +724,40 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                 }
                 mq = mq + 1
             }
+            // SHIELD CHANNEL: when safe (nearest enemy beyond 18m) and carrying a cell with shield not
+            // full, a bot holds still and channels a shield-apply - the same heal timer / 2.5s / +25
+            // shield a player uses - and broadcasts meta 16 so clients see it holding the blue cube. It
+            // can't shoot mid-channel (combat_tick gates on heal) and stops moving/jumping/grappling; if
+            // an enemy closes back inside 18m it abandons the channel and fights. This is what finally
+            // makes the shield cells bots collect (pickup-seeking, want_type 1) actually get USED.
+            let mut channeling = 0
+            // Only shield when GENUINELY clear of every enemy (>35m). Bots spawn with sh=0 so they
+            // always "want" shield; a low threshold made a bot shield in the face of an approaching
+            // enemy (still inside rifle/rocket range) instead of fighting it. 35m means no immediate
+            // threat, so a 2.5s channel (during which it can't shoot) is a safe top-up, not suicide.
+            let safe_to_shield = edist > 35.0
+            if w.actors[ei2].heal > 0.0 {
+                if safe_to_shield {
+                    w.actors[ei2].heal = w.actors[ei2].heal + dt
+                    channeling = 1
+                    if w.actors[ei2].heal >= 2.5 {
+                        w.actors[ei2].heal = 0.0
+                        channeling = 0
+                        if w.actors[ei2].cells > 0 {
+                            w.actors[ei2].cells = w.actors[ei2].cells - 1
+                            w.actors[ei2].sh = w.actors[ei2].sh + 25.0
+                            if w.actors[ei2].sh > w.actors[ei2].shmax { w.actors[ei2].sh = w.actors[ei2].shmax }
+                        }
+                    }
+                } else {
+                    w.actors[ei2].heal = 0.0
+                }
+            } else {
+                if safe_to_shield and w.actors[ei2].cells > 0 and w.actors[ei2].sh < w.actors[ei2].shmax {
+                    w.actors[ei2].heal = dt
+                    channeling = 1
+                }
+            }
             let mut tmx = enx
             let mut tmy = eny
             let mut tmz = enz
@@ -743,7 +777,7 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                     if w.actors[ei2].cells < 1 and w.actors[ei2].sh < w.actors[ei2].shmax { want_type = 1.0 }
                 }
             }
-            if want_type >= 0.0 {
+            if want_type >= 0.0 and channeling == 0 {
                 let mut bestpk = 0 - 1
                 let mut bestpd = 100000.0
                 let mut pk = 0
@@ -787,12 +821,13 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             }
             let mut bvx = (mdx * adv + perpx * juke) * runsp
             let mut bvz = (mdz * adv + perpz * juke) * runsp
+            if channeling == 1 { bvx = 0.0; bvz = 0.0 }   // hold still while raising the shield
             w.brains[ei2].vy = w.brains[ei2].vy - 16.0 * dt
             if grnd and w.brains[ei2].vy < 0.0 { w.brains[ei2].vy = 0.0 }
             let moved = sqrt((bx0 - w.brains[ei2].px0) * (bx0 - w.brains[ei2].px0) + (bz0 - w.brains[ei2].pz0) * (bz0 - w.brains[ei2].pz0))
             let stuck = moved < 0.05 and tdist > 2.0
             w.brains[ei2].jcd = w.brains[ei2].jcd - dt
-            if grnd and w.brains[ei2].jcd <= 0.0 {
+            if grnd and w.brains[ei2].jcd <= 0.0 and channeling == 0 {
                 let want_jump = (stuck and tdist > 4.5) or ((tmy - by0) > 1.2 and tdist > 2.5)
                 if want_jump {
                     w.brains[ei2].vy = 9.5
@@ -805,7 +840,7 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             // steering so the launch reads). Skipped while seeking loot. Anchor + a 0.4s rope timer go
             // out over meta 12-15 so every client draws the cyan rope, same as a human player's grapple.
             w.brains[ei2].gcd = w.brains[ei2].gcd - dt
-            if grnd and w.brains[ei2].gcd <= 0.0 and tdist > 24.0 and seeking == 0 {
+            if grnd and w.brains[ei2].gcd <= 0.0 and tdist > 24.0 and seeking == 0 and channeling == 0 {
                 let aimx = tmx - bx0
                 let aimy = (tmy + 1.5) - (by0 + 0.5)
                 let aimz = tmz - bz0
@@ -854,6 +889,8 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                 w.actors[ei2].res[0] = 60
                 w.actors[ei2].res[1] = 2
                 w.actors[ei2].rl = 0.0
+                w.actors[ei2].heal = 0.0
+                w.actors[ei2].cells = 0
                 w.brains[ei2].vy = 0.0
                 phys3d_set_pos(h, w.esx[ei2], 0.9, w.esz[ei2])
             }
@@ -894,6 +931,9 @@ fn broadcast_bots(w: world::World) -> i64 {
         net_set_bot_meta(b2, 13, w.actors[b2].gay)        // draw the cyan rope from these, exactly
         net_set_bot_meta(b2, 14, w.actors[b2].gaz)        // like a human player's broadcast grapple)
         net_set_bot_meta(b2, 15, w.actors[b2].gat)
+        let mut sh_up = 0.0
+        if w.actors[b2].heal > 0.0 { sh_up = 1.0 }
+        net_set_bot_meta(b2, 16, sh_up)                   // shield-up: client draws the blue cube
         b2 = b2 + 1
     }
     0

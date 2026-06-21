@@ -1,0 +1,30 @@
+// Bot shielding (simulate-to-verify): a bot carrying a shield cell with an empty shield and NO enemy in
+// sight must CHANNEL a shield-apply the way a player does - hold still, run the heal timer for 2.5s, then
+// consume the cell and gain +25 shield. Proves the cells bots collect (pickup-seeking) finally get USED,
+// and exercises the meta-16 broadcast (broadcast_bots) clients read to draw the held blue cube on bots.
+fn main() {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 60.0, 0.5, 60.0, 0)
+    net_host(45136)
+    let mut w = world::new_world()
+    w.round.bots = 1
+    w.actors[0].hdl = phys3d_add_character(0.0, 0.9, 0.0, 0.6, 0.3)
+    w.actors[0].hp = 100.0
+    w.actors[0].sh = 0.0
+    w.actors[0].cells = 1          // one cell carried, shield empty -> it should spend it when safe
+    w.actors[0].mag[0] = 30
+    w.actors[0].res[0] = 60
+    let mut max_heal = 0.0
+    let mut t = 0
+    while t < 220 {                // ~3.5s, enough for a full 2.5s channel
+        server::bots_tick(w, 0.016)
+        server::broadcast_bots(w)  // exercise the meta-16 (blue cube) broadcast path each tick
+        phys3d_step(0.016)
+        if w.actors[0].heal > max_heal { max_heal = w.actors[0].heal }
+        t = t + 1
+    }
+    let channeled = (max_heal > 0.0) as i64
+    let applied = (w.actors[0].cells == 0 and w.actors[0].sh > 24.9) as i64
+    println("max_heal=" + str((max_heal * 100.0) as i64) + "/100 final cells=" + str(w.actors[0].cells) + " shield=" + str((w.actors[0].sh) as i64))
+    println("RESULT bot-channels-and-applies-shield=" + str((channeled == 1 and applied == 1) as i64) + " (expect 1)")
+}
