@@ -1,0 +1,69 @@
+// CAPSTONE end-to-end integration: ONE client joins the real dedicated server (server_main owns the
+// whole World) and, over a single live session in the real arena, must SIMULTANEOUSLY see every
+// replication channel of the host==guest stack working together (not just one in isolation like the
+// focused sims): bots on the player channel, the 12 crates on the object channel WITH orientation,
+// available pickups on the fx channel, the round timer on bot-0 meta, and its own authoritative hp.
+// The client charges + fires at the nearest bot the whole time to keep combat + the systems live.
+fn main() {
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+    let mut t = 0
+    while t < 50 { net_send_input([0.0; 20]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    let myid = net_my_id()
+    let timer_early = net_player_meta(1000, 10)
+    let mut saw_bots = 0
+    let mut saw_fx = 0
+    let mut saw_crates = 0
+    let mut crate_quat_ok = 0
+    let mut my_hp_seen = 0
+    t = 0
+    while t < 320 {
+        let ex = net_local_x()
+        let ey = net_local_y() + 0.7
+        let ez = net_local_z()
+        // aim at the nearest living bot
+        let mut bestd = 100000.0
+        let mut yaw = 0.0
+        let mut tx = 0.0
+        let mut ty = 0.0
+        let mut tz = 0.0
+        let mut found = 0
+        let mut bi = 0
+        while bi < 5 {
+            let bid = 1000 + bi
+            if net_player_meta(bid, 0) > 0.0 {
+                let bx = net_player_x(bid)
+                let bz = net_player_z(bid)
+                let d = sqrt((bx - ex) * (bx - ex) + (bz - ez) * (bz - ez))
+                if d < bestd { bestd = d; tx = bx; ty = net_player_y(bid) + 0.5; tz = bz; yaw = atan2(bx - ex, 0.0 - (bz - ez)); found = 1 }
+            }
+            bi = bi + 1
+        }
+        net_send_input([1.0, 0.0, yaw, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        if found == 1 {
+            let dx = tx - ex
+            let dy = ty - ey
+            let dz = tz - ez
+            let dl = sqrt(dx * dx + dy * dy + dz * dz)
+            if dl > 0.1 { net_fire(ex, ey, ez, dx / dl, dy / dl, dz / dl, 0) }
+        }
+        net_update(0.016)
+        // sample every channel as the session runs
+        if net_player_meta(1000, 0) > 0.0 and net_player_meta(1001, 0) > 0.0 and net_player_meta(1002, 0) > 0.0 { saw_bots = 1 }
+        if net_fx_count() > 0 { saw_fx = 1 }
+        if net_object_count() >= 12 { saw_crates = 1 }
+        let qw5 = net_object_qw(5)   // an isolated resting crate stays near identity (qw ~ 1)
+        if qw5 > 0.5 { crate_quat_ok = 1 }
+        if net_player_meta(myid, 0) > 0.0 { my_hp_seen = 1 }
+        net_kills_clear(); net_shots_clear()
+        t = t + 1; sleep_ms(10)
+    }
+    let timer_late = net_player_meta(1000, 10)
+    let timer_down = (timer_late < timer_early - 1.0) as i64
+    println("bots=" + str(saw_bots) + " fx=" + str(saw_fx) + " crates=" + str(saw_crates) + " crate_quat=" + str(crate_quat_ok) + " my_hp=" + str(my_hp_seen) + " timer " + str((timer_early * 10.0) as i64) + "->" + str((timer_late * 10.0) as i64))
+    let all = saw_bots == 1 and saw_fx == 1 and saw_crates == 1 and crate_quat_ok == 1 and my_hp_seen == 1 and timer_down == 1
+    println("RESULT full-stack-replicates=" + str((all) as i64) + " (expect 1)")
+}
