@@ -810,3 +810,88 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
         f32_store(state, 31, 0.0)   // clear any in-progress mantle on respawn
     }
 }
+
+// ===== SHARED PROJECTILE ARCS =====
+// The host (authoritative) and every client (prediction) call these SAME functions, so a thrown
+// grenade or fired rocket flies the identical path on both - parity is guaranteed by construction,
+// not by hand-syncing two copies. Both step a FIXED 0.016 (the canonical sim tick); the host calls
+// once per tick, the client accumulates real frame time and calls in 0.016 chunks.
+
+// One grenade step. g = [x, y, z, vx, vy, vz, fuse] (mutated in place, arrays are by-ref). Gravity
+// pulls vy down, then it bounces off geometry (reflected + damped 0.45, nudged off the surface) or
+// advances freely. `excl` = the thrower's collider to ignore. Returns 1 the step the fuse expires
+// (the caller detonates at g[0..3]), else 0.
+fn grenade_step(g: [f64; 7], excl: i64) -> i64 {
+    g[6] = g[6] - 0.016
+    g[4] = g[4] - 20.0 * 0.016   // nade_grav
+    let sp = sqrt(g[3] * g[3] + g[4] * g[4] + g[5] * g[5])
+    if sp > 0.001 {
+        let hb = phys3d_raycast_ex(excl, g[0], g[1], g[2], g[3] / sp, g[4] / sp, g[5] / sp, sp * 0.016 + 0.08)
+        if hb >= 0 {
+            let nx = phys3d_hit_nx()
+            let ny = phys3d_hit_ny()
+            let nz = phys3d_hit_nz()
+            g[0] = phys3d_hit_x() + nx * 0.06
+            g[1] = phys3d_hit_y() + ny * 0.06
+            g[2] = phys3d_hit_z() + nz * 0.06
+            let vd = g[3] * nx + g[4] * ny + g[5] * nz
+            g[3] = (g[3] - 2.0 * vd * nx) * 0.45
+            g[4] = (g[4] - 2.0 * vd * ny) * 0.45
+            g[5] = (g[5] - 2.0 * vd * nz) * 0.45
+        } else {
+            g[0] = g[0] + g[3] * 0.016
+            g[1] = g[1] + g[4] * 0.016
+            g[2] = g[2] + g[5] * 0.016
+        }
+    }
+    if g[6] <= 0.0 { return 1 }
+    return 0
+}
+
+// One rocket step. p = [x, y, z, vx, vy, vz, life] (mutated in place). Constant velocity (no gravity);
+// the step is swept with a raycast and on ANY impact p[0..3] is set to the hit point and 1 is returned
+// (the caller detonates there). Otherwise it advances + counts life down and returns 0; the caller
+// stops simulating (silent fizzle) once life <= 0.
+fn rocket_step(p: [f64; 7]) -> i64 {
+    p[6] = p[6] - 0.016
+    let sp = sqrt(p[3] * p[3] + p[4] * p[4] + p[5] * p[5])
+    if sp > 0.001 {
+        let hit = phys3d_raycast_full(p[0], p[1], p[2], p[3] / sp, p[4] / sp, p[5] / sp, sp * 0.016 + 0.12)
+        if hit >= 0 {
+            p[0] = phys3d_hit_x()
+            p[1] = phys3d_hit_y()
+            p[2] = phys3d_hit_z()
+            return 1
+        }
+        p[0] = p[0] + p[3] * 0.016
+        p[1] = p[1] + p[4] * 0.016
+        p[2] = p[2] + p[5] * 0.016
+    }
+    return 0
+}
+
+// Box impulses, shared so a shot/blast shoves a crate the EXACT same way on host + client (the boxes
+// are otherwise deterministic, so identical impulses keep them in lockstep with no correction).
+
+// A bullet shoving a box: push it horizontally away from the SHOOTER (+ a small lift), same scale on
+// both sides. Inputs both have: the crate handle + the shooter's x/z.
+fn crate_shot_impulse(ch: i64, shooter_x: f64, shooter_z: f64) {
+    let pdx = phys3d_x(ch) - shooter_x
+    let pdz = phys3d_z(ch) - shooter_z
+    let pl = sqrt(pdx * pdx + pdz * pdz)
+    if pl > 0.01 { phys3d_apply_impulse(ch, pdx / pl * 2.2, 0.5, pdz / pl * 2.2) }
+}
+
+// A blast flinging a box: radial knockback from the detonation point, identical falloff/strength on
+// both. gi = blast intensity.
+fn crate_blast_impulse(ch: i64, bx: f64, by: f64, bz: f64, gi: f64) {
+    let krad = 8.0 * gi   // nade_kb_radius
+    let cdx = phys3d_x(ch) - bx
+    let cdy = phys3d_y(ch) - by
+    let cdz = phys3d_z(ch) - bz
+    let cdd = sqrt(cdx * cdx + cdy * cdy + cdz * cdz)
+    if cdd < krad and cdd > 0.01 {
+        let cf = 9.0 * gi * (1.0 - cdd / krad)   // crate_kb
+        phys3d_apply_impulse(ch, cdx / cdd * cf, cdy / cdd * cf + cf * 0.7, cdz / cdd * cf)
+    }
+}

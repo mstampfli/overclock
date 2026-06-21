@@ -2223,32 +2223,17 @@ fn main() {
             nade_acc = nade_acc + dt
             while nade_acc >= 0.016 and nade_live {
                 nade_acc = nade_acc - 0.016
-                nfuse = nfuse - 0.016
-                grvy = grvy - nade_grav * 0.016
-                let grsp = sqrt(grvx * grvx + grvy * grvy + grvz * grvz)
-                if grsp > 0.001 {
-                    let gdx = grvx / grsp
-                    let gdy = grvy / grsp
-                    let gdz = grvz / grsp
-                    let ghb = phys3d_raycast_ex(gpc, grx, gry, grz, gdx, gdy, gdz, grsp * 0.016 + 0.08)
-                    if ghb >= 0 {
-                        let cnx = phys3d_hit_nx()
-                        let cny = phys3d_hit_ny()
-                        let cnz = phys3d_hit_nz()
-                        grx = phys3d_hit_x() + cnx * 0.06
-                        gry = phys3d_hit_y() + cny * 0.06
-                        grz = phys3d_hit_z() + cnz * 0.06
-                        let vdot = grvx * cnx + grvy * cny + grvz * cnz
-                        grvx = (grvx - 2.0 * vdot * cnx) * 0.45
-                        grvy = (grvy - 2.0 * vdot * cny) * 0.45
-                        grvz = (grvz - 2.0 * vdot * cnz) * 0.45
-                    } else {
-                        grx = grx + grvx * 0.016
-                        gry = gry + grvy * 0.016
-                        grz = grz + grvz * 0.016
-                    }
-                }
-                if nfuse <= 0.0 {
+                // SHARED arc step (sim::grenade_step) - byte-for-byte the host's grenade_tick code.
+                let g = [grx, gry, grz, grvx, grvy, grvz, nfuse]
+                let det = sim::grenade_step(g, gpc)
+                grx = g[0]
+                gry = g[1]
+                grz = g[2]
+                grvx = g[3]
+                grvy = g[4]
+                grvz = g[5]
+                nfuse = g[6]
+                if det == 1 {
                     nade_live = false
                     explode = true
                     ex_x = grx
@@ -2391,7 +2376,7 @@ fn main() {
             // predicted fling of every box exactly matches the host's and they stay in sync.
             let mut ck = 0
             while ck < crate_n {
-                arena::crate_blast_impulse(crates[ck] as i64, ex_x, ex_y, ex_z, gi)
+                sim::crate_blast_impulse(crates[ck] as i64, ex_x, ex_y, ex_z, gi)
                 ck = ck + 1
             }
             // Player distance -> self-damage, knockback, and shake.
@@ -2974,7 +2959,7 @@ fn main() {
                             while sck < crate_n {
                                 // SHARED impulse (same fn the host runs) from the shooter's actor x/z, so our
                                 // predicted shove of the box is identical to the host's - they stay in sync.
-                                if hb == (crates[sck] as i64) { arena::crate_shot_impulse(crates[sck] as i64, phys3d_x(actors[ci].hdl as i64), phys3d_z(actors[ci].hdl as i64)) }
+                                if hb == (crates[sck] as i64) { sim::crate_shot_impulse(crates[sck] as i64, phys3d_x(actors[ci].hdl as i64), phys3d_z(actors[ci].hdl as i64)) }
                                 sck = sck + 1
                             }
                         } else {
@@ -3932,7 +3917,7 @@ fn main() {
                 // explosion shoves the boxes the same way on our screen as on the host (once per boom).
                 let mut rck = 0
                 while rck < crate_n {
-                    arena::crate_blast_impulse(crates[rck] as i64, rbx, rby, rbz, rbi)
+                    sim::crate_blast_impulse(crates[rck] as i64, rbx, rby, rbz, rbi)
                     rck = rck + 1
                 }
             }

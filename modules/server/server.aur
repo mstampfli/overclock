@@ -494,7 +494,7 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                         }
                         let mut sck = 0
                         while sck < 12 {
-                            if hb == w.crates[sck] { arena::crate_shot_impulse(w.crates[sck], bsx, bsz) }
+                            if hb == w.crates[sck] { sim::crate_shot_impulse(w.crates[sck], bsx, bsz) }
                             sck = sck + 1
                         }
                     }
@@ -568,7 +568,7 @@ fn client_shots_tick(w: world::World) -> i64 {
                     }
                     if sfound == 1 {
                         // SHARED impulse - the client predicts the identical shove from the shooter's x/z.
-                        arena::crate_shot_impulse(ch, ssx, ssz)
+                        sim::crate_shot_impulse(ch, ssx, ssz)
                     }
                 }
             }
@@ -612,7 +612,7 @@ fn explode(w: world::World, dx: f64, dy: f64, dz: f64, gi: f64, src_slot: i64) -
     // fling from the same boom event and the boxes stay in sync without correction.
     let mut ck = 0
     while ck < 12 {
-        arena::crate_blast_impulse(w.crates[ck], dx, dy, dz, gi)
+        sim::crate_blast_impulse(w.crates[ck], dx, dy, dz, gi)
         ck = ck + 1
     }
     0
@@ -683,30 +683,17 @@ fn client_projectiles_tick(w: world::World) -> i64 {
 fn grenade_tick(w: world::World, dt: f64) -> i64 {
     if w.nade_cd > 0.0 { w.nade_cd = w.nade_cd - dt }
     if w.nade_live == 1 {
-        w.nfuse = w.nfuse - dt
-        w.grvy = w.grvy - 20.0 * dt   // nade_grav
-        let gsp = sqrt(w.grvx * w.grvx + w.grvy * w.grvy + w.grvz * w.grvz)
-        let pexcl = w.actors[w.nade_src].hdl
-        if gsp > 0.001 {
-            let ghb = phys3d_raycast_ex(pexcl, w.grx, w.gry, w.grz, w.grvx / gsp, w.grvy / gsp, w.grvz / gsp, gsp * dt + 0.08)
-            if ghb >= 0 {
-                let gnx = phys3d_hit_nx()
-                let gny = phys3d_hit_ny()
-                let gnz = phys3d_hit_nz()
-                w.grx = phys3d_hit_x() + gnx * 0.06
-                w.gry = phys3d_hit_y() + gny * 0.06
-                w.grz = phys3d_hit_z() + gnz * 0.06
-                let gvd = w.grvx * gnx + w.grvy * gny + w.grvz * gnz
-                w.grvx = (w.grvx - 2.0 * gvd * gnx) * 0.45
-                w.grvy = (w.grvy - 2.0 * gvd * gny) * 0.45
-                w.grvz = (w.grvz - 2.0 * gvd * gnz) * 0.45
-            } else {
-                w.grx = w.grx + w.grvx * dt
-                w.gry = w.gry + w.grvy * dt
-                w.grz = w.grz + w.grvz * dt
-            }
-        }
-        if w.nfuse <= 0.0 {
+        // SHARED arc step (sim::grenade_step) - the exact same code the client predicts with.
+        let g = [w.grx, w.gry, w.grz, w.grvx, w.grvy, w.grvz, w.nfuse]
+        let det = sim::grenade_step(g, w.actors[w.nade_src].hdl)
+        w.grx = g[0]
+        w.gry = g[1]
+        w.grz = g[2]
+        w.grvx = g[3]
+        w.grvy = g[4]
+        w.grvz = g[5]
+        w.nfuse = g[6]
+        if det == 1 {
             net_push_boom(slot_netid(w, w.nade_src), w.grx, w.gry, w.grz, 1.0)
             explode(w, w.grx, w.gry, w.grz, 1.0, w.nade_src)
             w.nade_live = 0

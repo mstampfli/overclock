@@ -98,33 +98,3 @@ fn build_crates(crates: [i64; 12]) {
     crates[10] = phys3d_add_box(8.0, 0.45, 0.0 - 8.0, 0.4, 0.4, 0.4, 1)
     crates[11] = phys3d_add_box(0.0 - 8.0, 0.45, 8.0, 0.4, 0.4, 0.4, 1)
 }
-
-// SHARED crate-impulse physics: the host (authoritative) AND every client (prediction) call these
-// with the same world-space inputs, so a shot or blast shoves a box the EXACT same way on both
-// sides. Because the boxes are otherwise deterministic (same gravity, same dt sequence), matching the
-// impulses keeps them in lockstep with NO per-frame correction - only a rare snap when a force a
-// client genuinely couldn't see (a remote's shot, packet loss) slips through. ONE definition, two
-// callers = the same code.
-
-// A bullet shoving a box: push it horizontally away from the SHOOTER, plus a small lift. Inputs the
-// host and client both have: the crate handle + the shooter's x/z (the same actor on both).
-fn crate_shot_impulse(ch: i64, shooter_x: f64, shooter_z: f64) {
-    let pdx = phys3d_x(ch) - shooter_x
-    let pdz = phys3d_z(ch) - shooter_z
-    let pl = sqrt(pdx * pdx + pdz * pdz)
-    if pl > 0.01 { phys3d_apply_impulse(ch, pdx / pl * 2.2, 0.5, pdz / pl * 2.2) }
-}
-
-// A blast flinging a box: radial knockback from the detonation point, identical falloff/strength on
-// both sides. gi = blast intensity. Mirrors the damage blast but with a wider reach.
-fn crate_blast_impulse(ch: i64, bx: f64, by: f64, bz: f64, gi: f64) {
-    let krad = 8.0 * gi   // nade_kb_radius
-    let cdx = phys3d_x(ch) - bx
-    let cdy = phys3d_y(ch) - by
-    let cdz = phys3d_z(ch) - bz
-    let cdd = sqrt(cdx * cdx + cdy * cdy + cdz * cdz)
-    if cdd < krad and cdd > 0.01 {
-        let cf = 9.0 * gi * (1.0 - cdd / krad)   // crate_kb
-        phys3d_apply_impulse(ch, cdx / cdd * cf, cdy / cdd * cf + cf * 0.7, cdz / cdd * cf)
-    }
-}
