@@ -1,0 +1,38 @@
+// Grenade fuse (simulate-to-verify the instant-kill fix): a live grenade is thrown next to a target.
+// The OLD code detonated it the instant it was thrown (instakill). Now grenade_tick flies it + only
+// explodes when the 1.4s fuse ends - so the target must be UNHARMED partway through the fuse (0.8s)
+// and only take blast damage AFTER it cooks off.
+fn main() {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 60.0, 0.5, 60.0, 0)
+    net_host(45137)   // a session so net_push_boom (inside grenade_tick) has somewhere to go
+    let mut w = world::new_world()
+    w.round.bots = 2
+    w.actors[0].hdl = phys3d_add_character(5.0, 0.9, 0.0, 0.6, 0.3)   // target, right by the grenade
+    w.actors[0].hp = 100.0
+    w.actors[1].hdl = phys3d_add_character(0.0, 0.9, 0.0, 0.6, 0.3)   // thrower, far from the blast
+    w.actors[1].hp = 100.0
+    // a thrown grenade sitting next to the target
+    w.grx = 5.0
+    w.gry = 1.0
+    w.grz = 0.0
+    w.grvx = 0.0
+    w.grvy = 1.0
+    w.grvz = 0.0
+    w.nfuse = 1.4
+    w.nade_live = 1
+    w.nade_src = 1
+    let mut hp_mid = 0.0
+    let mut t = 0
+    while t < 130 {
+        server::grenade_tick(w, 0.016)
+        phys3d_step(0.016)
+        if t == 50 { hp_mid = w.actors[0].hp }   // ~0.8s in: fuse still burning, must be unharmed
+        t = t + 1
+    }
+    let hp_end = w.actors[0].hp                    // ~2.1s: fuse ended, grenade has blown
+    let unharmed_early = (hp_mid > 99.9) as i64
+    let blew_after_fuse = (hp_end < 99.9) as i64
+    println("target hp at 0.8s=" + str(hp_mid as i64) + " (expect 100) | at 2.1s=" + str(hp_end as i64) + " (expect <100)")
+    println("RESULT grenade-fuse-delays-blast=" + str((unharmed_early == 1 and blew_after_fuse == 1) as i64) + " (expect 1)")
+}
