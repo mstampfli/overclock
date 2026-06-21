@@ -693,29 +693,9 @@ fn main() {
     audio_volume(vol)
 
     // Movement tuning (data-driven; tweak and re-run to change the feel).
-    let cfg = [
-        16.0,   // gravity        (snappy, not floaty)
-        8.0,    // jump_vel       (~2m, crisp arc)
-        8.5,    // ground_speed   (brisk base run; slide/Ctrl is the speed burst)
-        80.0,   // ground_accel
-        8.0,    // ground_friction
-        2.5,    // air_speed      (more aerial control)
-        120.0,  // air_accel      (steer harder in the air)
-        7.0,    // slide_boost    (big lurch - slide is THE ground speed tool now)
-        1.2,    // slide_friction
-        5.0,    // slide_min
-        17.5,   // dash_speed     (UNUSED - dash now derives its top speed from the slide)
-        0.0,    // dash_cd        (no cooldown - dash whenever)
-        1.0,    // air_jumps
-        4.0,    // wall_gravity   (idle slide-down rate)
-        5.0,    // wall_speed     (run-along speed; overspeed is preserved)
-        8.0,    // wall_accel     (rate you ramp UP to wall_speed when slower)
-        1.6,    // wall_time      (stick budget, seconds)
-        7.0,    // wall_jump_up
-        5.0,    // wall_jump_push (added to along-wall momentum)
-        3.0,    // wall_stick     (inward hold; applied to the move, not velocity)
-        3.0     // wall_min_speed (must move this fast to attach to a wall)
-    ]
+    // Movement tuning lives in the sim module now (one source of truth for client prediction +
+    // the server's authoritative re-sim). See sim::default_cfg for the per-index meaning.
+    let cfg = sim::default_cfg()
 
     // The LOBBY decides host vs join (+ address); the connection, sim registration, and spawn all
     // happen together on match START - in that exact order, because net_sim / net_spawn_at operate

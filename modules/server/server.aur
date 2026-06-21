@@ -1,0 +1,50 @@
+// OVERCLOCK - dedicated server (the authoritative simulation), built incrementally.
+//
+// server_main runs on its own thread (via net_serve) with its own thread_local physics + net
+// session. It constructs and OWNS a world::World (all authoritative state), runs the authoritative
+// tick on it, and broadcasts everything to clients. The host runs this locally and joins back as a
+// PURE client (host == guest); a guest just joins the host's copy. This module is built up system by
+// system - right now: world setup + bots placed at anchors + the broadcast. Movement re-sim is the
+// engine's job (net_update runs the registered sim for every connected client). AI/combat/etc. land
+// next, each verified by a headless client-server sim before main is switched to a pure client.
+
+// The authoritative server loop. Captures nothing (net_serve requirement); hardcodes its config for
+// now (a host->server control channel for lobby settings comes later). Loops until the process exits.
+fn server_main() -> i64 {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)   // own physics world; gravity matches sim cfg[0]
+    let mut w = world::new_world()
+    w.round.bots = 3
+    // Bot spawn anchors; create a kinematic character per bot and remember its handle in the World.
+    let anchx = [0.0 - 6.0, 6.0, 0.0]
+    let anchz = [10.0, 10.0, 0.0 - 8.0]
+    let mut bi = 0
+    while bi < w.round.bots {
+        w.actors[bi].hdl = phys3d_add_character(anchx[bi], 0.9, anchz[bi], 0.6, 0.3)
+        w.actors[bi].hp = 100.0
+        w.brains[bi].aim = 0.05
+        bi = bi + 1
+    }
+    net_host(45300)
+    net_dedicated()    // no local host player: whoever hosts joins back as a client
+    net_sim(|state, input| {
+        sim::sim_step(state, input, sim::default_cfg())
+        0
+    }, 21, 20)
+    let mut t = 0
+    while t < 100000 {
+        // Set the bots from the World FIRST (over the player channel; clients receive them as
+        // remotes id 1000+i), then net_update re-sims connected clients + broadcasts everything.
+        net_set_bot_count(w.round.bots)
+        let mut b2 = 0
+        while b2 < w.round.bots {
+            let h = w.actors[b2].hdl
+            net_set_bot(b2, phys3d_x(h), phys3d_y(h), phys3d_z(h), w.brains[b2].face)
+            net_set_bot_meta(b2, 0, w.actors[b2].hp)
+            b2 = b2 + 1
+        }
+        net_update(0.016)
+        sleep_ms(16)
+        t = t + 1
+    }
+    0
+}

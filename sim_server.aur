@@ -1,0 +1,21 @@
+// Headless client-server proof of the server module: server_main runs on a thread (net_serve),
+// owns a World, places 3 bots + broadcasts them; a client joins 127.0.0.1 and must SEE the bots.
+fn main() {
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    net_join("127.0.0.1", 45300)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    let input = [0.0; 20]
+    let mut t = 0
+    while t < 150 {
+        net_send_input(input)
+        net_update(0.016)
+        t = t + 1
+        sleep_ms(12)
+    }
+    println("client my_id=" + str(net_my_id()) + " player_count=" + str(net_player_count()) + " (expect 4: me + 3 bots)")
+    println("connected=" + str(net_connected()) + " (expect 1)")
+    println("bot0 id1000 x*10=" + str((net_player_x(1000) * 10.0) as i64) + " (expect -60)")
+    println("bot1 id1001 x*10=" + str((net_player_x(1001) * 10.0) as i64) + " (expect 60)")
+    println("bot2 id1002 z*10=" + str((net_player_z(1002) * 10.0) as i64) + " (expect -80)")
+}

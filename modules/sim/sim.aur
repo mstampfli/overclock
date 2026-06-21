@@ -4,6 +4,15 @@
 // Pure: operates on the raw f32 state/input blobs + the cfg array; calls only engine builtins.
 // Runs identically for client prediction, rollback replay, and the authoritative re-sim.
 
+// The movement tuning constants (one source of truth for client prediction AND the server's
+// authoritative re-sim, so host and guest move identically). Indices: 0 gravity 1 jump_vel
+// 2 ground_speed 3 ground_accel 4 ground_friction 5 air_speed 6 air_accel 7 slide_boost
+// 8 slide_friction 9 slide_min 10 dash_speed 11 dash_cd 12 air_jumps 13 wall_gravity 14 wall_speed
+// 15 wall_accel 16 wall_time 17 wall_jump_up 18 wall_jump_push 19 wall_stick 20 wall_min_speed.
+fn default_cfg() -> [f64; 21] {
+    [16.0, 8.0, 8.5, 80.0, 8.0, 2.5, 120.0, 7.0, 1.2, 5.0, 17.5, 0.0, 1.0, 4.0, 5.0, 8.0, 1.6, 7.0, 5.0, 3.0, 3.0]
+}
+
 // Quake-style ground friction: bleed horizontal speed toward zero.
 fn mv_friction(state: i64, friction: f64, dt: f64) {
     let vx = f32_load(state, 4)
