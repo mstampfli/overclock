@@ -3998,7 +3998,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD NETV2-SWITCH host==guest", 18, 65280)
+        draw_text(12, 12, "BUILD NETV2-17 host==guest + pickups", 18, 65280)
         // Host hit-resolution diagnostics (tiny, top-left under the stamp): how the host's own
         // shots at players resolved. lc = lag-comp hits, fb = local-ray fallback hits (the fix for
         // "can't damage players"), dx = shots that found a victim already DEAD. If you can't damage
