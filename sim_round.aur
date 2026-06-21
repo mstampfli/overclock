@@ -1,0 +1,20 @@
+// Round + scoreboard: the client reads the match timer (bot 0 meta 10) counting down, and the bots'
+// scoreboard kills (meta 6) accumulating from their FFA fights.
+fn main() {
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    net_join("127.0.0.1", 45300)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    let input = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let mut t = 0
+    while t < 50 { net_send_input(input); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    let timer_early = net_player_meta(1000, 10)
+    t = 0
+    while t < 400 { net_send_input(input); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    let timer_late = net_player_meta(1000, 10)
+    let over = net_player_meta(1000, 11)
+    let bot_kills = (net_player_meta(1000,6) + net_player_meta(1001,6) + net_player_meta(1002,6)) as i64
+    println("timer: " + str((timer_early*10.0) as i64) + " -> " + str((timer_late*10.0) as i64) + " /10 (expect counting DOWN)")
+    println("round over=" + str((over) as i64) + " (expect 0) | total bot scoreboard kills=" + str(bot_kills))
+    println("RESULT timer-counts-down=" + str((timer_late < timer_early - 1.0) as i64) + " (expect 1)")
+}

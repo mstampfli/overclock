@@ -53,13 +53,67 @@ fn sync_clients(w: world::World) -> i64 {
             }
             // Track the client's authoritative position (re-simmed by net_update) with its body.
             phys3d_set_pos(w.actors[slot].hdl, net_player_x(pid), net_player_y(pid), net_player_z(pid))
-            // Replicate the host-owned hp/shield/cells to the client.
+            // Replicate the host-owned hp/shield/cells + scoreboard to the client.
             net_set_player_meta(pid, 0, w.actors[slot].hp)
             net_set_player_meta(pid, 1, w.actors[slot].sh)
+            net_set_player_meta(pid, 6, (w.akills[slot]) as f64)
+            net_set_player_meta(pid, 7, (w.adeaths[slot]) as f64)
             slot = slot + 1
         }
         pj = pj + 1
     }
+    0
+}
+
+// ROUND: count the match timer down, end on the kill target (max kills across everyone) or the
+// timer expiring, then after a short over-screen reset for a fresh round. Round state is carried on
+// BOT 0's meta (10 = timer, 11 = over) because the dedicated server has no id-0 host player to ride;
+// clients read net_player_meta(1000, 10/11). (A dedicated world-meta channel could replace this.)
+fn round_tick(w: world::World, dt: f64) -> i64 {
+    if w.round.over == 0 {
+        w.round.timer = w.round.timer - dt
+        let mut topk = 0
+        let mut k = 0
+        while k < 9 {
+            if w.akills[k] > topk { topk = w.akills[k] }
+            k = k + 1
+        }
+        if topk >= w.round.target {
+            w.round.over = 1
+            w.round.over_t = 5.0
+        }
+        if w.round.timer <= 0.0 {
+            w.round.timer = 0.0
+            w.round.over = 1
+            w.round.over_t = 5.0
+        }
+    } else {
+        w.round.over_t = w.round.over_t - dt
+        if w.round.over_t <= 0.0 {
+            w.round.timer = w.round.len
+            w.round.over = 0
+            let mut z = 0
+            while z < 9 {
+                w.akills[z] = 0
+                w.adeaths[z] = 0
+                w.actors[z].hp = 100.0
+                w.actors[z].sh = 0.0
+                w.death_done[z] = 0
+                w.last_hit[z] = 0 - 1
+                z = z + 1
+            }
+            let mut bi = 0
+            while bi < w.round.bots {
+                phys3d_set_pos(w.actors[bi].hdl, w.esx[bi], 0.9, w.esz[bi])
+                w.brains[bi].vy = 0.0
+                w.actors[bi].mag[0] = 30
+                w.actors[bi].res[0] = 60
+                bi = bi + 1
+            }
+        }
+    }
+    net_set_bot_meta(0, 10, w.round.timer)
+    net_set_bot_meta(0, 11, (w.round.over) as f64)
     0
 }
 
@@ -370,6 +424,8 @@ fn broadcast_bots(w: world::World) -> i64 {
         net_set_bot(b2, phys3d_x(h), phys3d_y(h), phys3d_z(h), w.brains[b2].face)
         net_set_bot_meta(b2, 0, w.actors[b2].hp)
         net_set_bot_meta(b2, 1, w.actors[b2].sh)
+        net_set_bot_meta(b2, 6, (w.akills[b2]) as f64)    // scoreboard kills
+        net_set_bot_meta(b2, 7, (w.adeaths[b2]) as f64)   // scoreboard deaths
         b2 = b2 + 1
     }
     0
@@ -418,6 +474,7 @@ fn server_main() -> i64 {
         combat_tick(w, 0.016)
         client_shots_tick(w)
         deaths_tick(w)
+        round_tick(w, 0.016)
         broadcast_bots(w)
         net_update(0.016)   // re-sim connected clients (steps physics) + broadcast snapshots
         net_shots_clear()   // flush this tick's shot announcements to clients
