@@ -1,26 +1,31 @@
-// Headless client-server proof: server owns a World, runs bot AI + COMBAT, syncs client bodies.
-// A client joins at the centre; the bots hunt it AND shoot it, so the client's host-owned hp must
-// DROP and the client must receive shot announcements (tracers/sounds).
+// Headless client-server proof: server runs bots + combat + DEATH SWEEP + respawn handshake. The
+// client moves into the fight; a bot kills it -> it receives a KILL event (victim = me, killer a
+// bot); after it signals a respawn (++ meta 3) the host restores its hp.
 fn main() {
     net_serve(|| { server::server_main() })
     sleep_ms(250)
     net_join("127.0.0.1", 45300)
     net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
-    let input = [0.0; 20]
-    let myid = net_my_id()
-    let mut shots_seen = 0
+    let input = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     let mut t = 0
-    while t < 400 {
-        net_send_input(input)
-        net_update(0.016)
-        shots_seen = shots_seen + net_shot_count()
-        net_shots_clear()
-        t = t + 1
-        sleep_ms(10)
+    while t < 40 { net_send_input(input); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    let myid = net_my_id()
+    let mut killed_by_bot = 0
+    let mut min_hp = 1000.0
+    let mut resp_signaled = 0
+    let mut hp_after_resp = 0.0
+    t = 0
+    while t < 460 {
+        net_send_input(input); net_update(0.016)
+        let kc = net_kill_count()
+        let mut ki = 0
+        while ki < kc { if net_kill_victim(ki) == myid and net_kill_killer(ki) >= 1000 { killed_by_bot = 1 } ki = ki + 1 }
+        net_kills_clear(); net_shots_clear()
+        let hp = net_player_meta(myid, 0); if hp < min_hp { min_hp = hp }
+        if hp <= 0.0 and resp_signaled == 0 { net_set_meta(3, 1.0); resp_signaled = 1 }
+        if resp_signaled == 1 { if hp > hp_after_resp { hp_after_resp = hp } }
+        t = t + 1; sleep_ms(10)
     }
-    let hp = net_player_meta(myid, 0)
-    println("player_count=" + str(net_player_count()) + " connected=" + str(net_connected()))
-    println("my hp (host-owned) = " + str((hp * 10.0) as i64) + " /10 (started 1000; expect DROPPED < 1000)")
-    println("shot announcements seen = " + str(shots_seen) + " (expect > 0: bot tracers)")
-    println("RESULT damaged=" + str((hp < 99.9) as i64) + " saw_shots=" + str((shots_seen > 0) as i64) + " (expect 1 1)")
+    println("min_hp=" + str((min_hp*10.0) as i64) + "/10  killed_by_bot=" + str(killed_by_bot) + "  hp_after_respawn=" + str((hp_after_resp*10.0) as i64) + "/10")
+    println("RESULT took-damage=" + str((min_hp < 99.9) as i64) + " kill-event=" + str(killed_by_bot) + " respawned=" + str((hp_after_resp > 50.0) as i64) + " (expect 1 1 1)")
 }
