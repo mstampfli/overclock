@@ -3038,20 +3038,25 @@ fn main() {
                             net_push_shot(shpid, ox, oy, oz, tex, tey, tez, wp)
                         }
                     } else {
-                        prjx[prjcur] = ox; prjy[prjcur] = oy; prjz[prjcur] = oz
-                        prjvx[prjcur] = ax * proj_speed; prjvy[prjcur] = ay * proj_speed; prjvz[prjcur] = az * proj_speed
-                        prjlife[prjcur] = proj_life
-                        let mut psrc = 1.0
-                        if mine == 1 { psrc = 0.0 }
-                        prjsrc[prjcur] = psrc
-                        prjcur = prjcur + 1
-                        if prjcur >= proj_n { prjcur = 0 }
+                        // Practice/host predict the rocket locally. A NETWORKED client (net_mode 2) does
+                        // NOT spawn its own - the host flies the authoritative travel-time rocket (the
+                        // same sim::rocket_step) and we render its fx copy, so there is ONE rocket sim and
+                        // nothing to diverge. (This also fixes the host instant-detonating a client rocket.)
+                        if net_mode != 2 {
+                            prjx[prjcur] = ox; prjy[prjcur] = oy; prjz[prjcur] = oz
+                            prjvx[prjcur] = ax * proj_speed; prjvy[prjcur] = ay * proj_speed; prjvz[prjcur] = az * proj_speed
+                            prjlife[prjcur] = proj_life
+                            let mut psrc = 1.0
+                            if mine == 1 { psrc = 0.0 }
+                            prjsrc[prjcur] = psrc
+                            prjcur = prjcur + 1
+                            if prjcur >= proj_n { prjcur = 0 }
+                        }
                         let mut lg = 45
                         if mine == 1 { lg = 55 }
                         play_sound_at(0 - 8, 70, lg, ox, oy, oz)
-                        // GUEST: send the rocket LAUNCH INTENT (origin + aim direction). The host
-                        // raycasts it itself to decide the impact - we never claim the result. Our
-                        // own travel-time rocket below is local prediction.
+                        // GUEST: send the rocket LAUNCH INTENT (origin + aim direction). The host flies
+                        // the authoritative travel-time rocket from it; we render that, not a local copy.
                         if mine == 1 and net_mode == 2 { net_projectile_intent(0, ox, oy, oz, ax, ay, az) }
                     }
                     actors[ci].fcd = fire_w[wp]

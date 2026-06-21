@@ -1,0 +1,40 @@
+// Simulate-to-verify the rocket fix: a CLIENT's rocket launch intent must spawn a real TRAVEL-TIME
+// rocket on the host (flown by projectiles_tick via the shared sim::rocket_step), NOT an instant
+// 120m hitscan. So a few frames after firing, the host must have a rocket IN FLIGHT (fx kind 3); the
+// old instant-detonate path left nothing flying. Fired up into open air so it can't hit anything fast.
+fn main() {
+    net_cfg_set(0, 0.0)   // no bots - we only care that OUR rocket flies
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+    let mut t = 0
+    while t < 40 { net_send_input([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    // Fire ONE rocket intent straight UP from the spawn (open air - it keeps flying).
+    let ex = net_local_x()
+    let ey = net_local_y() + 0.7
+    let ez = net_local_z()
+    net_projectile_intent(0, ex, ey, ez, 0.0, 1.0, 0.0)
+    let mut seen_flying = 0
+    t = 0
+    while t < 25 {
+        net_send_input([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0])
+        net_update(0.016)
+        // scan the fx channel for a live rocket (kind 3) - the host is flying our rocket
+        let fxn = net_fx_count()
+        let mut fxi = 0
+        while fxi < fxn {
+            let k = net_fx_kind(fxi)
+            if k > 2.5 and k < 3.5 { seen_flying = 1 }
+            fxi = fxi + 1
+        }
+        net_kills_clear(); net_shots_clear()
+        t = t + 1
+        sleep_ms(10)
+    }
+    println("rocket seen in flight (fx kind 3) after a client intent = " + str(seen_flying))
+    println("RESULT client-rocket-travels=" + str(seen_flying) + " (expect 1 - was 0 with instant hitscan)")
+}

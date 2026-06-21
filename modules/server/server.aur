@@ -642,17 +642,13 @@ fn client_projectiles_tick(w: world::World) -> i64 {
             pra = pra + 1
         }
         if psai >= 0 {
-            let pexcl = w.actors[psai].hdl
-            let mut det = 0
-            let mut dx = pox
-            let mut dy = poy
-            let mut dz = poz
-            let mut pgi = 1.1   // rocket_intensity
             if pkind == 0 {
+                // ROCKET: spawn a REAL travel-time projectile (projectiles_tick flies it via the shared
+                // sim::rocket_step + detonates on impact), NOT an instant 120m hitscan. So the arc the
+                // shooter sees matches the host's, and remotes watch it fly. Same path as a bot rocket.
                 let pvl = sqrt(pvx * pvx + pvy * pvy + pvz * pvz)
                 if pvl > 0.001 {
-                    let phb = phys3d_raycast_ex(pexcl, pox, poy, poz, pvx / pvl, pvy / pvl, pvz / pvl, 120.0)
-                    if phb >= 0 { dx = phys3d_hit_x(); dy = phys3d_hit_y(); dz = phys3d_hit_z(); det = 1 }
+                    spawn_rocket(w, pox, poy, poz, pvx / pvl, pvy / pvl, pvz / pvl, psai)
                 }
             } else {
                 // GRENADE: spawn it as a REAL server-simulated projectile (grenade_tick flies the arc
@@ -664,10 +660,6 @@ fn client_projectiles_tick(w: world::World) -> i64 {
                 w.nfuse = 1.4   // nade_fuse
                 w.nade_live = 1
                 w.nade_src = psai
-            }
-            if det == 1 {
-                net_push_boom(pspid, dx, dy, dz, pgi)
-                explode(w, dx, dy, dz, pgi, psai)
             }
         }
         spi = spi + 1
@@ -731,26 +723,18 @@ fn projectiles_tick(w: world::World, dt: f64) -> i64 {
     let mut prj = 0
     while prj < 12 {
         if w.prjlife[prj] > 0.0 {
-            w.prjlife[prj] = w.prjlife[prj] - dt
-            let psp = sqrt(w.prjvx[prj] * w.prjvx[prj] + w.prjvy[prj] * w.prjvy[prj] + w.prjvz[prj] * w.prjvz[prj])
-            if psp > 0.001 {
-                let pdx = w.prjvx[prj] / psp
-                let pdy = w.prjvy[prj] / psp
-                let pdz = w.prjvz[prj] / psp
-                let phit = phys3d_raycast_full(w.prjx[prj], w.prjy[prj], w.prjz[prj], pdx, pdy, pdz, psp * dt + 0.12)
-                if phit >= 0 {
-                    let hx = phys3d_hit_x()
-                    let hy = phys3d_hit_y()
-                    let hz = phys3d_hit_z()
-                    let src = w.prjsrc[prj] as i64
-                    net_push_boom(1000 + src, hx, hy, hz, 1.1)   // bot rocket: everyone renders the blast
-                    explode(w, hx, hy, hz, 1.1, src)
-                    w.prjlife[prj] = 0.0
-                } else {
-                    w.prjx[prj] = w.prjx[prj] + w.prjvx[prj] * dt
-                    w.prjy[prj] = w.prjy[prj] + w.prjvy[prj] * dt
-                    w.prjz[prj] = w.prjz[prj] + w.prjvz[prj] * dt
-                }
+            // SHARED arc step (sim::rocket_step) - the same code clients render the rocket flying with.
+            let p = [w.prjx[prj], w.prjy[prj], w.prjz[prj], w.prjvx[prj], w.prjvy[prj], w.prjvz[prj], w.prjlife[prj]]
+            let phit = sim::rocket_step(p)
+            w.prjx[prj] = p[0]
+            w.prjy[prj] = p[1]
+            w.prjz[prj] = p[2]
+            w.prjlife[prj] = p[6]
+            if phit == 1 {
+                let src = w.prjsrc[prj] as i64
+                net_push_boom(1000 + src, p[0], p[1], p[2], 1.1)   // everyone (incl. the firer) renders the blast
+                explode(w, p[0], p[1], p[2], 1.1, src)
+                w.prjlife[prj] = 0.0
             }
         }
         prj = prj + 1
