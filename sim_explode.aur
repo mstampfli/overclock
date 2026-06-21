@@ -1,0 +1,45 @@
+// Faithful lift of the host explosion-damage loop after the nactors extension, to confirm:
+//  - bots (0..bot_n)        take damage
+//  - pl_i (the local player) is SKIPPED here (its self-damage runs in a separate block)
+//  - remote clients (pl_i+1..nactors) take damage on the HOST (the new behaviour)
+//  - empty remote slots (hp 0) are left alone
+fn main() {
+    let bot_n = 5
+    let pl_i = 5
+    let nactors = 9
+    let nade_dmg = 180.0
+    let rad = 5.0
+    // slot:        0     1     2     3     4    5(pl) 6(cl) 7(cl) 8(empty)
+    let mut hp =  [100.0,100.0,100.0,100.0,100.0,100.0,100.0,100.0, 0.0]
+    let dist =    [  1.0,  2.0,  3.0,  4.0,  1.0,  1.0,  2.0,  1.0, 1.0]
+
+    let net_mode = 1   // HOST
+    let mut ecap = bot_n
+    if net_mode == 1 { ecap = nactors }
+    let mut ej = 0
+    while ej < ecap {
+        if ej != pl_i and hp[ej] > 0.0 {
+            let bdd = dist[ej]
+            if bdd < rad {
+                let edmg = nade_dmg * (1.0 - 0.30 * bdd / rad)
+                hp[ej] = hp[ej] - edmg
+            }
+        }
+        ej = ej + 1
+    }
+    let mut k = 0
+    while k < nactors {
+        let tag = "bot"
+        if k == pl_i { tag = "player(skip)" }
+        if k > pl_i { tag = "client" }
+        if k == 8 { tag = "empty" }
+        println("slot " + str(k) + " " + tag + " hp=" + str((hp[k] * 10.0) as i64) + "/10")
+        k = k + 1
+    }
+    // Checks
+    let pl_ok = hp[pl_i] > 99.9                       // player untouched here
+    let client_ok = hp[6] < 99.9 and hp[7] < 99.9     // remote clients took damage (the fix)
+    let bot_ok = hp[0] < 99.9 and hp[4] < 99.9         // bots took damage
+    let empty_ok = hp[8] < 0.01 and hp[8] > (0.0 - 0.01) // empty slot untouched (still 0)
+    println("player-skipped=" + str(pl_ok as i64) + " clients-hit=" + str(client_ok as i64) + " bots-hit=" + str(bot_ok as i64) + " empty-untouched=" + str(empty_ok as i64))
+}

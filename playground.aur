@@ -2725,6 +2725,10 @@ fn main() {
                         pgi = nade_intensity
                     }
                     if det == 1 {
+                        // Announce the client's detonation so everyone (the host + OTHER clients)
+                        // renders + hears it. Source = the launching client, who already predicted
+                        // its own blast locally and so skips this echo.
+                        net_push_boom(pspid, dx, dy, dz, pgi)
                         let erad = nade_radius * pgi
                         let mut eej = 0
                         while eej < nactors {
@@ -2878,9 +2882,13 @@ fn main() {
             play_noise(60, 16)   // swing swoosh
             // Arc/cone sweep - a katana SLASH, not a needle. Hit EVERY actor within reach and
             // inside the ~120-deg swing arc, with a line-of-sight check so walls block it.
+            // HOST: the slash is authoritative, so it also cleaves remote clients (slots past pl_i),
+            // not just bots - a guest in katana range actually takes the hit (synced via their meta).
+            let mut mcap = bot_n
+            if net_mode == 1 { mcap = nactors }
             let mut mvk = 0
-            while mvk < bot_n {
-                if actors[mvk].hp > 0.0 {
+            while mvk < mcap {
+                if mvk != pl_i and actors[mvk].hp > 0.0 {
                     let mbx = phys3d_x(actors[mvk].hdl as i64)
                     let mby = phys3d_y(actors[mvk].hdl as i64) + 0.5
                     let mbz = phys3d_z(actors[mvk].hdl as i64)
@@ -3100,10 +3108,21 @@ fn main() {
             boomx = ex_x
             boomy = ex_y
             boomz = ex_z
+            // Announce this detonation so EVERY machine renders + hears it (remotes too). The
+            // host broadcasts its own blasts (source = my id); each receiver skips its own
+            // (it predicted it locally). On a guest this is a no-op (only the host broadcasts).
+            if net_mode == 1 { net_push_boom(net_my_id(), ex_x, ex_y, ex_z, gi) }
             // Radial damage with linear falloff; a kill runs the usual bookkeeping.
+            // HOST: explosives are authoritative - they damage remote clients too (slots past pl_i),
+            // not just bots, so a guest caught in the host's blast actually takes the hit (synced via
+            // their meta). Practice/guest: bots only (a guest's blast is pure local prediction; the
+            // host re-simulates the guest's launch and applies the real damage). pl_i is skipped here
+            // because the player's own self-damage is handled separately below.
+            let mut ecap = bot_n
+            if net_mode == 1 { ecap = nactors }
             let mut ej = 0
-            while ej < bot_n {
-                if actors[ej].hp > 0.0 {
+            while ej < ecap {
+                if ej != pl_i and actors[ej].hp > 0.0 {
                     let ghh = actors[ej].hdl as i64
                     let bdx = phys3d_x(ghh) - ex_x
                     let bdy = (phys3d_y(ghh) + 0.5) - ex_y
@@ -4552,6 +4571,52 @@ fn main() {
             sci = sci + 1
         }
         net_shots_clear()
+        // REMOTE explosions: the host announces every detonation (its own + each client's re-simmed
+        // rocket/grenade) so EVERY machine renders the flash + sparks + boom sound for blasts it
+        // did NOT cause (source != my id - my own blast was already predicted locally in the explode
+        // handler). This is what finally lets guests SEE + HEAR explosions, and lets the host see
+        // guests' explosions. Visual/audio only; the damage is authoritative on the host.
+        let nbm = net_boom_count()
+        let mut bmi = 0
+        while bmi < nbm {
+            if net_boom_source(bmi) != net_my_id() {
+                let rbx = net_boom_field(bmi, 0)
+                let rby = net_boom_field(bmi, 1)
+                let rbz = net_boom_field(bmi, 2)
+                let rbi = net_boom_field(bmi, 3)
+                boom_t = 0.6
+                boom_int = rbi
+                boomx = rbx
+                boomy = rby
+                boomz = rbz
+                let mut rbp = 0
+                while rbp < 16 {
+                    ppx[pcur] = rbx; ppy[pcur] = rby; ppz[pcur] = rbz
+                    let rba = (rbp as f64) * 0.92
+                    pvx[pcur] = cos(rba) * 8.5 * rbi
+                    pvy[pcur] = 4.0 * rbi + sin(rba * 1.7) * 3.5
+                    pvz[pcur] = sin(rba) * 8.5 * rbi
+                    plife[pcur] = 0.5
+                    pcur = pcur + 1
+                    if pcur >= 28 { pcur = 0 }
+                    rbp = rbp + 1
+                }
+                play_sound_at(0 - 30, 150, 90, rbx, rby, rbz)   // foreground boom (3D)
+                play_sound_at(0 - 16, 70, 70, rbx, rby, rbz)    // positional crack layer
+                let rpbx = px - rbx
+                let rpby = py - rby
+                let rpbz = pz - rbz
+                let rpbd = sqrt(rpbx * rpbx + rpby * rpby + rpbz * rpbz)
+                let rshrad = 14.0 * rbi
+                if rpbd < rshrad {
+                    let rbn = 1.0 - rpbd / rshrad
+                    let rbshake = rbn * rbn * 1.4 * rbi
+                    if shake < rbshake { shake = rbshake }
+                }
+            }
+            bmi = bmi + 1
+        }
+        net_booms_clear()   // host: broadcast this frame's booms then clear; client: clear the batch
         // Bullet tracers from bots (and anyone else) so you SEE incoming/passing shots.
         let mut tri = 0
         while tri < tracer_n {
@@ -4716,7 +4781,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD FLOATFIX-18", 18, 65280)
+        draw_text(12, 12, "BUILD NETV2-01 BOOM", 18, 65280)
         // GUEST join/disconnect banner: "joining" until the host inits our character, and a clear
         // "disconnected" -> back to the menu if the host vanishes (net_connected goes false).
         if net_mode == 2 {

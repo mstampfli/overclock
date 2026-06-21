@@ -1,0 +1,53 @@
+// Verify the explosion-event channel: a dedicated server thread broadcasts two booms (one
+// "caused by" client id 1, one by id 99); the client on the main thread receives + reads both.
+// The game skips source==my_id (its own predicted blast); here we just confirm delivery + fields.
+
+fn main() {
+    net_serve(|| {
+        net_host(45210)
+        net_dedicated()
+        net_sim(|state, input| { 0 }, 7, 4)
+        let mut t = 0
+        while t < 500 {
+            net_update(0.016)
+            if t >= 60 and t < 64 {
+                net_push_boom(99, 10.0, 1.0, 2.0, 1.5)   // someone else's blast: client should render
+                net_push_boom(1, 5.0, 5.0, 5.0, 1.0)     // the client's OWN blast: game skips it
+            }
+            net_booms_clear()   // flush: broadcast this tick's booms, then clear
+            sleep_ms(8)
+            t = t + 1
+        }
+        0
+    })
+    sleep_ms(120)
+    net_join("127.0.0.1", 45210)
+    net_sim(|state, input| { 0 }, 7, 4)
+    let input = [0.0, 0.0, 0.0, 0.0]
+    let mut saw99 = 0
+    let mut saw_own = 0
+    let mut t = 0
+    while t < 240 {
+        net_send_input(input)
+        net_update(0.016)
+        let bc = net_boom_count()
+        let mut bi = 0
+        while bi < bc {
+            let src = net_boom_source(bi)
+            if src == 99 {
+                saw99 = saw99 + 1
+                if saw99 == 1 {
+                    println("other blast: src=" + str(src) + " x=" + str((net_boom_field(bi, 0) * 10.0) as i64) + "/10 int=" + str((net_boom_field(bi, 3) * 10.0) as i64) + "/10")
+                }
+            }
+            if src == net_my_id() { saw_own = saw_own + 1 }
+            bi = bi + 1
+        }
+        net_booms_clear()
+        sleep_ms(12)
+        t = t + 1
+    }
+    println("my_id = " + str(net_my_id()))
+    println("saw other (99) blasts  = " + str(saw99) + "  (expect >=1, game renders these)")
+    println("saw my-own blasts      = " + str(saw_own) + "  (expect >=1, game SKIPS these)")
+}
