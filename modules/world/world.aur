@@ -45,3 +45,77 @@ struct Brain {
     getrifle: f64,   // 1 = heading for ammo, so equip the rifle to top it up (not the launcher)
     face: f64        // yaw the body should face (set toward its aim target; for the model draw)
 }
+
+// Authoritative FFA round state: reach the kill target before the timer runs out.
+struct Round {
+    kills: i64,      // the host player's own kills (per-slot kills live in World.akills)
+    deaths: i64,
+    timer: f64,      // seconds left in the round
+    over: i64,       // 0 = playing, 1 = round over (showing the end screen)
+    over_t: f64,     // end-screen countdown before the reset
+    won: i64,        // 0/1 - did the local player win
+    target: i64,     // kills to win (lobby-set)
+    len: f64,        // round length in seconds (lobby-set)
+    bots: i64        // active bot count (lobby-set; opponents = bots minus connected remotes)
+}
+
+// ALL authoritative game state - the single source of truth the SERVER owns (server_main),
+// advances each tick, and broadcasts to clients. A client never owns this; it renders from the
+// replicated copy (players/bots/objects/fx/shots/booms over the net). Sizes: 9 actor slots
+// (5 bots + local + 3 remotes), 12 crates, 11 pickups, 6 drops, 12 projectiles, 5 bot anchors.
+// Render-only state (sparks, tracers, boom visuals, camera, HUD, models) is NOT here - it stays
+// client-side. This is the heart of the host==guest restructure: own it on the server thread,
+// send it the same way to everyone, and the host becomes just another client of its own server.
+struct World {
+    actors: [Actor; 9],
+    brains: [Brain; 9],
+    round: Round,
+    // Kill bookkeeping (parallel to actors): who last hit each actor + the killer-reward context;
+    // a per-frame sweep then runs every death's consequences exactly once.
+    last_hit: [i64; 9],
+    death_done: [i64; 9],
+    kr_oc: [f64; 9],
+    kr_mark: [f64; 9],
+    akills: [i64; 9],
+    adeaths: [i64; 9],
+    // Fixed-pickup respawn cooldowns (0 = available); the pickup positions/types are static config.
+    pkcd: [f64; 11],
+    // Loot drops (health / shield / ammo) spawned at death sites: position, type, life remaining.
+    dropx: [f64; 6],
+    dropy: [f64; 6],
+    dropz: [f64; 6],
+    droptype: [f64; 6],
+    droplife: [f64; 6],
+    // In-flight projectiles (rockets / bolts) the host simulates: position, velocity, life, source.
+    prjx: [f64; 12],
+    prjy: [f64; 12],
+    prjz: [f64; 12],
+    prjvx: [f64; 12],
+    prjvy: [f64; 12],
+    prjvz: [f64; 12],
+    prjlife: [f64; 12],
+    prjsrc: [f64; 12],
+    prjcur: i64,
+    // The single in-flight frag grenade.
+    grx: f64,
+    gry: f64,
+    grz: f64,
+    grvx: f64,
+    grvy: f64,
+    grvz: f64,
+    nfuse: f64,
+    nade_live: i64,
+    nade_cd: f64,
+    // Loose physics crates (collider handles) + bot spawn anchors.
+    crates: [i64; 12],
+    esx: [f64; 5],
+    esz: [f64; 5],
+    // Host-side per-client survivability tracking: actor slot -> net id, and the respawn/heal
+    // counters last seen (a client signals intent via meta counters; the host owns the result).
+    apid: [i64; 9],
+    cpid_h: [i64; 9],
+    cresp_seen: [i64; 9],
+    cheal_seen: [i64; 9],
+    // Bot-AI clock (drives aim wobble / fire windows).
+    etime: f64
+}
