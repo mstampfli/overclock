@@ -1,0 +1,67 @@
+// TTK probe (simulate-to-verify the leg-shot damage): the client closes on bot 0 and fires shots aimed
+// LOW (at the legs, well below body centre), then measures the actual per-shot hp drop the server
+// applies. Expected: leg = gun_dmg*0.65 ~ 11, body ~ 17, head*2 ~ 34. If legs read as ~34 the head/leg
+// zoning off the lag-comp hit Y is wrong (the "3 leg shots kills" bug).
+fn main() {
+    net_cfg_set(0, 1.0)   // ONE bot
+    net_cfg_set(3, 1.0)   // PASSIVE: it holds still + never shoots, so the client can measure cleanly
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()   // the CLIENT needs the static arena locally (floor!) for its own
+                               // movement prediction, exactly like main does - else it falls through.
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+    let mut t = 0
+    // settle with the spawn in input[17..19] (0,1.1,45); sim_step now seeds the character there on
+    // creation, so the client starts at the real arena spawn (not stuck at the origin tower).
+    while t < 40 { net_send_input([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    let mut last_hp = net_player_meta(1000, 0)
+    let mut shots = 0
+    let mut total = 0.0
+    let mut d0 = 0.0
+    let mut d1 = 0.0
+    let mut d2 = 0.0
+    t = 0
+    while t < 500 {
+        let ex = net_local_x()
+        let ey = net_local_y() + 0.7
+        let ez = net_local_z()
+        let bx = net_player_x(1000)
+        let by = net_player_y(1000)
+        let bz = net_player_z(1000)
+        let hp = net_player_meta(1000, 0)
+        let d = sqrt((bx - ex) * (bx - ex) + (bz - ez) * (bz - ez))
+        let yaw = atan2(bx - ex, 0.0 - (bz - ez))
+        let mut fwd = 1.0
+        if d < 7.0 { fwd = 0.0 }
+        net_send_input([fwd, 0.0, yaw, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0])
+        if d < 10.0 and hp > 0.0 {
+            let dx = bx - ex
+            let dy = (by - 0.7) - ey   // aim at the LEGS (0.7m below body centre)
+            let dz = bz - ez
+            let dl = sqrt(dx * dx + dy * dy + dz * dz)
+            if dl > 0.1 { net_fire(ex, ey, ez, dx / dl, dy / dl, dz / dl, 0) }
+        }
+        net_update(0.016)
+        let nhp = net_player_meta(1000, 0)
+        if nhp < last_hp - 0.01 and nhp > 0.0 {
+            let drop = last_hp - nhp
+            if drop < 40.0 {
+                total = total + drop
+                if shots == 0 { d0 = drop } else { if shots == 1 { d1 = drop } else { if shots == 2 { d2 = drop } } }
+                shots = shots + 1
+            }
+        }
+        last_hp = nhp
+        if t == 60 or t == 200 or t == 400 {
+            println("t=" + str(t) + " me=(" + str((ex * 10.0) as i64) + "," + str((ez * 10.0) as i64) + ") bot=(" + str((bx * 10.0) as i64) + "," + str((bz * 10.0) as i64) + ") dist*10=" + str((d * 10.0) as i64) + " shots=" + str(shots))
+        }
+        net_kills_clear(); net_shots_clear()
+        t = t + 1; sleep_ms(10)
+    }
+    let avg = total / (shots as f64)
+    println("leg shots landed=" + str(shots) + " avg dmg*10=" + str((avg * 10.0) as i64) + " first three*10: " + str((d0 * 10.0) as i64) + " " + str((d1 * 10.0) as i64) + " " + str((d2 * 10.0) as i64))
+    println("RESULT leg-dmg-correct(~11)=" + str((avg < 14.0) as i64) + " (head-bug if ~34)")
+}

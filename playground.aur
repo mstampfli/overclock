@@ -1607,25 +1607,19 @@ fn main() {
         }
         net_send_input(blob)
         net_update(dt)
-        // GUEST: boxes are PREDICTED locally (they're dynamic bodies the guest's phys3d steps each
-        // frame, incl. your own predicted shove/shot impulses) and only RECONCILED toward the host's
-        // authoritative positions. The old reconcile yanked them 35%/frame toward the host's STALE
-        // (RTT-old) position, overriding the local sim = the lag. Now the local prediction drives,
-        // and we apply only a GENTLE pull to cancel drift (snap if it diverges badly).
+        // CRATES are fully server-authoritative (host==guest): the server simulates them + broadcasts
+        // pose every tick. The old soft 10%/frame pull lagged badly - a box you shot crawled slowly
+        // toward where the host had ALREADY moved it, and local prediction fought the pull. Snap the
+        // local body HARD to the broadcast pose each frame (position + orientation) and zero its
+        // velocity so local physics can't drift it. At 127.0.0.1 (host) this is exact + crisp.
         if net_mode == 2 and net_object_count() >= crate_n {
             let mut gci = 0
             while gci < crate_n {
                 let cch = crates[gci] as i64
-                let tcx = net_object_x(gci)
-                let tcy = net_object_y(gci)
-                let tcz = net_object_z(gci)
-                let ccx = phys3d_x(cch)
-                let ccy = phys3d_y(cch)
-                let ccz = phys3d_z(cch)
-                let cofs = sqrt((tcx - ccx) * (tcx - ccx) + (tcy - ccy) * (tcy - ccy) + (tcz - ccz) * (tcz - ccz))
-                // Snap only on a big divergence (a box you never touched that the host moved far);
-                // otherwise nudge softly so YOUR boxes stay crisp and local instead of rubber-banding.
-                if cofs > 3.0 { phys3d_set_pos(cch, tcx, tcy, tcz) } else { if cofs > 0.04 { phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.1, ccy + (tcy - ccy) * 0.1, ccz + (tcz - ccz) * 0.1) } }
+                phys3d_set_pos(cch, net_object_x(gci), net_object_y(gci), net_object_z(gci))
+                phys3d_set_rot(cch, net_object_qx(gci), net_object_qy(gci), net_object_qz(gci), net_object_qw(gci))
+                phys3d_set_vel(cch, 0.0, 0.0, 0.0)
+                phys3d_set_angvel(cch, 0.0, 0.0, 0.0)
                 gci = gci + 1
             }
         }

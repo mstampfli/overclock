@@ -31,9 +31,11 @@ fn sync_clients(w: world::World) -> i64 {
                 w.actors[slot].hp = 100.0
                 w.actors[slot].sh = 0.0
                 w.actors[slot].shmax = 50.0
+                w.actors[slot].cells = 0
                 w.death_done[slot] = 0
                 w.last_hit[slot] = 0 - 1
                 w.cresp_seen[slot] = net_player_meta(pid, 3) as i64
+                w.cheal_seen[slot] = net_player_meta(pid, 5) as i64
             }
             // RESPAWN HANDSHAKE: a client signals a respawn by ++ its meta 3; the host owns the
             // result (restore full hp, re-arm the death sweep) and echoes the counter back as meta 9
@@ -43,8 +45,21 @@ fn sync_clients(w: world::World) -> i64 {
                 w.cresp_seen[slot] = rc
                 w.actors[slot].hp = 100.0
                 w.actors[slot].sh = 0.0
+                w.actors[slot].cells = 0
                 w.death_done[slot] = 0
                 w.last_hit[slot] = 0 - 1
+            }
+            // HEAL HANDSHAKE: a client signals a shield-pop by ++ its meta 5; the host owns the result
+            // (spend one carried cell for +25 shield). Without this the client could collect cells but
+            // never actually convert them - the "shield disappears / can't pop it" bug.
+            let hc = net_player_meta(pid, 5) as i64
+            if hc != w.cheal_seen[slot] {
+                w.cheal_seen[slot] = hc
+                if w.actors[slot].cells > 0 and w.actors[slot].sh < w.actors[slot].shmax {
+                    w.actors[slot].cells = w.actors[slot].cells - 1
+                    w.actors[slot].sh = w.actors[slot].sh + 25.0
+                    if w.actors[slot].sh > w.actors[slot].shmax { w.actors[slot].sh = w.actors[slot].shmax }
+                }
             }
             w.apid[slot] = pid
             net_set_player_meta(pid, 9, w.cresp_seen[slot])
@@ -56,6 +71,7 @@ fn sync_clients(w: world::World) -> i64 {
             // Replicate the host-owned hp/shield/cells + scoreboard to the client.
             net_set_player_meta(pid, 0, w.actors[slot].hp)
             net_set_player_meta(pid, 1, w.actors[slot].sh)
+            net_set_player_meta(pid, 4, (w.actors[slot].cells) as f64)   // carried shield cells (pop-able)
             net_set_player_meta(pid, 6, (w.akills[slot]) as f64)
             net_set_player_meta(pid, 7, (w.adeaths[slot]) as f64)
             slot = slot + 1
@@ -321,6 +337,7 @@ fn deaths_tick(w: world::World) -> i64 {
 // clients draw the tracer + hear it. Launcher / grenades / the player's own shots land in later steps.
 fn combat_tick(w: world::World, dt: f64) -> i64 {
     let nb = w.round.bots
+    let passive = net_cfg_get(3) as i64   // TEST: passive bots never shoot (stationary dummies)
     let mut ci = 0
     while ci < nb {
         if w.actors[ci].hp > 0.0 {
@@ -367,7 +384,7 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
             // window opens, lob a travel-time rocket (dodgeable) instead of the rifle. Consumes a
             // rocket (mag[1] reloads from res[1]) and takes the slow fire cooldown.
             let mut launched = 0
-            if tgv >= 0 and w.actors[ci].fcd <= 0.0 and bestd > 25.0 and w.actors[ci].mag[1] > 0 and w.actors[ci].heal <= 0.0 and sin(w.etime * 0.7 + (ci as f64) * 1.9) > 0.9 {
+            if passive == 0 and tgv >= 0 and w.actors[ci].fcd <= 0.0 and bestd > 25.0 and w.actors[ci].mag[1] > 0 and w.actors[ci].heal <= 0.0 and sin(w.etime * 0.7 + (ci as f64) * 1.9) > 0.9 {
                 let ddx = tgx - bsx
                 let ddy = tgy - bsy
                 let ddz = tgz - bsz
@@ -381,7 +398,7 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                 }
             }
             // Fire if armed + off cooldown + we have a target (and we didn't just launch a rocket).
-            if launched == 0 and tgv >= 0 and w.actors[ci].fcd <= 0.0 and w.actors[ci].mag[0] > 0 and w.actors[ci].rl <= 0.0 and w.actors[ci].heal <= 0.0 {
+            if passive == 0 and launched == 0 and tgv >= 0 and w.actors[ci].fcd <= 0.0 and w.actors[ci].mag[0] > 0 and w.actors[ci].rl <= 0.0 and w.actors[ci].heal <= 0.0 {
                 let ddx = tgx - bsx
                 let ddy = tgy - bsy
                 let ddz = tgz - bsz
@@ -682,6 +699,9 @@ fn projectiles_tick(w: world::World, dt: f64) -> i64 {
 fn bots_tick(w: world::World, dt: f64) -> i64 {
     w.etime = w.etime + dt
     let nb = w.round.bots
+    // TEST/DEBUG: config slot 3 = passive bots - they hold position + never shoot (set via net_cfg_set
+    // before net_serve). Used by sims to measure things against a stationary dummy (e.g. TTK).
+    let passive = net_cfg_get(3) as i64
     let mut ei2 = 0
     while ei2 < nb {
         let h = w.actors[ei2].hdl
@@ -821,13 +841,13 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             }
             let mut bvx = (mdx * adv + perpx * juke) * runsp
             let mut bvz = (mdz * adv + perpz * juke) * runsp
-            if channeling == 1 { bvx = 0.0; bvz = 0.0 }   // hold still while raising the shield
+            if channeling == 1 or passive == 1 { bvx = 0.0; bvz = 0.0 }   // hold still (shielding or test-passive)
             w.brains[ei2].vy = w.brains[ei2].vy - 16.0 * dt
             if grnd and w.brains[ei2].vy < 0.0 { w.brains[ei2].vy = 0.0 }
             let moved = sqrt((bx0 - w.brains[ei2].px0) * (bx0 - w.brains[ei2].px0) + (bz0 - w.brains[ei2].pz0) * (bz0 - w.brains[ei2].pz0))
             let stuck = moved < 0.05 and tdist > 2.0
             w.brains[ei2].jcd = w.brains[ei2].jcd - dt
-            if grnd and w.brains[ei2].jcd <= 0.0 and channeling == 0 {
+            if grnd and w.brains[ei2].jcd <= 0.0 and channeling == 0 and passive == 0 {
                 let want_jump = (stuck and tdist > 4.5) or ((tmy - by0) > 1.2 and tdist > 2.5)
                 if want_jump {
                     w.brains[ei2].vy = 9.5
@@ -840,7 +860,7 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             // steering so the launch reads). Skipped while seeking loot. Anchor + a 0.4s rope timer go
             // out over meta 12-15 so every client draws the cyan rope, same as a human player's grapple.
             w.brains[ei2].gcd = w.brains[ei2].gcd - dt
-            if grnd and w.brains[ei2].gcd <= 0.0 and tdist > 24.0 and seeking == 0 and channeling == 0 {
+            if grnd and w.brains[ei2].gcd <= 0.0 and tdist > 24.0 and seeking == 0 and channeling == 0 and passive == 0 {
                 let aimx = tmx - bx0
                 let aimy = (tmy + 1.5) - (by0 + 0.5)
                 let aimz = tmz - bz0
@@ -954,6 +974,10 @@ fn server_main() -> i64 {
     if cfg_target > 0 { w.round.target = cfg_target }
     let cfg_len = net_cfg_get(2)
     if cfg_len > 0.0 { w.round.len = cfg_len; w.round.timer = cfg_len }
+    // The lobby count is the TOTAL number of opponents the host chose. Every connected human (besides
+    // the host itself) takes one of those opponent slots, so the active bot count drops by one per
+    // remote player who joins - a joining friend REPLACES a bot rather than adding to the count.
+    let lobby_bots = w.round.bots
     let anchx = [0.0 - 20.0, 20.0, 0.0, 0.0 - 25.0, 25.0]
     let anchz = [20.0, 20.0, 0.0 - 25.0, 0.0 - 10.0, 0.0 - 10.0]
     let mut bi = 0
@@ -974,6 +998,7 @@ fn server_main() -> i64 {
     net_dedicated()
     net_max_clients(3)             // admit up to max_remote human clients
     net_spawn_at(0.0, 0.9, 45.0)   // the real arena spawn (matches the game)
+    net_spawn_input_slot(17)       // input[17..19] = respawn point -> SERVER overwrites it (authoritative)
     net_sim(|state, input| {
         sim::sim_step(state, input, sim::default_cfg())
         0
@@ -981,6 +1006,14 @@ fn server_main() -> i64 {
     // Run forever - the dedicated server lives for the whole match (the daemon thread is torn down
     // when the host's process exits). A fixed ~60 Hz tick.
     loop {
+        // Active bots = chosen opponents minus the remote humans who have joined (each takes an
+        // opponent slot). net_player_count includes the host, so subtract (count - 1) remote players.
+        // Surplus bots (higher slots) simply stop being ticked + broadcast until a player leaves.
+        let humans = net_player_count()
+        let mut active = lobby_bots - (humans - 1)
+        if active < 0 { active = 0 }
+        if active > lobby_bots { active = lobby_bots }
+        w.round.bots = active
         sync_clients(w)
         bots_tick(w, 0.016)
         combat_tick(w, 0.016)
