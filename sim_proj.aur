@@ -1,0 +1,22 @@
+// Projectile travel (simulate-to-verify): spawn a travel-time rocket aimed at a target, step physics +
+// projectiles_tick; the rocket must fly across, hit, detonate, and explode() must damage the target.
+fn main() {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 50.0, 0.5, 50.0, 0)
+    net_host(45131)   // a session so net_push_boom (inside projectiles_tick) has somewhere to go
+    let mut w = world::new_world()
+    w.round.bots = 2
+    w.actors[0].hdl = phys3d_add_character(15.0, 0.9, 0.0, 0.6, 0.3)   // target
+    w.actors[0].hp = 100.0
+    w.actors[1].hdl = phys3d_add_character(0.0, 0.9, 0.0, 0.6, 0.3)    // shooter slot 1
+    w.actors[1].hp = 100.0
+    server::spawn_rocket(w, 0.0, 1.4, 0.0, 1.0, 0.0 - 0.03, 0.0, 1)    // fire +x at the target
+    let mut t = 0
+    while t < 60 {
+        phys3d_step(0.016)
+        server::projectiles_tick(w, 0.016)
+        t = t + 1
+    }
+    println("target hp after bot rocket = " + str((w.actors[0].hp * 10.0) as i64) + "/10 (expect dropped)")
+    println("RESULT bot-rocket-travels-and-damages=" + str((w.actors[0].hp < 99.9) as i64) + " (expect 1)")
+}

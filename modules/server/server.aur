@@ -176,13 +176,19 @@ fn loot_tick(w: world::World, dt: f64) -> i64 {
     0
 }
 
-// Broadcast the live loot drops over the fx channel (clients render them; kind = droptype 0/1/2).
+// Broadcast the live transient visuals over the fx channel: loot drops (kind = droptype 0/1/2) and
+// in-flight rockets (kind 3), so clients render the drops AND see bot rockets fly in (dodge them).
 fn broadcast_fx(w: world::World) -> i64 {
     let mut n = 0
     let mut i = 0
     while i < 6 {
         if w.droplife[i] > 0.0 { n = n + 1 }
         i = i + 1
+    }
+    let mut pj = 0
+    while pj < 12 {
+        if w.prjlife[pj] > 0.0 { n = n + 1 }
+        pj = pj + 1
     }
     net_set_fx_count(n)
     let mut wi = 0
@@ -193,6 +199,14 @@ fn broadcast_fx(w: world::World) -> i64 {
             wi = wi + 1
         }
         d = d + 1
+    }
+    let mut p2 = 0
+    while p2 < 12 {
+        if w.prjlife[p2] > 0.0 {
+            net_set_fx(wi, w.prjx[p2], w.prjy[p2], w.prjz[p2], 3.0)   // kind 3 = in-flight rocket
+            wi = wi + 1
+        }
+        p2 = p2 + 1
     }
     0
 }
@@ -289,8 +303,25 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                 vi = vi + 1
             }
             if tgv >= 0 { w.brains[ci].face = atan2(tgx - bsx, tgz - bsz) }
-            // Fire if armed + off cooldown + we have a target.
-            if tgv >= 0 and w.actors[ci].fcd <= 0.0 and w.actors[ci].mag[0] > 0 and w.actors[ci].rl <= 0.0 {
+            // LAUNCHER at range: when the target is far + the bot still has a rocket + a periodic
+            // window opens, lob a travel-time rocket (dodgeable) instead of the rifle. Consumes a
+            // rocket (mag[1] reloads from res[1]) and takes the slow fire cooldown.
+            let mut launched = 0
+            if tgv >= 0 and w.actors[ci].fcd <= 0.0 and bestd > 25.0 and w.actors[ci].mag[1] > 0 and sin(w.etime * 0.7 + (ci as f64) * 1.9) > 0.9 {
+                let ddx = tgx - bsx
+                let ddy = tgy - bsy
+                let ddz = tgz - bsz
+                let dl = sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
+                if dl > 0.1 {
+                    spawn_rocket(w, bsx, bsy, bsz, ddx / dl, ddy / dl, ddz / dl, ci)
+                    w.actors[ci].mag[1] = w.actors[ci].mag[1] - 1
+                    if w.actors[ci].mag[1] <= 0 and w.actors[ci].res[1] > 0 { w.actors[ci].mag[1] = 1; w.actors[ci].res[1] = w.actors[ci].res[1] - 1 }
+                    w.actors[ci].fcd = 0.5
+                    launched = 1
+                }
+            }
+            // Fire if armed + off cooldown + we have a target (and we didn't just launch a rocket).
+            if launched == 0 and tgv >= 0 and w.actors[ci].fcd <= 0.0 and w.actors[ci].mag[0] > 0 and w.actors[ci].rl <= 0.0 {
                 let ddx = tgx - bsx
                 let ddy = tgy - bsy
                 let ddz = tgz - bsz
@@ -530,6 +561,61 @@ fn client_projectiles_tick(w: world::World) -> i64 {
     0
 }
 
+// Spawn a travel-time ROCKET into the first free projectile slot, from (ox,oy,oz) along (dx,dy,dz),
+// credited to source slot `src`. Spawned 0.6m ahead of the muzzle so it never self-hits.
+fn spawn_rocket(w: world::World, ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64, src: i64) -> i64 {
+    let mut p = 0
+    while p < 12 {
+        if w.prjlife[p] <= 0.0 {
+            w.prjx[p] = ox + dx * 0.6
+            w.prjy[p] = oy + dy * 0.6
+            w.prjz[p] = oz + dz * 0.6
+            w.prjvx[p] = dx * 60.0   // proj_speed
+            w.prjvy[p] = dy * 60.0
+            w.prjvz[p] = dz * 60.0
+            w.prjlife[p] = 2.2       // proj_life
+            w.prjsrc[p] = (src) as f64
+            return 0
+        }
+        p = p + 1
+    }
+    0
+}
+
+// PROJECTILES: sweep each in-flight rocket forward by a raycast; on ANY impact announce the boom
+// (everyone sees it) + apply authoritative radial damage via explode(), crediting the shooter; else
+// advance it. The live rockets are broadcast over the fx channel (kind 3) so clients see them fly.
+fn projectiles_tick(w: world::World, dt: f64) -> i64 {
+    let mut prj = 0
+    while prj < 12 {
+        if w.prjlife[prj] > 0.0 {
+            w.prjlife[prj] = w.prjlife[prj] - dt
+            let psp = sqrt(w.prjvx[prj] * w.prjvx[prj] + w.prjvy[prj] * w.prjvy[prj] + w.prjvz[prj] * w.prjvz[prj])
+            if psp > 0.001 {
+                let pdx = w.prjvx[prj] / psp
+                let pdy = w.prjvy[prj] / psp
+                let pdz = w.prjvz[prj] / psp
+                let phit = phys3d_raycast_full(w.prjx[prj], w.prjy[prj], w.prjz[prj], pdx, pdy, pdz, psp * dt + 0.12)
+                if phit >= 0 {
+                    let hx = phys3d_hit_x()
+                    let hy = phys3d_hit_y()
+                    let hz = phys3d_hit_z()
+                    let src = w.prjsrc[prj] as i64
+                    net_push_boom(1000 + src, hx, hy, hz, 1.1)   // bot rocket: everyone renders the blast
+                    explode(w, hx, hy, hz, 1.1, src)
+                    w.prjlife[prj] = 0.0
+                } else {
+                    w.prjx[prj] = w.prjx[prj] + w.prjvx[prj] * dt
+                    w.prjy[prj] = w.prjy[prj] + w.prjvy[prj] * dt
+                    w.prjz[prj] = w.prjz[prj] + w.prjvz[prj] * dt
+                }
+            }
+        }
+        prj = prj + 1
+    }
+    0
+}
+
 // Bot AI MOVEMENT (ported from the playground bot loop, adapted to the server: the "enemy" is the
 // nearest connected CLIENT or other bot, read over the net / physics). Hunt + standoff ring + juke
 // + gravity + jump + knockback decay + collide-and-slide. Goals (pickups), grapple layer on later.
@@ -714,6 +800,7 @@ fn server_main() -> i64 {
         combat_tick(w, 0.016)
         client_shots_tick(w)
         client_projectiles_tick(w)
+        projectiles_tick(w, 0.016)
         deaths_tick(w)
         loot_tick(w, 0.016)
         round_tick(w, 0.016)
