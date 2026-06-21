@@ -376,6 +376,9 @@ fn main() {
     let heal_vis = r3d_make_box_emissive(0.22, 0.22, 0.22, 0.2, 1.0, 0.4)
     let shield_vis = r3d_make_box_emissive(0.22, 0.22, 0.22, 0.3, 0.6, 1.0)
     let ammo_vis = r3d_make_box_emissive(0.2, 0.2, 0.2, 1.0, 0.85, 0.2)   // yellow ammo box
+    // The blue energy cube a player holds up while channeling a shield-apply (shield-up animation),
+    // shown both first-person (own view) and third-person (so others read the vulnerable channel).
+    let shieldcube_vis = r3d_make_box_emissive(0.16, 0.16, 0.16, 0.35, 0.7, 1.0)
     // Projectile bolt for the launcher (self-lit magenta so it reads in flight).
     let proj_vis = r3d_make_box_emissive(0.12, 0.12, 0.12, 1.0, 0.4, 1.0)
     // First-person weapon viewmodels: downloaded CC0 low-poly meshes (Quaternius assault rifle +
@@ -1563,6 +1566,11 @@ fn main() {
         let mut sw_m = 0.0
         if melee_cd > melee_cooldown - 0.35 { sw_m = 1.0 }
         net_set_meta(8, sw_m)
+        // Shield-up flag (slot 16): 1 while mid shield-apply channel, so OTHERS see me holding the
+        // blue cube up (third-person) instead of the rifle. My own first-person cube is local.
+        let mut shield_m = 0.0
+        if actors[5].heal > 0.0 { shield_m = 1.0 }
+        net_set_meta(16, shield_m)
         // Grapple anchor (12/13/14) + rope timer (15) so OTHERS draw my grapple rope.
         net_set_meta(12, actors[5].gax)
         net_set_meta(13, actors[5].gay)
@@ -3633,11 +3641,16 @@ fn main() {
                     if oc_active { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.5), ptint(apid[ai], 1, 1.5), ptint(apid[ai], 2, 1.5)) } else { if actors[ai].sh > 0.0 { r3d_draw_shield(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, 1.0, etime) } else { r3d_draw_tint(actor_models[ai], ex, ey + actor_yoff, ez, eyaw + actor_yaw_off, 0.0, 0.0, actor_scale, ptint(apid[ai], 0, 1.0), ptint(apid[ai], 1, 1.0), ptint(apid[ai], 2, 1.0)) } }
                     // Third-person weapon ATTACHED to the remote's right-hand bone (joint 29).
                     let ryr = eyaw + actor_yaw_off
-                    // Draw the katana while swinging (its own offset/scale), else the rifle.
+                    // Draw the katana while swinging (its own offset/scale), the held blue cube while
+                    // channeling a shield (meta 16), else the rifle.
                     if net_player_meta(pid, 8) > 0.5 {
                         r3d_draw_on_joint(vm_katana, actor_models[ai], hand_joint, ex, ey + actor_yoff, ez, ryr, 0.0, 0.0, actor_scale, kat_hand_ox, kat_hand_oy, kat_hand_oz, kat_hand_oyaw, kat_hand_opitch, kat_hand_oroll, kat_scale_tp)
                     } else {
-                        r3d_draw_on_joint(vm_rifle, actor_models[ai], hand_joint, ex, ey + actor_yoff, ez, ryr, 0.0, 0.0, actor_scale, hand_ox, hand_oy, hand_oz, hand_oyaw, hand_opitch, hand_oroll, rifle_scale_tp)
+                        if net_player_meta(pid, 16) > 0.5 {
+                            r3d_draw_on_joint(shieldcube_vis, actor_models[ai], hand_joint, ex, ey + actor_yoff, ez, ryr, 0.0, 0.0, actor_scale, hand_ox, hand_oy + 0.18, hand_oz, hand_oyaw, hand_opitch, hand_oroll, 1.6)
+                        } else {
+                            r3d_draw_on_joint(vm_rifle, actor_models[ai], hand_joint, ex, ey + actor_yoff, ez, ryr, 0.0, 0.0, actor_scale, hand_ox, hand_oy, hand_oz, hand_oyaw, hand_opitch, hand_oroll, rifle_scale_tp)
+                        }
                     }
                     aprevx[ai] = ex
                     aprevz[ai] = ez
@@ -3709,28 +3722,44 @@ fn main() {
                 bou = bou - dip
                 bof = bof - dip * 0.25
             }
-            let katana_on = melee_cd > melee_cooldown - 0.35
-            if katana_on {
-                // A real diagonal slash: the blade sweeps upper-right -> lower-left AND tilts down
-                // through the arc (the mesh isn't rigged, so we animate its whole transform).
-                let sp = (melee_cd - (melee_cooldown - 0.35)) / 0.35   // 1 -> 0 over the slash
-                let prog = 1.0 - sp
-                let swr = bor + 0.30 - prog * 0.46
-                let swu = bou + 0.26 - prog * 0.44
-                let swp = (0.5 - sp) * 1.6                             // blade pitches down through it
-                let swrl = (sp - 0.5) * 1.4                            // and rolls into the cut
-                let kx = vex + vrx * swr + vux * swu + fx * bof
-                let ky = vey + vuy * swu + fy * bof
-                let kz = vez + vrz * swr + vuz * swu + fz * bof
-                r3d_draw(vm_katana, kx, ky, kz, byaw + kat_yaw, bpitch + kat_pitch + swp, kat_roll + swrl, kat_scale)
+            if actors[5].heal > 0.0 {
+                // SHIELD-UP: hold the blue energy cube up in view while channeling a shield-apply.
+                // The weapon is stowed (you can't fire mid-channel); the cube charges - it grows +
+                // spins as the channel fills. This is the first-person half of the shield-up anim
+                // (the third-person half rides meta 16 so other players read the vulnerable channel).
+                let chp = actors[5].heal / heal_channel               // 0 -> 1 channel progress
+                let bob = sin(etime * 6.0) * 0.02
+                let cu = bou + 0.26 + bob                             // raised up, centred in view
+                let cf = bof - 0.06                                   // pulled a touch closer
+                let cr = bor - 0.05
+                let scx = vex + vrx * cr + vux * cu + fx * cf
+                let scy = vey + vuy * cu + fy * cf
+                let scz = vez + vrz * cr + vuz * cu + fz * cf
+                r3d_draw(shieldcube_vis, scx, scy, scz, etime * 1.6, etime * 1.2, 0.0, 1.3 + chp * 0.5)
             } else {
-                let wx = vex + vrx * bor + vux * bou + fx * bof
-                let wy = vey + vuy * bou + fy * bof
-                let wz = vez + vrz * bor + vuz * bou + fz * bof
-                if actors[5].wpn == 0 {
-                    r3d_draw(vm_rifle, wx, wy, wz, byaw + gun_yaw, bpitch + gun_pitch, gun_roll, rifle_scale)
+                let katana_on = melee_cd > melee_cooldown - 0.35
+                if katana_on {
+                    // A real diagonal slash: the blade sweeps upper-right -> lower-left AND tilts down
+                    // through the arc (the mesh isn't rigged, so we animate its whole transform).
+                    let sp = (melee_cd - (melee_cooldown - 0.35)) / 0.35   // 1 -> 0 over the slash
+                    let prog = 1.0 - sp
+                    let swr = bor + 0.30 - prog * 0.46
+                    let swu = bou + 0.26 - prog * 0.44
+                    let swp = (0.5 - sp) * 1.6                             // blade pitches down through it
+                    let swrl = (sp - 0.5) * 1.4                            // and rolls into the cut
+                    let kx = vex + vrx * swr + vux * swu + fx * bof
+                    let ky = vey + vuy * swu + fy * bof
+                    let kz = vez + vrz * swr + vuz * swu + fz * bof
+                    r3d_draw(vm_katana, kx, ky, kz, byaw + kat_yaw, bpitch + kat_pitch + swp, kat_roll + swrl, kat_scale)
                 } else {
-                    r3d_draw(vm_launcher, wx, wy, wz, byaw + gun_yaw, bpitch + gun_pitch, gun_roll, lnch_scale)
+                    let wx = vex + vrx * bor + vux * bou + fx * bof
+                    let wy = vey + vuy * bou + fy * bof
+                    let wz = vez + vrz * bor + vuz * bou + fz * bof
+                    if actors[5].wpn == 0 {
+                        r3d_draw(vm_rifle, wx, wy, wz, byaw + gun_yaw, bpitch + gun_pitch, gun_roll, rifle_scale)
+                    } else {
+                        r3d_draw(vm_launcher, wx, wy, wz, byaw + gun_yaw, bpitch + gun_pitch, gun_roll, lnch_scale)
+                    }
                 }
             }
         }
@@ -4004,7 +4033,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD NETV2-20 host==guest + tumbling crates", 18, 65280)
+        draw_text(12, 12, "BUILD NETV2-21 host==guest + shield-up anim", 18, 65280)
         // Host hit-resolution diagnostics (tiny, top-left under the stamp): how the host's own
         // shots at players resolved. lc = lag-comp hits, fb = local-ray fallback hits (the fix for
         // "can't damage players"), dx = shots that found a victim already DEAD. If you can't damage
