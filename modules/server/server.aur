@@ -494,7 +494,7 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                         }
                         let mut sck = 0
                         while sck < 12 {
-                            if hb == w.crates[sck] { phys3d_apply_impulse(w.crates[sck], snx * 2.2, sny * 2.2, snz * 2.2) }
+                            if hb == w.crates[sck] { arena::crate_shot_impulse(w.crates[sck], bsx, bsz) }
                             sck = sck + 1
                         }
                     }
@@ -567,10 +567,8 @@ fn client_shots_tick(w: world::World) -> i64 {
                         ss = ss + 1
                     }
                     if sfound == 1 {
-                        let pdx = phys3d_x(ch) - ssx
-                        let pdz = phys3d_z(ch) - ssz
-                        let pl = sqrt(pdx * pdx + pdz * pdz)
-                        if pl > 0.01 { phys3d_apply_impulse(ch, pdx / pl * 2.2, 0.5, pdz / pl * 2.2) }
+                        // SHARED impulse - the client predicts the identical shove from the shooter's x/z.
+                        arena::crate_shot_impulse(ch, ssx, ssz)
                     }
                 }
             }
@@ -610,19 +608,11 @@ fn explode(w: world::World, dx: f64, dy: f64, dz: f64, gi: f64, src_slot: i64) -
         }
         eej = eej + 1
     }
-    // Fling loose crates away from the blast (wider knockback reach than the damage radius).
-    let krad = 8.0 * gi   // nade_kb_radius
+    // Fling loose crates away from the blast - SHARED impulse so the client predicts the identical
+    // fling from the same boom event and the boxes stay in sync without correction.
     let mut ck = 0
     while ck < 12 {
-        let ch = w.crates[ck]
-        let cdx = phys3d_x(ch) - dx
-        let cdy = phys3d_y(ch) - dy
-        let cdz = phys3d_z(ch) - dz
-        let cdd = sqrt(cdx * cdx + cdy * cdy + cdz * cdz)
-        if cdd < krad and cdd > 0.01 {
-            let cf = 9.0 * gi * (1.0 - cdd / krad)   // crate_kb (stronger - blasts really launch boxes)
-            phys3d_apply_impulse(ch, cdx / cdd * cf, cdy / cdd * cf + cf * 0.7, cdz / cdd * cf)
-        }
+        arena::crate_blast_impulse(w.crates[ck], dx, dy, dz, gi)
         ck = ck + 1
     }
     0

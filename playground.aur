@@ -1614,12 +1614,13 @@ fn main() {
         }
         net_send_input(blob)
         net_update(dt)
-        // CRATES: the client runs the box as a real rigid body (so it collides with + pushes you), but
-        // every frame it is RECONCILED to the host's authoritative state - position, orientation AND
-        // velocity. Matching the velocity is the key: the body then integrates with the SAME motion the
-        // server's does, so a box flung by a blast or another player tracks the server step-for-step
-        // instead of trailing a position-only lerp (the old "boxes lag around badly"). Position is a
-        // small residual trim (gentle lerp, hard snap past 3m for a teleport you never saw).
+        // CRATES: client-side PREDICTION with the SAME physics the host runs. The host and each client
+        // are separate physics worlds, but they execute identical code - shared crate_shot_impulse /
+        // crate_blast_impulse (arena), the same deterministic gravity, the same dt sequence - so given
+        // the same events (shots + booms are already replicated) the boxes evolve identically and stay
+        // in lockstep on their own. The reconcile below therefore does NOTHING in the common case; it
+        // only corrects the rare divergence the client couldn't predict (a bot/remote bullet on a box,
+        // lag, loss). Orientation is still taken from the host (cheap, and it isn't the lag).
         if net_mode == 2 and net_object_count() >= crate_n {
             let mut gci = 0
             while gci < crate_n {
@@ -1630,17 +1631,20 @@ fn main() {
                 let tcx = net_object_x(gci)
                 let tcy = net_object_y(gci)
                 let tcz = net_object_z(gci)
-                // Drive the body at the host's AUTHORITATIVE velocity so it moves exactly as the
-                // server's crate does - a flung box keeps pace step-for-step instead of trailing a
-                // position lerp (which is why boxes "lagged around"). With velocity matched, the
-                // position is just a tiny residual: snap a real teleport (>3m), else trim gently.
-                phys3d_set_vel(cch, net_object_vx(gci), net_object_vy(gci), net_object_vz(gci))
+                // The client runs the SAME crate physics as the host - shared impulse fns for shots +
+                // blasts, deterministic gravity - so normally our box ALREADY matches and we leave it
+                // completely alone (no per-frame correction). We only step in when it has genuinely
+                // diverged: a force we couldn't see (a bot or another player's bullet on the box), lag,
+                // or packet loss. Then track the host's velocity so it keeps pace + lerp the error out;
+                // a big gap is a hard snap. This is the "correction only on rare cases" the design wants.
                 let dvg = sqrt((tcx - ccx) * (tcx - ccx) + (tcy - ccy) * (tcy - ccy) + (tcz - ccz) * (tcz - ccz))
-                if dvg > 3.0 {
+                if dvg > 2.5 {
                     phys3d_set_pos(cch, tcx, tcy, tcz)
-                } else {
-                    phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.35, ccy + (tcy - ccy) * 0.35, ccz + (tcz - ccz) * 0.35)
-                }
+                    phys3d_set_vel(cch, net_object_vx(gci), net_object_vy(gci), net_object_vz(gci))
+                } else { if dvg > 0.3 {
+                    phys3d_set_vel(cch, net_object_vx(gci), net_object_vy(gci), net_object_vz(gci))
+                    phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.3, ccy + (tcy - ccy) * 0.3, ccz + (tcz - ccz) * 0.3)
+                } }
                 phys3d_set_rot(cch, net_object_qx(gci), net_object_qy(gci), net_object_qz(gci), net_object_qw(gci))
                 phys3d_set_angvel(cch, 0.0, 0.0, 0.0)   // orientation is host-driven (quat above); no local spin
                 gci = gci + 1
@@ -2383,18 +2387,11 @@ fn main() {
                 }
                 ej = ej + 1
             }
-            // Fling loose crates (impulse away + a pop up).
+            // Fling loose crates - SHARED impulse (the same fn + strength the host runs), so our
+            // predicted fling of every box exactly matches the host's and they stay in sync.
             let mut ck = 0
             while ck < crate_n {
-                let chh = crates[ck] as i64
-                let cdx = phys3d_x(chh) - ex_x
-                let cdy = phys3d_y(chh) - ex_y
-                let cdz = phys3d_z(chh) - ex_z
-                let cdd = sqrt(cdx * cdx + cdy * cdy + cdz * cdz)
-                if cdd < krad and cdd > 0.01 {
-                    let cf = crate_kb * gi * (1.0 - cdd / krad)
-                    phys3d_apply_impulse(chh, cdx / cdd * cf, cdy / cdd * cf + cf * 0.7, cdz / cdd * cf)
-                }
+                arena::crate_blast_impulse(crates[ck] as i64, ex_x, ex_y, ex_z, gi)
                 ck = ck + 1
             }
             // Player distance -> self-damage, knockback, and shake.
@@ -2975,7 +2972,9 @@ fn main() {
                             }
                             let mut sck = 0
                             while sck < crate_n {
-                                if hb == (crates[sck] as i64) { phys3d_apply_impulse(crates[sck] as i64, ax * shot_kb, ay * shot_kb, az * shot_kb) }
+                                // SHARED impulse (same fn the host runs) from the shooter's actor x/z, so our
+                                // predicted shove of the box is identical to the host's - they stay in sync.
+                                if hb == (crates[sck] as i64) { arena::crate_shot_impulse(crates[sck] as i64, phys3d_x(actors[ci].hdl as i64), phys3d_z(actors[ci].hdl as i64)) }
                                 sck = sck + 1
                             }
                         } else {
@@ -3928,6 +3927,13 @@ fn main() {
                     let rbn = 1.0 - rpbd / rshrad
                     let rbshake = rbn * rbn * 1.4 * rbi
                     if shake < rbshake { shake = rbshake }
+                }
+                // Fling nearby boxes from this REMOTE blast too - SHARED impulse, so another player's
+                // explosion shoves the boxes the same way on our screen as on the host (once per boom).
+                let mut rck = 0
+                while rck < crate_n {
+                    arena::crate_blast_impulse(crates[rck] as i64, rbx, rby, rbz, rbi)
+                    rck = rck + 1
                 }
             }
             bmi = bmi + 1
