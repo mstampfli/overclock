@@ -687,6 +687,8 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
         let h = w.actors[ei2].hdl
         w.brains[ei2].pop = w.brains[ei2].pop - dt
         if w.brains[ei2].pop < 0.0 { w.brains[ei2].pop = 0.0 }
+        w.actors[ei2].gat = w.actors[ei2].gat - dt     // grapple-rope draw timer decays toward 0
+        if w.actors[ei2].gat < 0.0 { w.actors[ei2].gat = 0.0 }
         w.brains[ei2].kx = w.brains[ei2].kx - w.brains[ei2].kx * 2.8 * dt
         w.brains[ei2].ky = w.brains[ei2].ky - w.brains[ei2].ky * 2.8 * dt
         w.brains[ei2].kz = w.brains[ei2].kz - w.brains[ei2].kz * 2.8 * dt
@@ -797,6 +799,40 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                     w.brains[ei2].jcd = 0.5
                 }
             }
+            // GRAPPLE: far from a (non-pickup) target, a bot grapple-leaps to close the gap the way a
+            // player would - raycast toward the target, anchor on the surface it hits, and reel in (the
+            // leap rides the same knockback-velocity decay blasts use; the knock>4 gate below freezes
+            // steering so the launch reads). Skipped while seeking loot. Anchor + a 0.4s rope timer go
+            // out over meta 12-15 so every client draws the cyan rope, same as a human player's grapple.
+            w.brains[ei2].gcd = w.brains[ei2].gcd - dt
+            if grnd and w.brains[ei2].gcd <= 0.0 and tdist > 24.0 and seeking == 0 {
+                let aimx = tmx - bx0
+                let aimy = (tmy + 1.5) - (by0 + 0.5)
+                let aimz = tmz - bz0
+                let aiml = sqrt(aimx * aimx + aimy * aimy + aimz * aimz)
+                if aiml > 0.1 {
+                    let gnx = aimx / aiml
+                    let gny = aimy / aiml
+                    let gnz = aimz / aiml
+                    let gh = phys3d_raycast_ex(h, bx0, by0 + 0.5, bz0, gnx, gny, gnz, 55.0)
+                    if gh >= 0 {
+                        let lx = phys3d_hit_x() - bx0
+                        let ly = phys3d_hit_y() - (by0 + 0.5)
+                        let lz = phys3d_hit_z() - bz0
+                        let ll = sqrt(lx * lx + ly * ly + lz * lz)
+                        if ll > 3.0 {
+                            w.brains[ei2].kx = lx / ll * 22.0
+                            w.brains[ei2].ky = ly / ll * 16.0 + 4.0
+                            w.brains[ei2].kz = lz / ll * 22.0
+                            w.brains[ei2].gcd = 3.5
+                            w.actors[ei2].gax = bx0 + lx
+                            w.actors[ei2].gay = by0 + 0.5 + ly
+                            w.actors[ei2].gaz = bz0 + lz
+                            w.actors[ei2].gat = 0.4   // show the grapple rope briefly
+                        }
+                    }
+                }
+            }
             w.brains[ei2].px0 = bx0
             w.brains[ei2].pz0 = bz0
             let knock = sqrt(w.brains[ei2].kx * w.brains[ei2].kx + w.brains[ei2].ky * w.brains[ei2].ky + w.brains[ei2].kz * w.brains[ei2].kz)
@@ -851,6 +887,10 @@ fn broadcast_bots(w: world::World) -> i64 {
         net_set_bot_meta(b2, 1, w.actors[b2].sh)
         net_set_bot_meta(b2, 6, (w.akills[b2]) as f64)    // scoreboard kills
         net_set_bot_meta(b2, 7, (w.adeaths[b2]) as f64)   // scoreboard deaths
+        net_set_bot_meta(b2, 12, w.actors[b2].gax)        // grapple anchor + rope timer (clients
+        net_set_bot_meta(b2, 13, w.actors[b2].gay)        // draw the cyan rope from these, exactly
+        net_set_bot_meta(b2, 14, w.actors[b2].gaz)        // like a human player's broadcast grapple)
+        net_set_bot_meta(b2, 15, w.actors[b2].gat)
         b2 = b2 + 1
     }
     0

@@ -1,6 +1,8 @@
 // Headless client-server proof in the real arena: the client charges the bots and takes authoritative
-// damage; when hurt it signals a RESPAWN (++ meta 3) and the host must restore its hp (the respawn
-// handshake). Death CREDIT (a kill -> net_push_kill) is verified separately by sim_clientfire.
+// damage; when hurt OR killed it signals a RESPAWN (++ meta 3) and the host must restore its hp (the
+// respawn handshake). We accept death here because the bots are lethal enough to one-shot the charging
+// client with a rocket (the launcher fires at range) - the handshake restores from death and from a
+// wound identically. Death CREDIT (a kill -> net_push_kill) is verified separately by sim_clientfire.
 fn main() {
     net_serve(|| { server::server_main() })
     sleep_ms(250)
@@ -36,7 +38,7 @@ fn main() {
         net_kills_clear(); net_shots_clear()
         let hp = net_player_meta(myid, 0)
         if hp < min_hp { min_hp = hp }
-        if hp < 70.0 and hp > 0.0 and resp_signaled == 0 { net_set_meta(3, 1.0); resp_signaled = 1; resp_tick = t }
+        if hp < 70.0 and resp_signaled == 0 { net_set_meta(3, 1.0); resp_signaled = 1; resp_tick = t }
         if resp_signaled == 1 and t > resp_tick + 8 { if hp > hp_after_resp { hp_after_resp = hp } }
         t = t + 1; sleep_ms(10)
     }
