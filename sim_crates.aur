@@ -1,41 +1,15 @@
-// Verifies the HOST crate-replication wiring: a host pushes its live physics box positions
-// into the object channel, and reads them back identically. A box is dropped + shoved, the
-// host pushes phys3d_x/y/z into net_set_object, and net_object_* must match the physics body
-// (and reflect the shove). The cross-machine host->client hop is covered by the Rust loopback
-// test objects_replicate_to_client; this checks the game-side push reads the right transform.
-
+// Crates broadcast: the server owns 12 dynamic crates and publishes them on the object channel; a
+// client must SEE all 12.
 fn main() {
-    phys3d_init(0.0, 0.0 - 16.0, 0.0)
-    phys3d_add_box(15.0, 0.0 - 0.5, 3.0, 60.0, 0.5, 60.0, 0)      // ground (static)
-    let box0 = phys3d_add_box(15.0, 3.0, 3.0, 0.4, 0.4, 0.4, 1)   // dynamic crate, dropped
-    net_host(0)
-
-    // Let it fall + settle.
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
     let mut t = 0
-    while t < 40 {
-        phys3d_step(0.016)
-        t = t + 1
-    }
-    // Shove it along +x (as a bullet/explosion would) and step.
-    phys3d_apply_impulse(box0, 6.0, 0.0, 0.0)
-    let mut t2 = 0
-    while t2 < 20 {
-        phys3d_step(0.016)
-        t2 = t2 + 1
-    }
-
-    // Host pushes the live crate into the object channel.
-    net_set_object_count(1)
-    net_set_object(0, phys3d_x(box0), phys3d_y(box0), phys3d_z(box0))
-
-    let ox = (net_object_x(0) * 100.0) as i64
-    let pxv = (phys3d_x(box0) * 100.0) as i64
-    println("object count (expect 1): ")
-    println(str(net_object_count()))
-    println("object x matches phys x (both *100, must be equal): ")
-    println(str(ox))
-    println(str(pxv))
-    println("crate shoved past its start x=15 (expect x*100 > 1500): ")
-    let moved = 0
-    if phys3d_x(box0) > 15.0 { println("1") } else { println("0") }
+    while t < 60 { net_send_input([0.0; 20]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    let n = net_object_count()
+    let x0 = net_object_x(5)
+    println("objects seen = " + str(n) + " (expect 12); a crate x*10 = " + str((x0*10.0) as i64))
+    println("RESULT sees-crates=" + str((n == 12) as i64) + " (expect 1)")
 }

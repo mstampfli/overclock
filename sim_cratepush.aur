@@ -1,0 +1,18 @@
+// Crate physics (simulate-to-verify): build the dynamic crates, detonate explode() 1m from one, step
+// physics, and confirm it gets flung (server-authoritative box knockback).
+fn main() {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 50.0, 0.5, 50.0, 0)
+    let mut w = world::new_world()
+    arena::build_crates(w.crates)
+    let mut t = 0
+    while t < 12 { phys3d_step(0.016); t = t + 1 }   // let crates settle
+    let cx = phys3d_x(w.crates[0])
+    let cz = phys3d_z(w.crates[0])
+    server::explode(w, cx + 1.0, 0.45, cz, 1.1, 0 - 1)   // detonate 1m +x of crate 0
+    t = 0
+    while t < 30 { phys3d_step(0.016); t = t + 1 }
+    let moved = sqrt((phys3d_x(w.crates[0]) - cx) * (phys3d_x(w.crates[0]) - cx) + (phys3d_z(w.crates[0]) - cz) * (phys3d_z(w.crates[0]) - cz))
+    println("crate0 moved = " + str((moved * 100.0) as i64) + "/100 m (expect > 0, flung away)")
+    println("RESULT crate-pushed=" + str((moved > 0.2) as i64) + " (expect 1)")
+}

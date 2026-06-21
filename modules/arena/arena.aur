@@ -80,3 +80,21 @@ fn build_colliders() {
         exi = exi + 1
     }
 }
+
+// Create the 12 loose DYNAMIC crates (flag 1) the blast/bullets can fling around, storing each
+// collider handle into `crates` by reference. Same fixed positions on the server (authoritative)
+// and the client (predicted + reconciled), so the boxes line up.
+fn build_crates(crates: [i64; 12]) {
+    crates[0] = phys3d_add_box(15.0, 0.45, 3.0, 0.4, 0.4, 0.4, 1)
+    crates[1] = phys3d_add_box(16.0, 0.45, 3.0, 0.4, 0.4, 0.4, 1)
+    crates[2] = phys3d_add_box(15.5, 1.25, 3.4, 0.4, 0.4, 0.4, 1)
+    crates[3] = phys3d_add_box(0.0 - 15.0, 0.45, 0.0 - 3.0, 0.4, 0.4, 0.4, 1)
+    crates[4] = phys3d_add_box(0.0 - 16.0, 0.45, 0.0 - 2.0, 0.4, 0.4, 0.4, 1)
+    crates[5] = phys3d_add_box(3.0, 0.45, 30.0, 0.4, 0.4, 0.4, 1)
+    crates[6] = phys3d_add_box(3.8, 0.45, 30.4, 0.4, 0.4, 0.4, 1)
+    crates[7] = phys3d_add_box(0.0 - 28.0, 0.45, 22.0, 0.4, 0.4, 0.4, 1)
+    crates[8] = phys3d_add_box(0.0 - 30.0, 0.45, 0.0 - 25.0, 0.4, 0.4, 0.4, 1)
+    crates[9] = phys3d_add_box(32.0, 0.45, 0.0 - 20.0, 0.4, 0.4, 0.4, 1)
+    crates[10] = phys3d_add_box(8.0, 0.45, 0.0 - 8.0, 0.4, 0.4, 0.4, 1)
+    crates[11] = phys3d_add_box(0.0 - 8.0, 0.45, 8.0, 0.4, 0.4, 0.4, 1)
+}

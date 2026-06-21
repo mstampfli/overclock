@@ -334,6 +334,11 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                             }
                             vk = vk + 1
                         }
+                        let mut sck = 0
+                        while sck < 12 {
+                            if hb == w.crates[sck] { phys3d_apply_impulse(w.crates[sck], snx * 2.2, sny * 2.2, snz * 2.2) }
+                            sck = sck + 1
+                        }
                     }
                     net_push_shot(1000 + ci, ox, oy, oz, tex, tey, tez, 0)   // announce the tracer + sound
                 }
@@ -421,6 +426,21 @@ fn explode(w: world::World, dx: f64, dy: f64, dz: f64, gi: f64, src_slot: i64) -
             }
         }
         eej = eej + 1
+    }
+    // Fling loose crates away from the blast (wider knockback reach than the damage radius).
+    let krad = 8.0 * gi   // nade_kb_radius
+    let mut ck = 0
+    while ck < 12 {
+        let ch = w.crates[ck]
+        let cdx = phys3d_x(ch) - dx
+        let cdy = phys3d_y(ch) - dy
+        let cdz = phys3d_z(ch) - dz
+        let cdd = sqrt(cdx * cdx + cdy * cdy + cdz * cdz)
+        if cdd < krad and cdd > 0.01 {
+            let cf = 6.0 * gi * (1.0 - cdd / krad)   // crate_kb
+            phys3d_apply_impulse(ch, cdx / cdd * cf, cdy / cdd * cf + cf * 0.7, cdz / cdd * cf)
+        }
+        ck = ck + 1
     }
     0
 }
@@ -618,6 +638,19 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
     0
 }
 
+// Broadcast the live crate positions over the object channel (clients render + reconcile to these,
+// so the boxes are server-authoritative - no more guest box desync/lag).
+fn broadcast_objects(w: world::World) -> i64 {
+    net_set_object_count(12)
+    let mut i = 0
+    while i < 12 {
+        let h = w.crates[i]
+        net_set_object(i, phys3d_x(h), phys3d_y(h), phys3d_z(h))
+        i = i + 1
+    }
+    0
+}
+
 // Broadcast the bots over the player channel (clients receive them as remotes id 1000+i).
 fn broadcast_bots(w: world::World) -> i64 {
     net_set_bot_count(w.round.bots)
@@ -656,6 +689,7 @@ fn server_main() -> i64 {
         w.brains[bi].aim = 0.05
         bi = bi + 1
     }
+    arena::build_crates(w.crates)   // 12 loose dynamic crates (authoritative)
     net_host(45123)                // the game's port (binds 0.0.0.0 so remote clients can join)
     net_dedicated()
     net_max_clients(3)             // admit up to max_remote human clients
@@ -677,6 +711,7 @@ fn server_main() -> i64 {
         round_tick(w, 0.016)
         broadcast_bots(w)
         broadcast_fx(w)
+        broadcast_objects(w)
         net_update(0.016)   // re-sim connected clients (steps physics) + broadcast snapshots
         net_shots_clear()   // flush this tick's shot announcements to clients
         sleep_ms(16)
