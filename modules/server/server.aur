@@ -540,6 +540,30 @@ fn client_shots_tick(w: world::World) -> i64 {
                 ra = ra + 1
             }
             if sai >= 0 { w.last_hit[vai] = sai }
+        } else {
+            // CRATE hit (lag-comp victim id >= OBJ_ID_BASE 2000): the bullet shoves the box. The server
+            // owns it, so the move replicates to every client (which snap their boxes to the broadcast).
+            // Without this, shooting a box did nothing - client prediction can't move a server-owned box.
+            if vic >= 2000 {
+                let ck = vic - 2000
+                if ck < 12 {
+                    let ch = w.crates[ck]
+                    let mut ssx = 0.0
+                    let mut ssz = 0.0
+                    let mut sfound = 0
+                    let mut ss = 6
+                    while ss < 9 {
+                        if w.apid[ss] == shooter_pid { ssx = phys3d_x(w.actors[ss].hdl); ssz = phys3d_z(w.actors[ss].hdl); sfound = 1 }
+                        ss = ss + 1
+                    }
+                    if sfound == 1 {
+                        let pdx = phys3d_x(ch) - ssx
+                        let pdz = phys3d_z(ch) - ssz
+                        let pl = sqrt(pdx * pdx + pdz * pdz)
+                        if pl > 0.01 { phys3d_apply_impulse(ch, pdx / pl * 2.2, 0.5, pdz / pl * 2.2) }
+                    }
+                }
+            }
         }
         sh = sh + 1
     }
@@ -977,12 +1001,22 @@ fn broadcast_objects(w: world::World) -> i64 {
 }
 
 // Broadcast the bots over the player channel (clients receive them as remotes id 1000+i).
+fn srv_bot_name(i: i64) -> str {
+    if i == 0 { return "REAPER" }
+    if i == 1 { return "VORTEX" }
+    if i == 2 { return "ECHO" }
+    if i == 3 { return "RAZOR" }
+    if i == 4 { return "NYX" }
+    return "BOT"
+}
+
 fn broadcast_bots(w: world::World) -> i64 {
     net_set_bot_count(w.round.bots)
     let mut b2 = 0
     while b2 < w.round.bots {
         let h = w.actors[b2].hdl
         net_set_bot(b2, phys3d_x(h), phys3d_y(h), phys3d_z(h), w.brains[b2].face)
+        net_set_bot_name(b2, srv_bot_name(b2))   // so guests see the bot's real name in feed/scoreboard
         net_set_bot_meta(b2, 0, w.actors[b2].hp)
         net_set_bot_meta(b2, 1, w.actors[b2].sh)
         net_set_bot_meta(b2, 6, (w.akills[b2]) as f64)    // scoreboard kills

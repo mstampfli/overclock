@@ -1378,7 +1378,7 @@ fn main() {
                 dead = false
                 prev_dead = false
                 respawn_cd = 0.0
-                pinvuln = 1.5
+                pinvuln = 0.0   // no spawn protection - killable the instant you spawn
                 dmg_timer = regen_delay
                 hurt_flash = 0.0
                 actors[5].cells = 0
@@ -3154,7 +3154,7 @@ fn main() {
                 actors[5].sh = 0.0   // respawn SHIELDLESS - shields are scarce; find/loot cells
                 actors[5].mag[0] = 30; actors[5].mag[1] = 1; actors[5].res[0] = 60; actors[5].res[1] = 2   // ammo back to start
                 actors[5].rl = 0.0
-                pinvuln = 2.0
+                pinvuln = 0.0   // no spawn protection after respawn (server owns hp; pinvuln only desynced prediction)
                 respawn_req = 1.0
                 // GUEST: signal the host that I respawned (it owns my hp -> resets it to full).
                 if net_mode == 2 { g_resp_ctr = g_resp_ctr + 1.0; g_hp_prev = php_max; g_resp_wait = 1; g_resp_wait_t = 1.5 }
@@ -3723,13 +3723,13 @@ fn main() {
                 // (the third-person half rides meta 16 so other players read the vulnerable channel).
                 let chp = actors[5].heal / heal_channel               // 0 -> 1 channel progress
                 let bob = sin(etime * 6.0) * 0.02
-                let cu = bou + 0.26 + bob                             // raised up, centred in view
-                let cf = bof - 0.06                                   // pulled a touch closer
+                let cu = bou + 0.04 + bob                             // a bit DOWN (was up + centred)
+                let cf = bof + 0.20                                   // pushed FURTHER out in front
                 let cr = bor - 0.05
                 let scx = vex + vrx * cr + vux * cu + fx * cf
                 let scy = vey + vuy * cu + fy * cf
                 let scz = vez + vrz * cr + vuz * cu + fz * cf
-                r3d_draw(shieldcube_vis, scx, scy, scz, etime * 1.6, etime * 1.2, 0.0, 1.3 + chp * 0.5)
+                r3d_draw(shieldcube_vis, scx, scy, scz, etime * 1.6, etime * 1.2, 0.0, 0.8 + chp * 0.3)
             } else {
                 let katana_on = melee_cd > melee_cooldown - 0.35
                 if katana_on {
