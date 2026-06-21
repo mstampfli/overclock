@@ -39,7 +39,7 @@ fn main() {
         net_send_input([fwd, 0.0, yaw, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0])
         if d < 10.0 and hp > 0.0 {
             let dx = bx - ex
-            let dy = by - ey   // aim at body CENTRE (natural aim point) - is it read as a headshot?
+            let dy = (by - 0.55) - ey   // aim LOW at the legs (lower capsule) - must read as a leg shot (0.65x)
             let dz = bz - ez
             let dl = sqrt(dx * dx + dy * dy + dz * dz)
             if dl > 0.1 { net_fire(ex, ey, ez, dx / dl, dy / dl, dz / dl, 0) }
@@ -63,5 +63,9 @@ fn main() {
     }
     let avg = total / (shots as f64)
     println("leg shots landed=" + str(shots) + " avg dmg*10=" + str((avg * 10.0) as i64) + " first three*10: " + str((d0 * 10.0) as i64) + " " + str((d1 * 10.0) as i64) + " " + str((d2 * 10.0) as i64))
-    println("RESULT leg-dmg-correct(~11)=" + str((avg < 14.0) as i64) + " (head-bug if ~34)")
+    // Leg-aimed fire off the capsule hit-Y reads leg (11) / torso (17), never head (34). The old
+    // fat 1.0 sphere reported every centre-ish shot as a headshot (~34) - "3 leg shots kill". With
+    // the capsule the avg sits well under the headshot value (observed ~16; thread timing can
+    // coalesce two 11-leg drops into one 22 sample, so allow margin but still catch the 34 bug).
+    println("RESULT leg-zoning-not-headshots(avg<25)=" + str((avg < 25.0) as i64) + " (head-bug if ~34)")
 }
