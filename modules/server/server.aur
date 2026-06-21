@@ -203,6 +203,56 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
     0
 }
 
+// CLIENT shots: a connected client fires (net_fire) -> the engine lag-comp-validates the hit against
+// the authoritative positions at the client's view tick and queues a server-hit. We drain those and
+// apply the authoritative damage to whatever the client hit (a bot or another client), shield then
+// health, crediting the shooter for the death sweep. This is what lets the PLAYER damage things; the
+// client only predicted the hitmarker, the server owns the real hp.
+fn client_shots_tick(w: world::World) -> i64 {
+    let nsh = net_server_hit_count()
+    let mut sh = 0
+    while sh < nsh {
+        let vic = net_server_hit_victim(sh)
+        let shooter_pid = net_server_hit_shooter(sh)
+        let hY = net_server_hit_y(sh)
+        let mut vai = 0 - 1
+        if vic >= 1000 {
+            let bidx = vic - 1000
+            if bidx < 5 { vai = bidx }
+        } else {
+            if vic >= 1 and vic < 1000 {
+                let mut cva = 6
+                while cva < 9 {
+                    if w.apid[cva] == vic { vai = cva }
+                    cva = cva + 1
+                }
+            }
+        }
+        if vai >= 0 and w.actors[vai].hp > 0.0 {
+            let mut dmg = 17.0   // gun_dmg
+            let hrel = hY - phys3d_y(w.actors[vai].hdl)
+            if hrel > 0.5 { dmg = dmg * 2.0 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+            if w.actors[vai].sh > 0.0 {
+                if w.actors[vai].sh >= dmg { w.actors[vai].sh = w.actors[vai].sh - dmg; dmg = 0.0 }
+                else { dmg = dmg - w.actors[vai].sh; w.actors[vai].sh = 0.0 }
+            }
+            w.actors[vai].hp = w.actors[vai].hp - dmg
+            if vai < 5 { w.brains[vai].pop = 0.1 }
+            // Credit the shooter (a client slot) so the death sweep counts the kill for them.
+            let mut sai = 0 - 1
+            let mut ra = 6
+            while ra < 9 {
+                if w.apid[ra] == shooter_pid { sai = ra }
+                ra = ra + 1
+            }
+            if sai >= 0 { w.last_hit[vai] = sai }
+        }
+        sh = sh + 1
+    }
+    net_server_hits_clear()
+    0
+}
+
 // Bot AI MOVEMENT (ported from the playground bot loop, adapted to the server: the "enemy" is the
 // nearest connected CLIENT or other bot, read over the net / physics). Hunt + standoff ring + juke
 // + gravity + jump + knockback decay + collide-and-slide. Goals (pickups), grapple layer on later.
@@ -366,6 +416,7 @@ fn server_main() -> i64 {
         sync_clients(w)
         bots_tick(w, 0.016)
         combat_tick(w, 0.016)
+        client_shots_tick(w)
         deaths_tick(w)
         broadcast_bots(w)
         net_update(0.016)   // re-sim connected clients (steps physics) + broadcast snapshots
