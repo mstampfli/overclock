@@ -871,6 +871,9 @@ fn broadcast_objects(w: world::World) -> i64 {
     while i < 12 {
         let h = w.crates[i]
         net_set_object(i, phys3d_x(h), phys3d_y(h), phys3d_z(h))
+        // also the box's live orientation, so clients render it TUMBLING (better box physics) instead
+        // of forever axis-aligned - the rigid body already rotates, we just replicate the quaternion
+        net_set_object_rot(i, phys3d_rot_qx(h), phys3d_rot_qy(h), phys3d_rot_qz(h), phys3d_rot_qw(h))
         i = i + 1
     }
     0

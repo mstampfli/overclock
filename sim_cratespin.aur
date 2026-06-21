@@ -1,0 +1,26 @@
+// Crate rotation broadcast (simulate-to-verify the "better box physics"): build the real arena + its 12
+// dynamic crates, spin ONE crate so it tumbles, step physics, then run the real broadcast_objects and read
+// the object channel back. The spun crate must report a non-identity orientation (it tumbled) while an
+// untouched crate stays upright (qw ~ 1) - proving broadcast_objects replicates PER-crate live orientation,
+// which is what makes blasted crates visibly tumble on clients instead of sliding forever axis-aligned.
+fn main() {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()
+    let mut w = world::new_world()
+    arena::build_crates(w.crates)
+    net_host(45135)   // a session so net_set_object_rot (inside broadcast_objects) has somewhere to go
+    phys3d_set_angvel(w.crates[0], 9.0, 5.0, 3.0)   // tumble crate 0 about all three axes
+    let mut t = 0
+    while t < 30 { phys3d_step(0.016); t = t + 1 }
+    server::broadcast_objects(w)
+    let qx = net_object_qx(0)
+    let qy = net_object_qy(0)
+    let qz = net_object_qz(0)
+    let qw = net_object_qw(0)
+    let rotated = ((qx * qx + qy * qy + qz * qz) > 0.01) as i64
+    // crate 5 sits alone far away (3,30) and was never touched -> stays near identity (qw ~ 1)
+    let qw5 = net_object_qw(5)
+    let still_upright = ((qw5 - 1.0) * (qw5 - 1.0) < 0.04) as i64
+    println("spun crate0 quat x=" + str((qx * 1000.0) as i64) + " y=" + str((qy * 1000.0) as i64) + " z=" + str((qz * 1000.0) as i64) + " w=" + str((qw * 1000.0) as i64) + " | untouched crate5 w=" + str((qw5 * 1000.0) as i64) + "/1000")
+    println("RESULT crate-tumbles-and-broadcasts=" + str((rotated == 1 and still_upright == 1) as i64) + " (expect 1)")
+}

@@ -3390,11 +3390,17 @@ fn main() {
             }
             cki = cki + 1
         }
-        // Loose crates at their live (blast-flung) physics positions.
+        // Loose crates at their live (blast-flung) physics positions. For host==guest (net_mode 2)
+        // draw at the local (reconciled) position but with the HOST's live orientation from the object
+        // channel, so a blasted crate visibly TUMBLES instead of sliding forever axis-aligned.
         let mut cd2 = 0
         while cd2 < crate_n {
             let chh2 = crates[cd2] as i64
-            r3d_draw(crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), 0.0, 0.0, 0.0, 1.0)
+            if net_mode == 2 and net_object_count() >= crate_n {
+                r3d_draw_quat(crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), net_object_qx(cd2), net_object_qy(cd2), net_object_qz(cd2), net_object_qw(cd2), 1.0)
+            } else {
+                r3d_draw(crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), 0.0, 0.0, 0.0, 1.0)
+            }
             cd2 = cd2 + 1
         }
         // Pickups: available fixed spots (green heal / blue shield / yellow ammo), bobbing. A guest
@@ -3998,7 +4004,7 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD NETV2-19 host==guest + bot grapple", 18, 65280)
+        draw_text(12, 12, "BUILD NETV2-20 host==guest + tumbling crates", 18, 65280)
         // Host hit-resolution diagnostics (tiny, top-left under the stamp): how the host's own
         // shots at players resolved. lc = lag-comp hits, fb = local-ray fallback hits (the fix for
         // "can't damage players"), dx = shots that found a victim already DEAD. If you can't damage
