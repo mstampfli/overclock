@@ -1,0 +1,33 @@
+// Bot pickup-seeking goal (simulate-to-verify): a hurt bot (hp 40) placed 6m from a ground HEALTH spot,
+// with NO enemy in sight, must DIVERT to the spot (bots_tick goal logic), walk onto it, and be healed by
+// pickups_tick. With no enemy to chase, a bot WITHOUT goal-seeking would stand still and never heal - so
+// healing to full is itself proof the diversion fired. We also track the closest approach to the spot to
+// confirm it physically travelled there (within the 1.4m collection radius), not a fluke.
+fn main() {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 80.0, 0.5, 80.0, 0)
+    net_host(45133)
+    let mut w = world::new_world()
+    w.round.bots = 1
+    // bot 0: hurt, standing 6m EAST of the ground health spot idx 1 (-45,45); full ammo so health is the need
+    w.actors[0].hdl = phys3d_add_character(0.0 - 39.0, 0.9, 45.0, 0.6, 0.3)
+    w.actors[0].hp = 40.0
+    w.actors[0].mag[0] = 30
+    w.actors[0].res[0] = 60
+    let mut closest = 100000.0
+    let mut t = 0
+    while t < 320 {
+        server::bots_tick(w, 0.016)
+        phys3d_step(0.016)
+        server::pickups_tick(w, 0.016)
+        let dx = phys3d_x(w.actors[0].hdl) - (0.0 - 45.0)
+        let dz = phys3d_z(w.actors[0].hdl) - 45.0
+        let d = sqrt(dx * dx + dz * dz)
+        if d < closest { closest = d }
+        t = t + 1
+    }
+    let healed = (w.actors[0].hp > 99.9) as i64
+    let reached = (closest < 1.4) as i64
+    println("closest approach to health spot = " + str((closest * 100.0) as i64) + "/100 m, final hp=" + str((w.actors[0].hp) as i64))
+    println("RESULT bot-seeks-and-collects-pickup=" + str((healed == 1 and reached == 1) as i64) + " (expect 1)")
+}

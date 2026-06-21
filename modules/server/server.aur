@@ -722,9 +722,46 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                 }
                 mq = mq + 1
             }
-            let tmx = enx
-            let tmy = eny
-            let tmz = enz
+            let mut tmx = enx
+            let mut tmy = eny
+            let mut tmz = enz
+            // GOAL diversion: a needy bot (hurt / nearly dry on rifle ammo / no shield) breaks off to
+            // grab the nearest AVAILABLE ground pickup of the type it needs (priority health > ammo >
+            // shield). It still shoots at the enemy (combat_tick is independent) - it just walks to the
+            // pickup; pickups_tick collects it on arrival, which clears the need the following tick. Only
+            // ground spots (pky < 2) are sought so a bot never strands itself under an unreachable tower.
+            let mut seeking = 0
+            let mut want_type = 0.0 - 1.0
+            if w.actors[ei2].hp < 55.0 {
+                want_type = 0.0
+            } else {
+                if (w.actors[ei2].mag[0] + w.actors[ei2].res[0]) < 12 {
+                    want_type = 2.0
+                } else {
+                    if w.actors[ei2].cells < 1 and w.actors[ei2].sh < w.actors[ei2].shmax { want_type = 1.0 }
+                }
+            }
+            if want_type >= 0.0 {
+                let mut bestpk = 0 - 1
+                let mut bestpd = 100000.0
+                let mut pk = 0
+                while pk < 11 {
+                    if w.pkcd[pk] <= 0.0 and w.pktype[pk] == want_type and w.pky[pk] < 2.0 {
+                        let pdx = w.pkx[pk] - bx0
+                        let pdz = w.pkz[pk] - bz0
+                        let pd = sqrt(pdx * pdx + pdz * pdz)
+                        if pd < bestpd { bestpd = pd; bestpk = pk }
+                    }
+                    pk = pk + 1
+                }
+                // only divert for a pickup within reach (35m) - never abandon a fight to sprint the map
+                if bestpk >= 0 and bestpd < 35.0 {
+                    tmx = w.pkx[bestpk]
+                    tmy = w.pky[bestpk]
+                    tmz = w.pkz[bestpk]
+                    seeking = 1
+                }
+            }
             let tdx = tmx - bx0
             let tdz = tmz - bz0
             let tdist = sqrt(tdx * tdx + tdz * tdz)
@@ -740,6 +777,12 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             if tdist < 4.0 { adv = 0.0 }
             if tdist < 2.0 { adv = 0.0 - 1.0 }
             if by0 - tmy > 0.4 and tdist < 2.5 { adv = 0.0 - 1.5 }
+            if seeking == 1 {
+                // sprint straight in, no enemy-standoff backpedal; ease off right on the spot to collect
+                runsp = 12.0
+                adv = 1.0
+                if tdist < 1.0 { adv = 0.0 }
+            }
             let mut bvx = (mdx * adv + perpx * juke) * runsp
             let mut bvz = (mdz * adv + perpz * juke) * runsp
             w.brains[ei2].vy = w.brains[ei2].vy - 16.0 * dt
