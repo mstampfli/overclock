@@ -4,13 +4,158 @@
 // session. It constructs and OWNS a world::World (all authoritative state), runs the authoritative
 // tick on it, and broadcasts everything to clients. The host runs this locally and joins back as a
 // PURE client (host == guest); a guest just joins the host's copy. Built up system by system:
-// world setup + bots (placement + AI movement) + broadcast now; combat/explosions/pickups/deaths/
-// round land next, each verified by a headless client-server sim before main becomes a pure client.
+// world setup + bots (placement + AI movement + combat) + client bodies + broadcast now; explosions/
+// projectiles/pickups/deaths/round land next, each verified by a headless client-server sim.
+//
+// Actor slot layout on the server: [0..4] bots (round.bots active), [5] unused (no local host
+// player - it's dedicated), [6..8] connected clients. bot_n = 5, nactors = 9 match the World arrays.
+
+// Keep a physics body per connected client, positioned at its replicated net position, so bots can
+// hitscan-hit it and the host owns its hp. Maps each client's net id to a slot (6..8), inits hp on
+// first sight, and replicates the host-owned hp/shield back to the client (it predicts + reconciles).
+fn sync_clients(w: world::World) -> i64 {
+    let mut k = 6
+    while k < 9 {
+        w.apid[k] = 9999   // cleared; live clients re-mapped below
+        k = k + 1
+    }
+    let pc = net_player_count()
+    let mut slot = 6
+    let mut pj = 0
+    while pj < pc and slot < 9 {
+        let pid = net_player_id_at(pj)
+        if pid >= 1 and pid < 1000 {
+            // First time this slot holds this client: reset its survivability.
+            if w.cpid_h[slot] != pid {
+                w.cpid_h[slot] = pid
+                w.actors[slot].hp = 100.0
+                w.actors[slot].sh = 0.0
+                w.actors[slot].shmax = 50.0
+                w.death_done[slot] = 0
+                w.last_hit[slot] = 0 - 1
+            }
+            w.apid[slot] = pid
+            if w.actors[slot].hdl < 0 {
+                w.actors[slot].hdl = phys3d_add_character(0.0, 0.9, 0.0, 0.6, 0.3)
+            }
+            // Track the client's authoritative position (re-simmed by net_update) with its body.
+            phys3d_set_pos(w.actors[slot].hdl, net_player_x(pid), net_player_y(pid), net_player_z(pid))
+            // Replicate the host-owned hp/shield/cells to the client.
+            net_set_player_meta(pid, 0, w.actors[slot].hp)
+            net_set_player_meta(pid, 1, w.actors[slot].sh)
+            slot = slot + 1
+        }
+        pj = pj + 1
+    }
+    0
+}
+
+// Bot RIFLE combat: each live bot tracks its nearest enemy (client or other bot), and when armed +
+// off cooldown fires a spread hitscan at it. A hit applies gun_dmg (shield then health) to the actor
+// it strikes and records the killer for the death sweep; every shot is announced (net_push_shot) so
+// clients draw the tracer + hear it. Launcher / grenades / the player's own shots land in later steps.
+fn combat_tick(w: world::World, dt: f64) -> i64 {
+    let nb = w.round.bots
+    let mut ci = 0
+    while ci < nb {
+        if w.actors[ci].hp > 0.0 {
+            // Reload tick (pull reserve -> mag), and auto-reload an empty rifle.
+            if w.actors[ci].rl > 0.0 {
+                w.actors[ci].rl = w.actors[ci].rl - dt
+                if w.actors[ci].rl <= 0.0 {
+                    w.actors[ci].rl = 0.0
+                    let mut tkr = 30 - w.actors[ci].mag[0]
+                    if tkr > w.actors[ci].res[0] { tkr = w.actors[ci].res[0] }
+                    w.actors[ci].mag[0] = w.actors[ci].mag[0] + tkr
+                    w.actors[ci].res[0] = w.actors[ci].res[0] - tkr
+                }
+            }
+            if w.actors[ci].rl <= 0.0 and w.actors[ci].mag[0] <= 0 and w.actors[ci].res[0] > 0 {
+                w.actors[ci].rl = 1.6
+            }
+            w.actors[ci].fcd = w.actors[ci].fcd - dt
+            if w.actors[ci].fcd < 0.0 { w.actors[ci].fcd = 0.0 }
+            let h = w.actors[ci].hdl
+            let bsx = phys3d_x(h)
+            let bsy = phys3d_y(h) + 0.5
+            let bsz = phys3d_z(h)
+            // Nearest enemy: connected clients (by their synced body) + other bots.
+            let mut tgx = 0.0
+            let mut tgy = 0.0
+            let mut tgz = 0.0
+            let mut tgv = 0 - 1
+            let mut bestd = 80.0
+            let mut vi = 0
+            while vi < 9 {
+                let enemy = (vi < nb and vi != ci) or (vi >= 6 and w.apid[vi] != 9999)
+                if enemy and w.actors[vi].hp > 0.0 {
+                    let vh = w.actors[vi].hdl
+                    let vx = phys3d_x(vh)
+                    let vz = phys3d_z(vh)
+                    let dd = sqrt((vx - bsx) * (vx - bsx) + (vz - bsz) * (vz - bsz))
+                    if dd < bestd { bestd = dd; tgx = vx; tgy = phys3d_y(vh) + 0.5; tgz = vz; tgv = vi }
+                }
+                vi = vi + 1
+            }
+            if tgv >= 0 { w.brains[ci].face = atan2(tgx - bsx, tgz - bsz) }
+            // Fire if armed + off cooldown + we have a target.
+            if tgv >= 0 and w.actors[ci].fcd <= 0.0 and w.actors[ci].mag[0] > 0 and w.actors[ci].rl <= 0.0 {
+                let ddx = tgx - bsx
+                let ddy = tgy - bsy
+                let ddz = tgz - bsz
+                let dl = sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
+                if dl > 0.1 {
+                    let bnx = ddx / dl
+                    let bny = ddy / dl
+                    let bnz = ddz / dl
+                    let spr = w.brains[ci].aim + bestd * 0.004
+                    let mut snx = bnx + sin(w.etime * 57.0 + (ci as f64) * 11.0) * spr
+                    let mut sny = bny + sin(w.etime * 43.0 + (ci as f64) * 5.0) * spr * 0.7
+                    let mut snz = bnz + sin(w.etime * 67.0 + (ci as f64) * 9.0) * spr
+                    let snl = sqrt(snx * snx + sny * sny + snz * snz)
+                    if snl > 0.001 { snx = snx / snl; sny = sny / snl; snz = snz / snl }
+                    let ox = bsx + snx * 0.6
+                    let oy = bsy + sny * 0.6
+                    let oz = bsz + snz * 0.6
+                    w.actors[ci].mag[0] = w.actors[ci].mag[0] - 1
+                    w.actors[ci].fcd = 0.11
+                    let hb = phys3d_raycast_ex(h, ox, oy, oz, snx, sny, snz, 120.0)
+                    let mut tex = ox + snx * 120.0
+                    let mut tey = oy + sny * 120.0
+                    let mut tez = oz + snz * 120.0
+                    if hb >= 0 {
+                        tex = phys3d_hit_x()
+                        tey = phys3d_hit_y()
+                        tez = phys3d_hit_z()
+                        let mut vk = 0
+                        while vk < 9 {
+                            if vk != ci and hb == w.actors[vk].hdl and w.actors[vk].hp > 0.0 {
+                                let mut dmg = 17.0   // gun_dmg
+                                let hrel = tey - phys3d_y(w.actors[vk].hdl)
+                                if hrel > 0.5 { dmg = dmg * 2.0 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+                                if w.actors[vk].sh > 0.0 {
+                                    if w.actors[vk].sh >= dmg { w.actors[vk].sh = w.actors[vk].sh - dmg; dmg = 0.0 }
+                                    else { dmg = dmg - w.actors[vk].sh; w.actors[vk].sh = 0.0 }
+                                }
+                                w.actors[vk].hp = w.actors[vk].hp - dmg
+                                if vk < nb { w.brains[vk].pop = 0.1 }
+                                w.last_hit[vk] = ci
+                            }
+                            vk = vk + 1
+                        }
+                    }
+                    net_push_shot(1000 + ci, ox, oy, oz, tex, tey, tez, 0)   // announce the tracer + sound
+                }
+            }
+        }
+        ci = ci + 1
+    }
+    0
+}
 
 // Bot AI MOVEMENT (ported from the playground bot loop, adapted to the server: the "enemy" is the
 // nearest connected CLIENT or other bot, read over the net / physics). Hunt + standoff ring + juke
-// + gravity + jump + knockback decay + collide-and-slide. Goals (pickups), grapple and combat
-// (firing/reload/shield) layer on in later steps. Operates on + mutates the World by reference.
+// + gravity + jump + knockback decay + collide-and-slide. Goals (pickups), grapple layer on later.
 fn bots_tick(w: world::World, dt: f64) -> i64 {
     w.etime = w.etime + dt
     let nb = w.round.bots
@@ -19,7 +164,6 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
         let h = w.actors[ei2].hdl
         w.brains[ei2].pop = w.brains[ei2].pop - dt
         if w.brains[ei2].pop < 0.0 { w.brains[ei2].pop = 0.0 }
-        // Decay any blast knockback (a shove that fades back to AI control).
         w.brains[ei2].kx = w.brains[ei2].kx - w.brains[ei2].kx * 2.8 * dt
         w.brains[ei2].ky = w.brains[ei2].ky - w.brains[ei2].ky * 2.8 * dt
         w.brains[ei2].kz = w.brains[ei2].kz - w.brains[ei2].kz * 2.8 * dt
@@ -28,7 +172,6 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             let by0 = phys3d_y(h)
             let bz0 = phys3d_z(h)
             let grnd = phys3d_grounded(h) == 1
-            // NEAREST ENEMY (free-for-all): every connected client + every other live bot.
             let mut enx = bx0
             let mut eny = by0
             let mut enz = bz0
@@ -56,8 +199,6 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                 }
                 mq = mq + 1
             }
-            // Hunt the enemy (goals/grapple added later). Standoff ring + strafe-juke so bots fight
-            // at range instead of piling on.
             let tmx = enx
             let tmy = eny
             let tmz = enz
@@ -78,7 +219,6 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             if by0 - tmy > 0.4 and tdist < 2.5 { adv = 0.0 - 1.5 }
             let mut bvx = (mdx * adv + perpx * juke) * runsp
             let mut bvz = (mdz * adv + perpz * juke) * runsp
-            // Gravity + jump (traverse when stuck going far, or to follow the target up).
             w.brains[ei2].vy = w.brains[ei2].vy - 16.0 * dt
             if grnd and w.brains[ei2].vy < 0.0 { w.brains[ei2].vy = 0.0 }
             let moved = sqrt((bx0 - w.brains[ei2].px0) * (bx0 - w.brains[ei2].px0) + (bz0 - w.brains[ei2].pz0) * (bz0 - w.brains[ei2].pz0))
@@ -93,16 +233,13 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             }
             w.brains[ei2].px0 = bx0
             w.brains[ei2].pz0 = bz0
-            // While still flying from a blast, stop steering so the launch reads.
             let knock = sqrt(w.brains[ei2].kx * w.brains[ei2].kx + w.brains[ei2].ky * w.brains[ei2].ky + w.brains[ei2].kz * w.brains[ei2].kz)
             if knock > 4.0 {
                 bvx = 0.0
                 bvz = 0.0
             }
-            w.brains[ei2].face = atan2(mdx, mdz)
             phys3d_move_character(h, (bvx + w.brains[ei2].kx) * dt, (w.brains[ei2].vy + w.brains[ei2].ky) * dt, (bvz + w.brains[ei2].kz) * dt, dt)
         } else {
-            // Dead: park below the map; respawn after the death sweep has processed it.
             phys3d_set_pos(h, w.esx[ei2], 0.0 - 50.0, w.esz[ei2])
             w.brains[ei2].resp = w.brains[ei2].resp - dt
             if w.brains[ei2].resp <= 0.0 and w.death_done[ei2] == 1 {
@@ -145,7 +282,6 @@ fn server_main() -> i64 {
     phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 60.0, 0.5, 60.0, 0)   // static floor (flag 0)
     let mut w = world::new_world()
     w.round.bots = 3
-    // Bot spawn anchors; create a kinematic character per bot and remember its handle in the World.
     let anchx = [0.0 - 6.0, 6.0, 0.0]
     let anchz = [10.0, 10.0, 0.0 - 8.0]
     let mut bi = 0
@@ -154,21 +290,28 @@ fn server_main() -> i64 {
         w.esz[bi] = anchz[bi]
         w.actors[bi].hdl = phys3d_add_character(anchx[bi], 0.9, anchz[bi], 0.6, 0.3)
         w.actors[bi].hp = 100.0
+        w.actors[bi].mag[0] = 30
+        w.actors[bi].mag[1] = 1
+        w.actors[bi].res[0] = 60
+        w.actors[bi].res[1] = 2
         w.brains[bi].aim = 0.05
         bi = bi + 1
     }
     net_host(45300)
-    net_dedicated()    // no local host player: whoever hosts joins back as a client
-    net_spawn_at(0.0, 0.9, 0.0)   // clients spawn at the arena centre
+    net_dedicated()
+    net_spawn_at(0.0, 0.9, 0.0)
     net_sim(|state, input| {
         sim::sim_step(state, input, sim::default_cfg())
         0
     }, 21, 20)
     let mut t = 0
     while t < 100000 {
+        sync_clients(w)
         bots_tick(w, 0.016)
+        combat_tick(w, 0.016)
         broadcast_bots(w)
-        net_update(0.016)   // re-sim connected clients (steps physics via sim_step) + broadcast
+        net_update(0.016)   // re-sim connected clients (steps physics) + broadcast snapshots
+        net_shots_clear()   // flush this tick's shot announcements to clients
         sleep_ms(16)
         t = t + 1
     }

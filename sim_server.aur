@@ -1,28 +1,26 @@
-// Headless client-server proof: server_main owns a World, runs bot AI movement, broadcasts bots.
-// A client joins 127.0.0.1 at the arena centre; the bots HUNT it, so they must MOVE off their
-// anchors toward the centre.
+// Headless client-server proof: server owns a World, runs bot AI + COMBAT, syncs client bodies.
+// A client joins at the centre; the bots hunt it AND shoot it, so the client's host-owned hp must
+// DROP and the client must receive shot announcements (tracers/sounds).
 fn main() {
     net_serve(|| { server::server_main() })
     sleep_ms(250)
     net_join("127.0.0.1", 45300)
     net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
     let input = [0.0; 20]
-    // settle: let the client spawn + bots start hunting
+    let myid = net_my_id()
+    let mut shots_seen = 0
     let mut t = 0
-    while t < 30 { net_send_input(input); net_update(0.016); t = t + 1; sleep_ms(12) }
-    let b0x_start = net_player_x(1000)
-    let b2z_start = net_player_z(1002)
-    // run: bots chase the centre
-    t = 0
-    while t < 220 { net_send_input(input); net_update(0.016); t = t + 1; sleep_ms(12) }
-    let b0x_end = net_player_x(1000)
-    let b0z_end = net_player_z(1000)
-    let b2z_end = net_player_z(1002)
+    while t < 400 {
+        net_send_input(input)
+        net_update(0.016)
+        shots_seen = shots_seen + net_shot_count()
+        net_shots_clear()
+        t = t + 1
+        sleep_ms(10)
+    }
+    let hp = net_player_meta(myid, 0)
     println("player_count=" + str(net_player_count()) + " connected=" + str(net_connected()))
-    println("bot0 x: " + str((b0x_start * 10.0) as i64) + " -> " + str((b0x_end * 10.0) as i64) + " /10 (anchor -60; expect MOVED toward 0 i.e. larger)")
-    println("bot0 z end=" + str((b0z_end * 10.0) as i64) + " /10 (anchor 100; expect smaller)")
-    println("bot2 z: " + str((b2z_start * 10.0) as i64) + " -> " + str((b2z_end * 10.0) as i64) + " /10 (anchor -80; expect toward 0 i.e. larger)")
-    let moved0 = b0x_end > b0x_start + 0.5 and b0z_end < 10.0
-    let moved2 = b2z_end > b2z_start + 0.5
-    println("RESULT bots-moved-toward-centre: bot0=" + str(moved0 as i64) + " bot2=" + str(moved2 as i64) + " (expect 1 1)")
+    println("my hp (host-owned) = " + str((hp * 10.0) as i64) + " /10 (started 1000; expect DROPPED < 1000)")
+    println("shot announcements seen = " + str(shots_seen) + " (expect > 0: bot tracers)")
+    println("RESULT damaged=" + str((hp < 99.9) as i64) + " saw_shots=" + str((shots_seen > 0) as i64) + " (expect 1 1)")
 }
