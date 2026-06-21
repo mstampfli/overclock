@@ -240,9 +240,12 @@ fn pcchan(pid: i64, ch: i64) -> i64 {
     if pid >= 1000 { ci = 9 + (pid - 1000) }
     if ci < 0 { ci = 0 }
     ci = ci - (ci / 14) * 14
-    let pr = [235, 70, 95, 240, 250, 175, 95, 250, 150, 70, 240, 120, 255, 200]
-    let pg = [70, 140, 220, 215, 150, 95, 220, 130, 95, 200, 110, 220, 215, 200]
-    let pb = [70, 245, 110, 70, 60, 240, 230, 220, 240, 180, 230, 120, 70, 200]
+    // 14 MAXIMALLY-DISTINCT colours (no near-duplicate hues). Host(0) + up to 8 players take the
+    // well-separated low indices 0..8; bots take 9..13. red/blue/green/yellow/orange/magenta/cyan/
+    // violet/pink, then lime/teal/brown/sky/white.
+    let pr = [235, 50, 70, 245, 250, 230, 50, 150, 250, 175, 40, 180, 130, 225]
+    let pg = [55, 130, 205, 215, 135, 60, 215, 90, 120, 225, 175, 120, 195, 225]
+    let pb = [55, 250, 80, 45, 35, 200, 220, 245, 170, 50, 150, 70, 255, 225]
     if ch == 0 { return pr[ci] }
     if ch == 1 { return pg[ci] }
     return pb[ci]
@@ -830,6 +833,7 @@ fn main() {
                               // its render so the thrower sees ONLY its predicted nade, not a second offset one
     let mut melee_cd = 0.0    // melee swing cooldown remaining
     let mut melee_prev = 0    // melee key last frame (edge-detect)
+    let mut g_melee_ctr = 0   // melee-swing counter -> meta 17; the host applies authoritative katana damage on ++
     let mut boom_t = 0.0      // explosion flash timer
     let mut boom_int = 1.0    // explosion visual intensity (scales the boom draw)
     let mut boomx = 0.0
@@ -1573,6 +1577,7 @@ fn main() {
         let mut sw_m = 0.0
         if melee_cd > melee_cooldown - 0.35 { sw_m = 1.0 }
         net_set_meta(8, sw_m)
+        net_set_meta(17, g_melee_ctr as f64)   // host applies authoritative katana damage on each ++ (server melee)
         // Shield-up flag (slot 16): 1 while mid shield-apply channel, so OTHERS see me holding the
         // blue cube up (third-person) instead of the rifle. My own first-person cube is local.
         let mut shield_m = 0.0
@@ -2077,6 +2082,7 @@ fn main() {
         let mkey = input_down(act_melee)
         if mkey > 0 and melee_prev == 0 and melee_cd <= 0.0 and dead == false {
             melee_cd = melee_cooldown
+            g_melee_ctr = g_melee_ctr + 1   // tell the host to apply an authoritative swing (meta 17)
             play_noise(60, 16)   // swing swoosh
             // Arc/cone sweep - a katana SLASH, not a needle. Hit EVERY actor within reach and
             // inside the ~120-deg swing arc, with a line-of-sight check so walls block it.
@@ -3686,7 +3692,7 @@ fn main() {
                     // (replicated meta 8), else the held weapon pose. Reuses the existing overlay.
                     let mut ruwant = anim_aim
                     if net_player_meta(pid, 8) > 0.5 { ruwant = kat_swing_clip }
-                    if ushoot[ai] != ruwant { r3d_anim_play_upper(actor_models[ai], ruwant, 1, 1.0, 0.1, upper_mask_root); ushoot[ai] = ruwant }
+                    if ushoot[ai] != ruwant { let mut kspd = 1.0; if ruwant == kat_swing_clip { kspd = 1.7 }; r3d_anim_play_upper(actor_models[ai], ruwant, 1, kspd, 0.1, upper_mask_root); ushoot[ai] = ruwant }
                     r3d_anim_update(actor_models[ai], dt)
                     // A remote that is ITSELF overclocked (its replicated meta 2) glows a bright pulsing
                     // GOLD so everyone can read who's powered up - independent of my own overclock. Checked

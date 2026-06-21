@@ -123,6 +123,7 @@ struct World {
     cpid_h: [i64; 9],
     cresp_seen: [i64; 9],
     cheal_seen: [i64; 9],
+    cmelee_seen: [i64; 9],
     // Bot-AI clock (drives aim wobble / fire windows).
     etime: f64
 }
@@ -146,7 +147,7 @@ fn new_world() -> World {
         prjx: [0.0; 12], prjy: [0.0; 12], prjz: [0.0; 12], prjvx: [0.0; 12], prjvy: [0.0; 12], prjvz: [0.0; 12], prjlife: [0.0; 12], prjsrc: [0.0; 12], prjcur: 0,
         grx: 0.0, gry: 0.0, grz: 0.0, grvx: 0.0, grvy: 0.0, grvz: 0.0, nfuse: 0.0, nade_live: 0, nade_cd: 0.0, nade_src: 0 - 1,
         crates: [0 - 1; 12], esx: [0.0; 5], esz: [0.0; 5],
-        apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9],
+        apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9], cmelee_seen: [0; 9],
         etime: 0.0
     }
 }

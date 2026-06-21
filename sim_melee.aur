@@ -1,0 +1,49 @@
+// Simulate-to-verify SERVER-AUTHORITATIVE katana: a client closes on a passive bot and swings
+// (meta 17 ++). The host must apply 75 damage to GREEN HP, BYPASSING the shield - so the bot's hp
+// drops ~75 while its shield is untouched. The katana used to be pure client prediction the host
+// never applied, so the bot took no real damage at all.
+fn main() {
+    net_cfg_set(0, 1.0)   // ONE bot
+    net_cfg_set(3, 1.0)   // PASSIVE: holds still, never shoots
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+    let mut t = 0
+    while t < 40 { net_send_input([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    let mut swung = 0
+    let mut hp_before = 100.0
+    let mut sh_before = 0.0
+    let mut hp_after = 100.0
+    t = 0
+    while t < 500 {
+        let ex = net_local_x()
+        let ez = net_local_z()
+        let bx = net_player_x(1000)
+        let bz = net_player_z(1000)
+        let d = sqrt((bx - ex) * (bx - ex) + (bz - ez) * (bz - ez))
+        let yaw = atan2(bx - ex, 0.0 - (bz - ez))
+        let mut fwd = 1.0
+        if d < 1.8 { fwd = 0.0 }
+        net_send_input([fwd, 0.0, yaw, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0])
+        if d < 2.3 and swung == 0 and net_player_meta(1000, 0) > 0.0 {
+            hp_before = net_player_meta(1000, 0)
+            sh_before = net_player_meta(1000, 1)
+            swung = 1
+            net_set_meta(17, 1.0)   // SWING (meta 17 ++ from 0)
+        }
+        net_update(0.016)
+        if swung == 1 { hp_after = net_player_meta(1000, 0) }
+        net_kills_clear(); net_shots_clear()
+        t = t + 1
+        sleep_ms(10)
+    }
+    let sh_after = net_player_meta(1000, 1)
+    let dropped = hp_before - hp_after
+    let shield_kept = sh_after >= sh_before - 0.5
+    println("swung=" + str(swung) + " hp " + str(hp_before as i64) + "->" + str(hp_after as i64) + " (drop " + str(dropped as i64) + ") shield " + str(sh_before as i64) + "->" + str(sh_after as i64))
+    println("RESULT katana-server-75-bypass-shield=" + str(((dropped > 60.0) and shield_kept) as i64) + " (expect 1)")
+}

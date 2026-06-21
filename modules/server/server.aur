@@ -72,6 +72,7 @@ fn sync_clients(w: world::World) -> i64 {
                 w.last_hit[slot] = 0 - 1
                 w.cresp_seen[slot] = net_player_meta(pid, 3) as i64
                 w.cheal_seen[slot] = net_player_meta(pid, 5) as i64
+                w.cmelee_seen[slot] = net_player_meta(pid, 17) as i64
             }
             // RESPAWN HANDSHAKE: a client signals a respawn by ++ its meta 3; the host owns the
             // result (restore full hp, re-arm the death sweep) and echoes the counter back as meta 9
@@ -104,6 +105,45 @@ fn sync_clients(w: world::World) -> i64 {
                     w.actors[slot].cells = w.actors[slot].cells - 1
                     w.actors[slot].sh = w.actors[slot].sh + 25.0
                     if w.actors[slot].sh > w.actors[slot].shmax { w.actors[slot].sh = w.actors[slot].shmax }
+                }
+            }
+            // MELEE HANDSHAKE: a client signals a katana swing by ++ its meta 17. The host owns the
+            // result - a ~120-deg arc from the client's authoritative position + look yaw; every enemy
+            // (bot or other client) in reach takes 75 to GREEN HP, BYPASSING shield, plus a shove. The
+            // katana was pure client prediction the host never applied, so it did no real damage.
+            let melc = net_player_meta(pid, 17) as i64
+            if melc != w.cmelee_seen[slot] and w.actors[slot].hp > 0.0 {
+                w.cmelee_seen[slot] = melc
+                let myaw = net_player_yaw(pid)
+                let mfx = sin(myaw)
+                let mfz = 0.0 - cos(myaw)
+                let mpx = net_player_x(pid)
+                let mpy = net_player_y(pid) + 0.7
+                let mpz = net_player_z(pid)
+                let mut mt = 0
+                while mt < 9 {
+                    let menemy = (mt < w.round.bots) or (mt >= 6 and w.apid[mt] != 9999)
+                    if mt != slot and menemy and w.actors[mt].hp > 0.0 {
+                        let tdx = phys3d_x(w.actors[mt].hdl) - mpx
+                        let tdy = (phys3d_y(w.actors[mt].hdl) + 0.5) - mpy
+                        let tdz = phys3d_z(w.actors[mt].hdl) - mpz
+                        let tdd = sqrt(tdx * tdx + tdy * tdy + tdz * tdz)
+                        if tdd > 0.001 and tdd < 2.8 {
+                            if (tdx * mfx + tdz * mfz) / tdd > 0.5 {
+                                // LOS = WALLS only (phys3d_raycast_world skips characters): a wall closer
+                                // than the target blocks the swing; our own + the target's capsule don't.
+                                let mlos = phys3d_raycast_world(w.actors[slot].hdl, mpx, mpy, mpz, tdx / tdd, tdy / tdd, tdz / tdd, tdd)
+                                if mlos < 0 {
+                                    w.actors[mt].hp = w.actors[mt].hp - 75.0   // BYPASS shield -> straight to hp
+                                    w.brains[mt].kx = mfx * 14.0
+                                    w.brains[mt].ky = 6.0
+                                    w.brains[mt].kz = mfz * 14.0
+                                    w.last_hit[mt] = slot
+                                }
+                            }
+                        }
+                    }
+                    mt = mt + 1
                 }
             }
             w.apid[slot] = pid
@@ -1030,8 +1070,16 @@ fn server_main() -> i64 {
     // Lobby settings arrive over the host->server control channel (net_cfg_set on the host); fall
     // back to defaults when unset (slot is 0). 0 = bot_count, 1 = kill_target, 2 = round_len.
     w.round.bots = 5
+    // 0 enemies is a VALID choice. cfg defaults to 0 so we can't tell "unset" from "explicit 0" on
+    // slot 0 alone - but the client ALSO sets the kill target (slot 1, always > 0) when it configures a
+    // real lobby. So when a target is present, honour the bot count INCLUDING 0; raw sims that set
+    // neither keep the default 5. (The old code's `> 0` treated "0 enemies" as unset -> spawned 5.)
     let cfg_bots = net_cfg_get(0) as i64
-    if cfg_bots > 0 and cfg_bots <= 5 { w.round.bots = cfg_bots }
+    if net_cfg_get(1) > 0.0 {
+        if cfg_bots >= 0 and cfg_bots <= 5 { w.round.bots = cfg_bots }
+    } else {
+        if cfg_bots > 0 and cfg_bots <= 5 { w.round.bots = cfg_bots }
+    }
     let cfg_target = net_cfg_get(1) as i64
     if cfg_target > 0 { w.round.target = cfg_target }
     let cfg_len = net_cfg_get(2)
