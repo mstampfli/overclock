@@ -1113,6 +1113,10 @@ fn main() {
                             // it as a PURE client over loopback, exactly like a remote guest. The server
                             // binds 0.0.0.0, so port-forwarded remote players join the very same way.
                             // Everyone, including the host, now receives the identical net stream.
+                            // Pass the lobby settings to the server thread over the control channel.
+                            net_cfg_set(0, bot_count as f64)
+                            net_cfg_set(1, kill_target as f64)
+                            net_cfg_set(2, round_len)
                             net_serve(|| { server::server_main() })
                             sleep_ms(200)   // let the server thread bind before we connect
                             net_join("127.0.0.1", net_port)

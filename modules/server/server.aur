@@ -673,7 +673,15 @@ fn server_main() -> i64 {
     phys3d_init(0.0, 0.0 - 16.0, 0.0)   // own physics world; gravity matches sim cfg[0]
     arena::build_colliders()            // the REAL arena (floor + 30 static boxes + 8 ramps)
     let mut w = world::new_world()
+    // Lobby settings arrive over the host->server control channel (net_cfg_set on the host); fall
+    // back to defaults when unset (slot is 0). 0 = bot_count, 1 = kill_target, 2 = round_len.
     w.round.bots = 5
+    let cfg_bots = net_cfg_get(0) as i64
+    if cfg_bots > 0 and cfg_bots <= 5 { w.round.bots = cfg_bots }
+    let cfg_target = net_cfg_get(1) as i64
+    if cfg_target > 0 { w.round.target = cfg_target }
+    let cfg_len = net_cfg_get(2)
+    if cfg_len > 0.0 { w.round.len = cfg_len; w.round.timer = cfg_len }
     let anchx = [0.0 - 20.0, 20.0, 0.0, 0.0 - 25.0, 25.0]
     let anchz = [20.0, 20.0, 0.0 - 25.0, 0.0 - 10.0, 0.0 - 10.0]
     let mut bi = 0
