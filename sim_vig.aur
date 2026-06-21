@@ -1,0 +1,26 @@
+// Verify the damage-vignette health smoothing: a snapshot that steps hp 100->55 should EASE the
+// vignette health down over several frames (clean, not snappy), and a respawn to full should SNAP.
+fn main() {
+    let php_max = 100.0
+    let dt = 0.016
+    let mut vig_hp = 100.0
+    let hp = 55.0   // reconciled (stepped) health after taking damage in one snapshot
+    let mut f = 0
+    while f < 40 {
+        let mut vlrp = dt * 9.0
+        if vlrp > 1.0 { vlrp = 1.0 }
+        if hp > vig_hp { vlrp = dt * 5.0 }
+        if hp >= php_max - 0.01 { vlrp = 1.0 }
+        vig_hp = vig_hp + (hp - vig_hp) * vlrp
+        if f == 0 { println("frame  1: vig_hp=" + str((vig_hp * 10.0) as i64) + "/10  (NOT 550 => eased, not snapped)") }
+        if f == 9 { println("frame 10: vig_hp=" + str((vig_hp * 10.0) as i64) + "/10  (approaching 550)") }
+        if f == 39 { println("frame 40: vig_hp=" + str((vig_hp * 10.0) as i64) + "/10  (settled ~550)") }
+        f = f + 1
+    }
+    // Respawn: hp jumps to full -> vignette must clear in ONE frame (vlrp forced to 1).
+    let hp2 = 100.0
+    let mut vlrp2 = dt * 9.0
+    if hp2 >= php_max - 0.01 { vlrp2 = 1.0 }
+    vig_hp = vig_hp + (hp2 - vig_hp) * vlrp2
+    println("respawn : vig_hp=" + str((vig_hp * 10.0) as i64) + "/10  (expect 1000 => instant clear)")
+}

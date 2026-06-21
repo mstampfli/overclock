@@ -1,0 +1,30 @@
+// Verify the host hit-resolution fallback that fixes "can't damage other players":
+//  A) lag-comp returns nothing but the local ray hit a client body -> damage that client
+//  B) lag-comp returns the client id -> resolved normally, no fallback needed
+//  C) lag-comp misses AND the ray hit a wall (not an actor) -> no victim (no false hit)
+fn resolve(lh: i64, hb: i64, apid: [i64; 9], hdl: [i64; 9], bot_n: i64, nactors: i64) -> i64 {
+    let mut avk = 0 - 1
+    if lh >= 1000 { let abi = lh - 1000; if abi < bot_n { avk = abi } }
+    else { if lh >= 1 and lh < 1000 { let mut acc = bot_n + 1; while acc < nactors { if apid[acc] == lh { avk = acc } acc = acc + 1 } } }
+    if avk < 0 and hb >= 0 {
+        let mut fb = bot_n + 1
+        while fb < nactors { if apid[fb] != 9999 and hb == hdl[fb] { avk = fb } fb = fb + 1 }
+        let mut fbb = 0
+        while fbb < bot_n { if hb == hdl[fbb] { avk = fbb } fbb = fbb + 1 }
+    }
+    avk
+}
+fn main() {
+    let bot_n = 5
+    let nactors = 9
+    let hdl =  [10, 11, 12, 13, 14, 15, 777, 0 - 1, 0 - 1]   // slot 6 = a client body (handle 777)
+    let apid = [9999, 9999, 9999, 9999, 9999, 9999, 42, 9999, 9999]
+    let a = resolve(0 - 1, 777, apid, hdl, bot_n, nactors)   // miss + ray hit client
+    let b = resolve(42,    777, apid, hdl, bot_n, nactors)   // lag-comp hit
+    let c = resolve(0 - 1, 999, apid, hdl, bot_n, nactors)   // miss + ray hit wall
+    let d = resolve(0 - 1, 12,  apid, hdl, bot_n, nactors)   // miss + ray hit a BOT (slot 2)
+    println("A miss+ray-hit-client = " + str(a) + "  (expect 6)")
+    println("B lag-comp hit        = " + str(b) + "  (expect 6)")
+    println("C miss+ray-hit-wall   = " + str(c) + "  (expect -1)")
+    println("D miss+ray-hit-bot    = " + str(d) + "  (expect 2)")
+}

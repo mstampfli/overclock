@@ -1597,6 +1597,15 @@ fn main() {
     let mut g_resp_ctr = 0.0     // ++ each time I respawn (meta 3)
     let mut g_heal_ctr = 0.0     // ++ each time I finish a shield-cell channel (meta 5)
     let mut g_hp_prev = 100.0    // last reconciled hp (for the incoming-damage hurt flash)
+    let mut g_hurt = 0           // guest took reconciled damage THIS frame -> resolve the hit
+                                 // direction from the incoming shot in the shot-drain loop below
+    // Host damage diagnostics (shown small on the HUD when hosting): how the host resolved its own
+    // shots at players - lag-comp hits vs the local-ray FALLBACK vs shots blocked by a dead victim.
+    let mut dbg_lc = 0
+    let mut dbg_fb = 0
+    let mut dbg_dead = 0
+    let mut vig_hp = 100.0       // smoothed health driving the damage vignette: eases toward the
+                                 // reconciled hp so a snapshot step fades the red in cleanly, not snappy
     let mut g_resp_wait = 0      // 1 while awaiting the host's respawn ACK (ignore stale hp=0 only then)
     let mut g_resp_wait_t = 0.0  // backstop timer so the wait can never get stuck (clears after this)
     let mut g_joined = 0         // 0 = JOIN HANDSHAKE (waiting for the host to init my character);
@@ -2490,7 +2499,7 @@ fn main() {
                     if net_player_meta(amy, 9) >= g_resp_ctr - 0.5 or g_resp_wait_t <= 0.0 { g_resp_wait = 0 }
                 }
                 if g_resp_wait == 0 {
-                    if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05 }   // took damage
+                    if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05; g_hurt = 1 }   // took damage; resolve direction below
                     g_hp_prev = newhp
                     actors[pl_i].hp = newhp
                 }
@@ -3765,8 +3774,29 @@ fn main() {
                         if mine == 1 and net_mode == 1 {
                             let lh = net_hit_player()
                             let mut avk = 0 - 1
+                            let mut ahit_y = net_hit_y()
                             if lh >= 1000 { let abi = lh - 1000; if abi < bot_n { avk = abi } }
                             else { if lh >= 1 and lh < 1000 { let mut acc = bot_n + 1; while acc < nactors { if apid[acc] == lh { avk = acc } acc = acc + 1 } } }
+                            if avk >= 0 { dbg_lc = dbg_lc + 1 }
+                            // FALLBACK (fixes "can't damage other players"): lag-comp found no victim
+                            // - a target rewound out of the ray, or a stale/empty record - but the
+                            // LOCAL ray hit a body THIS shot. Damage that actor so a clean shot still
+                            // lands. Use the body-centre height (torso, no head/leg multiplier) since
+                            // the precise hit Y isn't in scope here. Bots + connected clients only.
+                            if avk < 0 and hb >= 0 {
+                                let mut fb = bot_n + 1
+                                while fb < nactors {
+                                    if apid[fb] != 9999 and hb == (actors[fb].hdl as i64) { avk = fb }
+                                    fb = fb + 1
+                                }
+                                let mut fbb = 0
+                                while fbb < bot_n {
+                                    if hb == (actors[fbb].hdl as i64) { avk = fbb }
+                                    fbb = fbb + 1
+                                }
+                                if avk >= 0 { ahit_y = phys3d_y(actors[avk].hdl as i64); dbg_fb = dbg_fb + 1 }
+                            }
+                            if avk >= 0 and avk != ci and actors[avk].hp <= 0.0 { dbg_dead = dbg_dead + 1 }
                             if avk >= 0 and avk != ci and actors[avk].hp > 0.0 {
                                 let mut admg = gun_dmg
                                 // Headshot height = hit Y vs the victim's capsule-centre body Y. Use
@@ -3774,7 +3804,7 @@ fn main() {
                                 // render-actor); net_player_y returns a default for bots on the host,
                                 // which made every hit read as a headshot. The 0.5 threshold has
                                 // enough margin that the render-actor's ~1-frame lag never flips it.
-                                let ahrel = net_hit_y() - phys3d_y(actors[avk].hdl as i64)
+                                let ahrel = ahit_y - phys3d_y(actors[avk].hdl as i64)
                                 if ahrel > 0.5 { admg = admg * 2.0; play_sound(12, 90, 0) } else { if ahrel < (0.0 - 0.4) { admg = admg * 0.65 } }
                                 if actors[avk].sh > 0.0 { if actors[avk].sh >= admg { actors[avk].sh = actors[avk].sh - admg; admg = 0.0 } else { admg = admg - actors[avk].sh; actors[avk].sh = 0.0 } }
                                 actors[avk].hp = actors[avk].hp - admg
@@ -4018,7 +4048,15 @@ fn main() {
 
         // Damage overlay -> GPU shader: low-health red vignette (below ~60% health) +
         // a directional red hit glow + a pulsing GOLD overclock tint.
-        let mut vig = (0.6 - actors[5].hp / php_max) / 0.6
+        // SMOOTH RECONCILE: ease the vignette's health toward the reconciled value (~0.18s) so a
+        // guest's stepped hp snapshots fade the red in cleanly instead of popping. On a fresh
+        // respawn snap straight to full so the vignette clears instantly (no lingering red).
+        let mut vlrp = dt * 9.0
+        if vlrp > 1.0 { vlrp = 1.0 }
+        if actors[5].hp > vig_hp { vlrp = dt * 5.0 }   // heal: ease back a touch slower
+        if actors[5].hp >= php_max - 0.01 { vlrp = 1.0 }
+        vig_hp = vig_hp + (actors[5].hp - vig_hp) * vlrp
+        let mut vig = (0.6 - vig_hp / php_max) / 0.6
         if vig < 0.0 { vig = 0.0 }
         if vig > 1.0 { vig = 1.0 }
         vig = vig * 0.4
@@ -4552,6 +4590,14 @@ fn main() {
         // visible + audible. Drained (and, on the host, broadcast) by net_shots_clear below.
         let scn = net_shot_count()
         let mut sci = 0
+        // Track the incoming shot whose ENDPOINT lands nearest me, so if I took damage this frame
+        // (g_hurt, set when my hp reconciled DOWN) I can aim the directional damage vignette at
+        // whoever shot me - this is what gives a GUEST a directional hit indicator (the host/bots
+        // damage a guest over the wire, so the local hit loop that normally sets dmg_dir never runs).
+        let mut hd_best = 7.0       // distance^2 threshold (~2.6m): the shot must actually reach me
+        let mut hd_ox = 0.0
+        let mut hd_oz = 0.0
+        let mut hd_found = 0
         while sci < scn {
             let ssh = net_shot_shooter(sci)
             let mut show = 1
@@ -4561,15 +4607,34 @@ fn main() {
                 let sx1 = net_shot_field(sci, 0)
                 let sy1 = net_shot_field(sci, 1)
                 let sz1 = net_shot_field(sci, 2)
+                let ex2 = net_shot_field(sci, 3)
+                let ey2 = net_shot_field(sci, 4)
+                let ez2 = net_shot_field(sci, 5)
                 trx1[trcur] = sx1; try1[trcur] = sy1; trz1[trcur] = sz1
-                trx2[trcur] = net_shot_field(sci, 3); try2[trcur] = net_shot_field(sci, 4); trz2[trcur] = net_shot_field(sci, 5)
+                trx2[trcur] = ex2; try2[trcur] = ey2; trz2[trcur] = ez2
                 trlife[trcur] = 0.06
                 trcur = trcur + 1
                 if trcur >= tracer_n { trcur = 0 }
                 play_sound_at(2, 26, 6, sx1, sy1, sz1)   // remote rifle crack at the muzzle
+                let edx = ex2 - px
+                let edy = ey2 - eye
+                let edz = ez2 - pz
+                let edd = edx * edx + edy * edy + edz * edz
+                if edd < hd_best { hd_best = edd; hd_ox = sx1; hd_oz = sz1; hd_found = 1 }
             }
             sci = sci + 1
         }
+        // If I was hit this frame and an incoming shot reached me, point the damage vignette at its
+        // origin (same screen-angle convention as the local-hit indicator). Else leave dmg_dir as-is
+        // (e.g. explosion damage has no tracer - the red flash still plays, just not redirected).
+        if g_hurt == 1 and hd_found == 1 {
+            let rcx = hd_ox - px
+            let rcz = hd_oz - pz
+            let fwd_c = rcx * sin(yaw) + rcz * (0.0 - cos(yaw))
+            let rgt_c = rcx * cos(yaw) + rcz * sin(yaw)
+            dmg_dir = atan2(rgt_c, fwd_c)
+        }
+        g_hurt = 0
         net_shots_clear()
         // REMOTE explosions: the host announces every detonation (its own + each client's re-simmed
         // rocket/grenade) so EVERY machine renders the flash + sparks + boom sound for blasts it
@@ -4781,7 +4846,19 @@ fn main() {
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
-        draw_text(12, 12, "BUILD NETV2-02 BOOM+AUDIO", 18, 65280)
+        draw_text(12, 12, "BUILD NETV2-04 HITFIX+VIG", 18, 65280)
+        // Host hit-resolution diagnostics (tiny, top-left under the stamp): how the host's own
+        // shots at players resolved. lc = lag-comp hits, fb = local-ray fallback hits (the fix for
+        // "can't damage players"), dx = shots that found a victim already DEAD. If you can't damage
+        // someone and lc+fb both stay flat while you're clearly on target, that's the smoking gun.
+        if net_mode == 1 {
+            draw_text(12, 34, "hit lc", 14, 8947848)
+            draw_int(58, 34, dbg_lc, 14, 8947848)
+            draw_text(86, 34, "fb", 14, 8947848)
+            draw_int(108, 34, dbg_fb, 14, 8947848)
+            draw_text(136, 34, "dx", 14, 8947848)
+            draw_int(158, 34, dbg_dead, 14, 8947848)
+        }
         // GUEST join/disconnect banner: "joining" until the host inits our character, and a clear
         // "disconnected" -> back to the menu if the host vanishes (net_connected goes false).
         if net_mode == 2 {
