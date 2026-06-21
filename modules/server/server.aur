@@ -73,6 +73,7 @@ fn sync_clients(w: world::World) -> i64 {
                 w.cresp_seen[slot] = net_player_meta(pid, 3) as i64
                 w.cheal_seen[slot] = net_player_meta(pid, 5) as i64
                 w.cmelee_seen[slot] = net_player_meta(pid, 17) as i64
+                w.ammo_evt[slot] = 0
             }
             // RESPAWN HANDSHAKE: a client signals a respawn by ++ its meta 3; the host owns the
             // result (restore full hp, re-arm the death sweep) and echoes the counter back as meta 9
@@ -114,9 +115,17 @@ fn sync_clients(w: world::World) -> i64 {
             let melc = net_player_meta(pid, 17) as i64
             if melc != w.cmelee_seen[slot] and w.actors[slot].hp > 0.0 {
                 w.cmelee_seen[slot] = melc
+                // The SAME full-3D look forward the client swings with (yaw from the sim state, pitch
+                // shared via meta 19): cos(p)*sin(y), sin(p), -cos(p)*cos(y). So the host's arc matches
+                // the client's prediction exactly instead of a cruder yaw-only cone.
                 let myaw = net_player_yaw(pid)
-                let mfx = sin(myaw)
-                let mfz = 0.0 - cos(myaw)
+                let mpitch = net_player_meta(pid, 19)
+                let mcp = cos(mpitch)
+                let mfx = mcp * sin(myaw)
+                let mfy = sin(mpitch)
+                let mfz = 0.0 - mcp * cos(myaw)
+                let mhx = sin(myaw)         // horizontal-only direction for the knockback shove
+                let mhz = 0.0 - cos(myaw)
                 let mpx = net_player_x(pid)
                 let mpy = net_player_y(pid) + 0.7
                 let mpz = net_player_z(pid)
@@ -129,15 +138,15 @@ fn sync_clients(w: world::World) -> i64 {
                         let tdz = phys3d_z(w.actors[mt].hdl) - mpz
                         let tdd = sqrt(tdx * tdx + tdy * tdy + tdz * tdz)
                         if tdd > 0.001 and tdd < 2.8 {
-                            if (tdx * mfx + tdz * mfz) / tdd > 0.5 {
+                            if (tdx * mfx + tdy * mfy + tdz * mfz) / tdd > 0.5 {
                                 // LOS = WALLS only (phys3d_raycast_world skips characters): a wall closer
                                 // than the target blocks the swing; our own + the target's capsule don't.
                                 let mlos = phys3d_raycast_world(w.actors[slot].hdl, mpx, mpy, mpz, tdx / tdd, tdy / tdd, tdz / tdd, tdd)
                                 if mlos < 0 {
                                     w.actors[mt].hp = w.actors[mt].hp - 75.0   // BYPASS shield -> straight to hp
-                                    w.brains[mt].kx = mfx * 14.0
+                                    w.brains[mt].kx = mhx * 14.0
                                     w.brains[mt].ky = 6.0
-                                    w.brains[mt].kz = mfz * 14.0
+                                    w.brains[mt].kz = mhz * 14.0
                                     w.last_hit[mt] = slot
                                 }
                             }
@@ -159,6 +168,7 @@ fn sync_clients(w: world::World) -> i64 {
             net_set_player_meta(pid, 4, (w.actors[slot].cells) as f64)   // carried shield cells (pop-able)
             net_set_player_meta(pid, 6, (w.akills[slot]) as f64)
             net_set_player_meta(pid, 7, (w.adeaths[slot]) as f64)
+            net_set_player_meta(pid, 18, (w.ammo_evt[slot]) as f64)   // authoritative ammo-pickup count
             slot = slot + 1
         }
         pj = pj + 1
@@ -311,6 +321,9 @@ fn pickups_tick(w: world::World, dt: f64) -> i64 {
                                 w.actors[a].res[0] = w.actors[a].res[0] + 30   // a fresh rifle reserve
                                 w.actors[a].res[1] = w.actors[a].res[1] + 2    // + a couple of rockets
                                 w.pkcd[k] = pk_respawn
+                                // CLIENT slots (6..8): ++ the authoritative ammo-pickup counter so the
+                                // client confirms the pickup (refill + sound), server-owned not predicted-and-lost.
+                                if a >= 6 { w.ammo_evt[a] = w.ammo_evt[a] + 1 }
                             }
                         }
                     }
@@ -772,7 +785,7 @@ fn projectiles_tick(w: world::World, dt: f64) -> i64 {
             w.prjlife[prj] = p[6]
             if phit == 1 {
                 let src = w.prjsrc[prj] as i64
-                net_push_boom(1000 + src, p[0], p[1], p[2], 1.1)   // everyone (incl. the firer) renders the blast
+                net_push_boom(slot_netid(w, src), p[0], p[1], p[2], 1.1)   // firer's id -> the firer skips it (it predicted the blast)
                 explode(w, p[0], p[1], p[2], 1.1, src)
                 w.prjlife[prj] = 0.0
             }

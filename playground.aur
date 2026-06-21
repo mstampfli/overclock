@@ -746,6 +746,7 @@ fn main() {
     let mut g_hp_prev = 100.0    // last reconciled hp (for the incoming-damage hurt flash)
     let mut g_pk_cells = 0       // last cells - rises = shield-cell pickup -> play the sound (host==guest)
     let mut g_pk_res = 60        // last reserve of the equipped weapon - rises = ammo pickup -> sound
+    let mut g_ammo_applied = 0   // ammo pickups we've applied (predicted + server-confirmed); reconciled to meta 18
     let mut g_hit_seq = 0        // last authoritative hit-confirmation seq seen (server-confirmed hitmarker)
     let mut g_hurt = 0           // guest took reconciled damage THIS frame -> resolve the hit
                                  // direction from the incoming shot in the shot-drain loop below
@@ -1696,9 +1697,19 @@ fn main() {
                 if cells_now > g_pk_cells and dead == false and prev_dead == false { play_sound(14, 90, 0) }   // shield cell
                 g_pk_cells = cells_now
                 actors[pl_i].cells = cells_now
-                let res_now = actors[pl_i].res[0] + actors[pl_i].res[1]   // total reserve (weapon-switch safe)
-                if res_now > g_pk_res and dead == false and prev_dead == false { play_sound(10, 80, 0) }   // ammo box
-                g_pk_res = res_now
+                // SERVER-CONFIRMED ammo pickups: the host owns collection and ++ meta 18. We PREDICT a
+                // pickup locally (refill + sound in the pickup loop), and reconcile to the host's count
+                // here - if it collected one we didn't predict (its count ran ahead), top up the equipped
+                // reserve + play the sound so a pickup is never silently missed. This is why ammo was
+                // silent on a guest: the reserve is client-side, so the host had to confirm it explicitly.
+                let ammo_srv = net_player_meta(amy, 18) as i64
+                if ammo_srv > g_ammo_applied and dead == false and prev_dead == false {
+                    let cwp2 = actors[pl_i].wpn
+                    actors[pl_i].res[cwp2] = actors[pl_i].res[cwp2] + res_refill[cwp2] * (ammo_srv - g_ammo_applied)
+                    if actors[pl_i].res[cwp2] > res_max[cwp2] { actors[pl_i].res[cwp2] = res_max[cwp2] }
+                    g_ammo_applied = ammo_srv
+                    play_sound(10, 80, 0)
+                }
             }
         }
         // GUEST: consume the host's authoritative KILL events. This only DISPLAYS them (kill
@@ -2053,6 +2064,7 @@ fn main() {
         let fx = cp * sin(yaw)
         let fy = sin(eff_pitch)
         let fz = 0.0 - cp * cos(yaw)
+        net_set_meta(19, eff_pitch)   // share our look pitch so the host's katana arc matches ours exactly (full 3D)
         r3d_camera_roll(roll)
         // Landing shake: jitter the camera POSITION (eye + target by the same offset,
         // so the view shakes but the aim direction is unchanged). Damped wobble.
@@ -2088,8 +2100,8 @@ fn main() {
             // inside the ~120-deg swing arc, with a line-of-sight check so walls block it.
             // HOST: the slash is authoritative, so it also cleaves remote clients (slots past pl_i),
             // not just bots - a guest in katana range actually takes the hit (synced via their meta).
-            let mut mcap = bot_n
-            if net_mode == 1 { mcap = nactors }
+            let mut mcap = nactors   // PREDICT the slash on EVERY foe (bots AND remote players), so the
+                                     // hitmarker shows on humans too - the host applies the real damage
             let mut mvk = 0
             while mvk < mcap {
                 if mvk != pl_i and actors[mvk].hp > 0.0 {
@@ -3044,25 +3056,22 @@ fn main() {
                             net_push_shot(shpid, ox, oy, oz, tex, tey, tez, wp)
                         }
                     } else {
-                        // Practice/host predict the rocket locally. A NETWORKED client (net_mode 2) does
-                        // NOT spawn its own - the host flies the authoritative travel-time rocket (the
-                        // same sim::rocket_step) and we render its fx copy, so there is ONE rocket sim and
-                        // nothing to diverge. (This also fixes the host instant-detonating a client rocket.)
-                        if net_mode != 2 {
-                            prjx[prjcur] = ox; prjy[prjcur] = oy; prjz[prjcur] = oz
-                            prjvx[prjcur] = ax * proj_speed; prjvy[prjcur] = ay * proj_speed; prjvz[prjcur] = az * proj_speed
-                            prjlife[prjcur] = proj_life
-                            let mut psrc = 1.0
-                            if mine == 1 { psrc = 0.0 }
-                            prjsrc[prjcur] = psrc
-                            prjcur = prjcur + 1
-                            if prjcur >= proj_n { prjcur = 0 }
-                        }
+                        // PREDICT the rocket locally on EVERY machine (instant travel-time feel, just like
+                        // before the refactor). A guest ALSO tells the host (intent), which flies its own
+                        // authoritative travel-time rocket with the same sim::rocket_step; we suppress the
+                        // host's fx copy of OUR rocket below so we see one - our prediction - not two.
+                        prjx[prjcur] = ox; prjy[prjcur] = oy; prjz[prjcur] = oz
+                        prjvx[prjcur] = ax * proj_speed; prjvy[prjcur] = ay * proj_speed; prjvz[prjcur] = az * proj_speed
+                        prjlife[prjcur] = proj_life
+                        let mut psrc = 1.0
+                        if mine == 1 { psrc = 0.0 }
+                        prjsrc[prjcur] = psrc
+                        prjcur = prjcur + 1
+                        if prjcur >= proj_n { prjcur = 0 }
                         let mut lg = 45
                         if mine == 1 { lg = 55 }
                         play_sound_at(0 - 8, 70, lg, ox, oy, oz)
-                        // GUEST: send the rocket LAUNCH INTENT (origin + aim direction). The host flies
-                        // the authoritative travel-time rocket from it; we render that, not a local copy.
+                        // GUEST: send the rocket LAUNCH INTENT so the host applies authoritative damage.
                         if mine == 1 and net_mode == 2 { net_projectile_intent(0, ox, oy, oz, ax, ay, az) }
                     }
                     actors[ci].fcd = fire_w[wp]
@@ -3085,8 +3094,9 @@ fn main() {
                             } else { if pktype[fp] < 1.5 {
                                 if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; pkcd[fp] = pk_respawn; if mine == 1 and net_mode != 2 { play_sound(14, 90, 0) } }
                             } else {
-                                // Ammo: refill the EQUIPPED weapon's reserve (same rule for all).
-                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } pkcd[fp] = pk_respawn; if mine == 1 and net_mode != 2 { play_sound(10, 80, 0) } }
+                                // Ammo: refill the EQUIPPED weapon's reserve. On a guest this is PREDICTION;
+                                // we count it (g_ammo_applied) so the server-confirm reconcile won't double it.
+                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } pkcd[fp] = pk_respawn; if mine == 1 { play_sound(10, 80, 0); if net_mode == 2 { g_ammo_applied = g_ammo_applied + 1 } } }
                             } }
                         }
                     }
@@ -3103,7 +3113,7 @@ fn main() {
                             } else { if droptype[gp] < 1.5 {
                                 if actors[ci].cells < max_cells { actors[ci].cells = actors[ci].cells + 1; droplife[gp] = 0.0; if mine == 1 and net_mode != 2 { play_sound(14, 90, 0) } }
                             } else {
-                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } droplife[gp] = 0.0; if mine == 1 and net_mode != 2 { play_sound(10, 80, 0) } }
+                                if actors[ci].res[cwp] < res_max[cwp] { actors[ci].res[cwp] = actors[ci].res[cwp] + res_refill[cwp]; if actors[ci].res[cwp] > res_max[cwp] { actors[ci].res[cwp] = res_max[cwp] } droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
                             } }
                         }
                     }
@@ -3513,9 +3523,25 @@ fn main() {
                 let fxz = net_fx_z(fxi)
                 let fxk = net_fx_kind(fxi)
                 let bobf = sin(etime * 3.0 + (fxi as f64)) * 0.1
+                // Suppress the host's copy of a rocket WE are already predicting (kind 3 within ~4m of one
+                // of our own live predicted rockets), like the grenade's nade_grace - so the firer sees one
+                // rocket (its prediction), not two slightly-offset ones.
+                let mut own_rkt = 0
+                if fxk > 2.5 and fxk < 3.5 {
+                    let mut pr = 0
+                    while pr < proj_n {
+                        if prjlife[pr] > 0.0 and prjsrc[pr] < 0.5 {
+                            let rdx = prjx[pr] - fxx
+                            let rdy = prjy[pr] - fxy
+                            let rdz = prjz[pr] - fxz
+                            if rdx * rdx + rdy * rdy + rdz * rdz < 16.0 { own_rkt = 1 }
+                        }
+                        pr = pr + 1
+                    }
+                }
                 // The grenade (kind 4) is suppressed while nade_grace>0 - that's OUR OWN throw, which we
                 // already render from the local prediction; without this the thrower sees two offset nades.
-                if fxk < 0.5 { r3d_draw(heal_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 1.5 { r3d_draw(shield_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 2.5 { r3d_draw(ammo_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 3.5 { r3d_draw(proj_vis, fxx, fxy, fxz, 0.0, 0.0, 0.0, 1.0) } else { if nade_grace <= 0.0 { r3d_draw(nade_vis, fxx, fxy, fxz, etime * 7.0, etime * 5.0, 0.0, 1.0) } } } } }
+                if fxk < 0.5 { r3d_draw(heal_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 1.5 { r3d_draw(shield_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 2.5 { r3d_draw(ammo_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 3.5 { if own_rkt == 0 { r3d_draw(proj_vis, fxx, fxy, fxz, 0.0, 0.0, 0.0, 1.0) } } else { if nade_grace <= 0.0 { r3d_draw(nade_vis, fxx, fxy, fxz, etime * 7.0, etime * 5.0, 0.0, 1.0) } } } } }
                 fxi = fxi + 1
             }
         }
