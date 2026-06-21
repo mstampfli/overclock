@@ -1,0 +1,42 @@
+// Prove the dedicated-server architecture end-to-end IN ONE PROCESS:
+// a SERVER on its own thread (net_serve -> net_host + authoritative re-sim + broadcast) and a
+// CLIENT on the main thread (net_join + predict + reconcile), talking over UDP loopback.
+// The authoritative tick just falls under gravity; if the client's own Y drops, the round-trip
+// (client input -> server re-sim -> snapshot -> client reconcile) works.
+
+fn srvtick(state: i64, input: i64) -> i64 {
+    f32_store(state, 1, f32_load(state, 1) - 0.2)   // gravity each tick
+    0
+}
+
+fn main() {
+    net_serve(|| {
+        net_host(45200)
+        net_dedicated()   // no phantom host player: this machine only simulates + broadcasts
+        net_sim(|state, input| { srvtick(state, input) }, 7, 4)
+        net_spawn_at(0.0, 20.0, 0.0)
+        let mut t = 0
+        while t < 400 {
+            net_update(0.016)   // receive inputs, re-sim clients, broadcast
+            sleep_ms(8)
+            t = t + 1
+        }
+        0
+    })
+    sleep_ms(120)   // let the server bind
+    net_join("127.0.0.1", 45200)
+    net_sim(|state, input| { srvtick(state, input) }, 7, 4)
+    let input = [0.0, 0.0, 0.0, 0.0]
+    let mut t = 0
+    while t < 80 {
+        net_send_input(input)
+        net_update(0.016)
+        t = t + 1
+        sleep_ms(12)
+    }
+    let myid = net_my_id()
+    println("client my_id      = " + str(myid))
+    println("client player cnt = " + str(net_player_count()) + "  (expect 1: just me)")
+    println("client connected  = " + str(net_connected()) + "  (expect 1)")
+    println("client my Y       = " + str((net_player_y(myid) * 10.0) as i64) + " /10  (started 200/10, expect FALLEN)")
+}
