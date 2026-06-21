@@ -620,7 +620,7 @@ fn explode(w: world::World, dx: f64, dy: f64, dz: f64, gi: f64, src_slot: i64) -
         let cdz = phys3d_z(ch) - dz
         let cdd = sqrt(cdx * cdx + cdy * cdy + cdz * cdz)
         if cdd < krad and cdd > 0.01 {
-            let cf = 6.0 * gi * (1.0 - cdd / krad)   // crate_kb
+            let cf = 9.0 * gi * (1.0 - cdd / krad)   // crate_kb (stronger - blasts really launch boxes)
             phys3d_apply_impulse(ch, cdx / cdd * cf, cdy / cdd * cf + cf * 0.7, cdz / cdd * cf)
         }
         ck = ck + 1

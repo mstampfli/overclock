@@ -1609,12 +1609,12 @@ fn main() {
         }
         net_send_input(blob)
         net_update(dt)
-        // CRATES are fully server-authoritative (host==guest): the server simulates them + broadcasts
-        // pose every tick; the local body is purely a puppet of the broadcast (velocity zeroed so local
-        // physics can't drift it). Instead of a HARD snap each frame (which stutters when the client
-        // renders faster than the 60Hz broadcast), smoothly LERP toward the authoritative pose - clean,
-        // no jitter. Only SNAP on a big jump (>3m: a box you never saw the host fling), so a real shove
-        // still resolves instantly. Orientation snaps (a tumble reads fine without interpolating quats).
+        // CRATES: client-side PREDICTION + smooth correction. The local box keeps its own velocity, so
+        // YOUR shot/shove/blast moves it INSTANTLY (the local impulses match the server's). Each frame
+        // we only nudge it a fraction (0.25) of the way toward the host's authoritative position - the
+        // prediction error is lerped out cleanly over a few frames, never snapped (no rubber-band/
+        // jitter). A >3m gap is a hard correction (a fling you never saw, so just rollback to it).
+        // Orientation stays host-driven (boxes don't tumble from a push, so no quat to interpolate).
         if net_mode == 2 and net_object_count() >= crate_n {
             let mut gci = 0
             while gci < crate_n {
@@ -1629,11 +1629,10 @@ fn main() {
                 if dvg > 3.0 {
                     phys3d_set_pos(cch, tcx, tcy, tcz)
                 } else {
-                    phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.4, ccy + (tcy - ccy) * 0.4, ccz + (tcz - ccz) * 0.4)
+                    phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.25, ccy + (tcy - ccy) * 0.25, ccz + (tcz - ccz) * 0.25)
                 }
                 phys3d_set_rot(cch, net_object_qx(gci), net_object_qy(gci), net_object_qz(gci), net_object_qw(gci))
-                phys3d_set_vel(cch, 0.0, 0.0, 0.0)
-                phys3d_set_angvel(cch, 0.0, 0.0, 0.0)
+                phys3d_set_angvel(cch, 0.0, 0.0, 0.0)   // keep linvel (prediction); only the spin is host-driven
                 gci = gci + 1
             }
         }
