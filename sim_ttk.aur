@@ -39,7 +39,7 @@ fn main() {
         net_send_input([fwd, 0.0, yaw, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0])
         if d < 10.0 and hp > 0.0 {
             let dx = bx - ex
-            let dy = (by - 0.7) - ey   // aim at the LEGS (0.7m below body centre)
+            let dy = by - ey   // aim at body CENTRE (natural aim point) - is it read as a headshot?
             let dz = bz - ez
             let dl = sqrt(dx * dx + dy * dy + dz * dz)
             if dl > 0.1 { net_fire(ex, ey, ez, dx / dl, dy / dl, dz / dl, 0) }

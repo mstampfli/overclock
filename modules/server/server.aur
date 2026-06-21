@@ -10,6 +10,37 @@
 // Actor slot layout on the server: [0..4] bots (round.bots active), [5] unused (no local host
 // player - it's dedicated), [6..8] connected clients. bot_n = 5, nactors = 9 match the World arrays.
 
+// Choose a respawn point for client `myslot` (net id `pid`) that is as FAR as possible from the
+// nearest living enemy - so a player never comes back where it died (on the loot it dropped) or right
+// next to whoever killed it. 8 perimeter candidates, away from the central action + clear of pickups;
+// pick the one whose nearest enemy is furthest. net_respawn_client hands the choice to the engine, which
+// teleports the client there on its next respawn (server-authoritative WHERE).
+fn smart_respawn(w: world::World, myslot: i64, pid: i64) -> i64 {
+    let sx = [0.0, 44.0, 0.0, 0.0 - 44.0, 33.0, 0.0 - 33.0, 33.0, 0.0 - 33.0]
+    let sz = [44.0, 0.0, 0.0 - 44.0, 0.0, 33.0, 0.0 - 33.0, 0.0 - 33.0, 33.0]
+    let mut best = 0
+    let mut bestd = 0.0 - 1.0
+    let mut i = 0
+    while i < 8 {
+        let mut mind = 100000.0
+        let mut a = 0
+        while a < 9 {
+            let en = a != myslot and ((a < w.round.bots) or (a >= 6 and w.apid[a] != 9999)) and w.actors[a].hp > 0.0
+            if en {
+                let dxx = phys3d_x(w.actors[a].hdl) - sx[i]
+                let dzz = phys3d_z(w.actors[a].hdl) - sz[i]
+                let dd = sqrt(dxx * dxx + dzz * dzz)
+                if dd < mind { mind = dd }
+            }
+            a = a + 1
+        }
+        if mind > bestd { bestd = mind; best = i }
+        i = i + 1
+    }
+    net_respawn_client(pid, sx[best], 1.1, sz[best])
+    0
+}
+
 // Keep a physics body per connected client, positioned at its replicated net position, so bots can
 // hitscan-hit it and the host owns its hp. Maps each client's net id to a slot (6..8), inits hp on
 // first sight, and replicates the host-owned hp/shield back to the client (it predicts + reconciles).
@@ -40,8 +71,17 @@ fn sync_clients(w: world::World) -> i64 {
             // RESPAWN HANDSHAKE: a client signals a respawn by ++ its meta 3; the host owns the
             // result (restore full hp, re-arm the death sweep) and echoes the counter back as meta 9
             // so the client knows the respawn really landed (instead of trusting a stale hp).
+            // While this client is DEAD, the server keeps choosing its respawn point FAR from everyone
+            // (refreshed each frame so it's current when it comes back) - it never respawns where it died
+            // on the loot it dropped. It also counts down the server's OWN respawn timer (armed at death
+            // in deaths_tick), so the server - not the client - owns WHEN you come back.
+            if w.actors[slot].hp <= 0.0 {
+                smart_respawn(w, slot, pid)
+                if w.brains[slot].resp > 0.0 { w.brains[slot].resp = w.brains[slot].resp - 0.016 }
+            }
+            // Respawn: honour the client's request (++meta 3) ONLY after the server timer elapses.
             let rc = net_player_meta(pid, 3) as i64
-            if rc != w.cresp_seen[slot] {
+            if rc != w.cresp_seen[slot] and w.brains[slot].resp <= 0.0 {
                 w.cresp_seen[slot] = rc
                 w.actors[slot].hp = 100.0
                 w.actors[slot].sh = 0.0
@@ -317,9 +357,9 @@ fn deaths_tick(w: world::World) -> i64 {
             spawn_drop(w, dbx - 0.6, dbz, 2.0)
             if w.actors[dv].cells > 0 { spawn_drop(w, dbx + 0.6, dbz, 1.0) }
             w.actors[dv].cells = 0
-            if dv < w.round.bots {
-                w.brains[dv].resp = 3.0   // enemy_respawn; the bot pops back via bots_tick
-            }
+            // Respawn timer (3s): bots pop back via bots_tick, clients via sync_clients - the SERVER
+            // owns WHEN every actor respawns. brains[6..8].resp is unused by bots so it's free for clients.
+            w.brains[dv].resp = 3.0
             let kk = w.last_hit[dv]
             if kk >= 0 and kk != dv {
                 if w.round.over == 0 { w.akills[kk] = w.akills[kk] + 1 }
