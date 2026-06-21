@@ -1,0 +1,39 @@
+// Static-spot pickups (simulate-to-verify): place three actors each standing on a different fixed
+// pickup spot (health / shield / ammo), run one pickups_tick; each must claim its spot (full heal /
+// +1 cell / +reserve), the spot goes on cooldown, broadcast_fx then hides the 3 claimed spots, and
+// the health spot must cycle back to available after its respawn timer (the full-hp actor won't re-claim).
+fn main() {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 60.0, 0.5, 60.0, 0)
+    net_host(45132)   // a session so broadcast_fx's net_set_fx has somewhere to go
+    let mut w = world::new_world()
+    w.round.bots = 3
+    // actor 0 stands on the HEALTH spot (idx 1: -45,45) hurt
+    w.actors[0].hdl = phys3d_add_character(0.0 - 45.0, 0.9, 45.0, 0.6, 0.3)
+    w.actors[0].hp = 40.0
+    // actor 1 stands on a SHIELD spot (idx 5: 40,40) with no cells
+    w.actors[1].hdl = phys3d_add_character(40.0, 0.9, 40.0, 0.6, 0.3)
+    w.actors[1].hp = 100.0
+    w.actors[1].cells = 0
+    // actor 2 stands on an AMMO spot (idx 3: 40,-40) low on reserve
+    w.actors[2].hdl = phys3d_add_character(40.0, 0.9, 0.0 - 40.0, 0.6, 0.3)
+    w.actors[2].hp = 100.0
+    w.actors[2].res[0] = 10
+    w.actors[2].res[1] = 0
+    // one tick: each actor claims the spot it is standing on
+    server::pickups_tick(w, 0.016)
+    let healed = (w.actors[0].hp > 99.9) as i64
+    let shielded = (w.actors[1].cells == 1) as i64
+    let ammoed = (w.actors[2].res[0] == 40 and w.actors[2].res[1] == 2) as i64
+    let on_cd = (w.pkcd[1] > 0.0 and w.pkcd[5] > 0.0 and w.pkcd[3] > 0.0) as i64
+    // available spots broadcast over fx - the 3 just-claimed ones are now hidden (8 of 11 left)
+    server::broadcast_fx(w)
+    let avail = net_fx_count()
+    // respawn: the HEALTH actor is now full hp so it never re-claims; the spot must cycle back to 0
+    let mut t = 0
+    while t < 300 { server::pickups_tick(w, 0.016); t = t + 1 }
+    let respawned = (w.pkcd[1] <= 0.0) as i64
+    println("healed=" + str(healed) + " shielded=" + str(shielded) + " ammoed=" + str(ammoed) + " on_cd=" + str(on_cd))
+    println("fx available pickups right after 3 claims = " + str(avail) + " (expect 8)")
+    println("RESULT pickups-collect-and-respawn=" + str((healed == 1 and shielded == 1 and ammoed == 1 and on_cd == 1 and avail == 8 and respawned == 1) as i64) + " (expect 1)")
+}

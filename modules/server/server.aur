@@ -176,8 +176,55 @@ fn loot_tick(w: world::World, dt: f64) -> i64 {
     0
 }
 
-// Broadcast the live transient visuals over the fx channel: loot drops (kind = droptype 0/1/2) and
-// in-flight rockets (kind 3), so clients render the drops AND see bot rockets fly in (dodge them).
+// Static-spot pickups (health / shield cell / ammo) that respawn on a timer. First age every spot's
+// respawn cooldown back toward 0 (available), then let any LIVING actor (bot or client) standing on
+// an available spot claim it: full heal / +1 shield cell / +reserve ammo, which puts that spot on a
+// fresh cooldown. The server owns this for everyone; clients render the available spots from the fx
+// channel and never collect locally. Same caps as the death-drop loot (hp 100, cells 4, +30 ammo).
+fn pickups_tick(w: world::World, dt: f64) -> i64 {
+    let pk_respawn = 4.0   // fast respawn so ammo/heals stay available for everyone in the FFA
+    let mut p = 0
+    while p < 11 {
+        if w.pkcd[p] > 0.0 { w.pkcd[p] = w.pkcd[p] - dt; if w.pkcd[p] < 0.0 { w.pkcd[p] = 0.0 } }
+        p = p + 1
+    }
+    let mut a = 0
+    while a < 9 {
+        let alive = ((a < w.round.bots) or (a >= 6 and w.apid[a] != 9999)) and w.actors[a].hp > 0.0
+        if alive {
+            let ax = phys3d_x(w.actors[a].hdl)
+            let az = phys3d_z(w.actors[a].hdl)
+            let mut k = 0
+            while k < 11 {
+                if w.pkcd[k] <= 0.0 {
+                    let dx = ax - w.pkx[k]
+                    let dz = az - w.pkz[k]
+                    if sqrt(dx * dx + dz * dz) < 1.4 {
+                        let ty = w.pktype[k]
+                        if ty < 0.5 {
+                            if w.actors[a].hp < 100.0 { w.actors[a].hp = 100.0; w.pkcd[k] = pk_respawn }
+                        } else {
+                            if ty < 1.5 {
+                                if w.actors[a].cells < 4 { w.actors[a].cells = w.actors[a].cells + 1; w.pkcd[k] = pk_respawn }
+                            } else {
+                                w.actors[a].res[0] = w.actors[a].res[0] + 30   // a fresh rifle reserve
+                                w.actors[a].res[1] = w.actors[a].res[1] + 2    // + a couple of rockets
+                                w.pkcd[k] = pk_respawn
+                            }
+                        }
+                    }
+                }
+                k = k + 1
+            }
+        }
+        a = a + 1
+    }
+    0
+}
+
+// Broadcast the live transient visuals over the fx channel: loot drops (kind = droptype 0/1/2),
+// in-flight rockets (kind 3), and the available fixed-spot pickups (kind = pktype 0/1/2), so clients
+// render the drops, see bot rockets fly in (dodge them), AND see which static pickups are up.
 fn broadcast_fx(w: world::World) -> i64 {
     let mut n = 0
     let mut i = 0
@@ -189,6 +236,11 @@ fn broadcast_fx(w: world::World) -> i64 {
     while pj < 12 {
         if w.prjlife[pj] > 0.0 { n = n + 1 }
         pj = pj + 1
+    }
+    let mut pc = 0
+    while pc < 11 {
+        if w.pkcd[pc] <= 0.0 { n = n + 1 }
+        pc = pc + 1
     }
     net_set_fx_count(n)
     let mut wi = 0
@@ -207,6 +259,14 @@ fn broadcast_fx(w: world::World) -> i64 {
             wi = wi + 1
         }
         p2 = p2 + 1
+    }
+    let mut pk2 = 0
+    while pk2 < 11 {
+        if w.pkcd[pk2] <= 0.0 {
+            net_set_fx(wi, w.pkx[pk2], w.pky[pk2], w.pkz[pk2], w.pktype[pk2])   // available fixed pickup
+            wi = wi + 1
+        }
+        pk2 = pk2 + 1
     }
     0
 }
@@ -803,6 +863,7 @@ fn server_main() -> i64 {
         projectiles_tick(w, 0.016)
         deaths_tick(w)
         loot_tick(w, 0.016)
+        pickups_tick(w, 0.016)
         round_tick(w, 0.016)
         broadcast_bots(w)
         broadcast_fx(w)

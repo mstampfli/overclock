@@ -3397,9 +3397,11 @@ fn main() {
             r3d_draw(crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), 0.0, 0.0, 0.0, 1.0)
             cd2 = cd2 + 1
         }
-        // Pickups: available fixed spots (green heal / blue shield / yellow ammo), bobbing.
+        // Pickups: available fixed spots (green heal / blue shield / yellow ammo), bobbing. A guest
+        // (host==guest: net_mode 2) owns NO local pickup state - it renders the server's authoritative
+        // available spots from the fx channel just below, same as drops. Only host/practice render here.
         let mut pkd = 0
-        while pkd < pk_n {
+        while pkd < pk_n and net_mode != 2 {
             if pkcd[pkd] <= 0.0 {
                 let bob = sin(etime * 2.0 + (pkd as f64)) * 0.12
                 if pktype[pkd] < 0.5 {

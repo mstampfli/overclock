@@ -11,3 +11,7 @@ overclock_settings.txt
 overclock-win64.zip
 overclock.exe
 *.zip
+
+# stray no-extension build binaries
+overclock_floatfix
+overclock-floatfix

@@ -78,8 +78,14 @@ struct World {
     kr_mark: [f64; 9],
     akills: [i64; 9],
     adeaths: [i64; 9],
-    // Fixed-pickup respawn cooldowns (0 = available); the pickup positions/types are static config.
+    // Fixed-pickup respawn cooldowns (0 = available) + the static position/type config for each of
+    // the 11 spots (pktype 0 = health / 1 = shield cell / 2 = ammo). Clients render the available
+    // spots (pkcd<=0) from the fx channel; the server owns collection + the respawn timer.
     pkcd: [f64; 11],
+    pkx: [f64; 11],
+    pky: [f64; 11],
+    pkz: [f64; 11],
+    pktype: [f64; 11],
     // Loot drops (health / shield / ammo) spawned at death sites: position, type, life remaining.
     dropx: [f64; 6],
     dropy: [f64; 6],
@@ -131,6 +137,10 @@ fn new_world() -> World {
         round: Round { kills: 0, deaths: 0, timer: 120.0, over: 0, over_t: 0.0, won: 0, target: 15, len: 120.0, bots: 5 },
         last_hit: [0 - 1; 9], death_done: [0; 9], kr_oc: [0.0; 9], kr_mark: [0.0; 9], akills: [0; 9], adeaths: [0; 9],
         pkcd: [0.0; 11],
+        pkx: [0.0, 0.0 - 45.0, 38.0, 40.0, 0.0 - 40.0, 40.0, 0.0 - 40.0, 0.0, 0.0, 20.0, 0.0 - 20.0],
+        pky: [10.3, 0.5, 10.3, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+        pkz: [0.0, 45.0, 0.0, 0.0 - 40.0, 0.0 - 40.0, 40.0, 40.0, 42.0, 0.0 - 42.0, 0.0, 0.0],
+        pktype: [1.0, 0.0, 1.0, 2.0, 2.0, 1.0, 1.0, 0.0, 1.0, 2.0, 0.0],
         dropx: [0.0; 6], dropy: [0.0; 6], dropz: [0.0; 6], droptype: [0.0; 6], droplife: [0.0; 6],
         prjx: [0.0; 12], prjy: [0.0; 12], prjz: [0.0; 12], prjvx: [0.0; 12], prjvy: [0.0; 12], prjvz: [0.0; 12], prjlife: [0.0; 12], prjsrc: [0.0; 12], prjcur: 0,
         grx: 0.0, gry: 0.0, grz: 0.0, grvx: 0.0, grvy: 0.0, grvz: 0.0, nfuse: 0.0, nade_live: 0, nade_cd: 0.0,
