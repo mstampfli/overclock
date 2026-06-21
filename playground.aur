@@ -824,6 +824,10 @@ fn main() {
     let mut nfuse = 0.0       // seconds until detonation
     let mut nade_cd = 0.0     // throw cooldown remaining
     let mut nade_prev = 0     // throw key last frame (edge-detect)
+    let mut nade_acc = 0.0    // fixed-timestep accumulator: step the grenade at the SAME 0.016 the
+                              // server's grenade_tick uses, so the predicted arc matches the host's exactly
+    let mut nade_grace = 0.0  // >0 while the live server grenade (fx kind 4) is OUR OWN throw - suppress
+                              // its render so the thrower sees ONLY its predicted nade, not a second offset one
     let mut melee_cd = 0.0    // melee swing cooldown remaining
     let mut melee_prev = 0    // melee key last frame (edge-detect)
     let mut boom_t = 0.0      // explosion flash timer
@@ -2190,6 +2194,8 @@ fn main() {
             nfuse = nade_fuse
             nade_live = true
             nade_cd = nade_cooldown
+            nade_acc = 0.0
+            nade_grace = nade_fuse + 0.7   // this throw's server grenade is ours until ~fuse+RTT - hide its fx copy
             play_sound(0 - 14, 90, 0)   // soft throw pop
             // GUEST: send the LAUNCH INTENT (origin + throw velocity). The host re-simulates the
             // arc itself to decide where it detonates - we never tell it the result. We still fly
@@ -2198,46 +2204,76 @@ fn main() {
         }
         nade_prev = nkey
 
+        // Count down the "this server grenade is mine" suppression window (live flight + ~RTT tail).
+        if nade_grace > 0.0 { nade_grace = nade_grace - dt }
+
         if nade_live {
-            nfuse = nfuse - dt
-            grvy = grvy - nade_grav * dt
-            // Move with collision: cast along this frame's motion and bounce off the
-            // first surface (damped), else advance freely.
-            let grsp = sqrt(grvx * grvx + grvy * grvy + grvz * grvz)
-            if grsp > 0.001 {
-                let gdx = grvx / grsp
-                let gdy = grvy / grsp
-                let gdz = grvz / grsp
-                let gstep = grsp * dt
-                let ghb = phys3d_raycast_ex(gpc, grx, gry, grz, gdx, gdy, gdz, gstep + 0.08)
-                if ghb >= 0 {
-                    let cnx = phys3d_hit_nx()
-                    let cny = phys3d_hit_ny()
-                    let cnz = phys3d_hit_nz()
-                    grx = phys3d_hit_x() + cnx * 0.06
-                    gry = phys3d_hit_y() + cny * 0.06
-                    grz = phys3d_hit_z() + cnz * 0.06
-                    let vdot = grvx * cnx + grvy * cny + grvz * cnz
-                    grvx = (grvx - 2.0 * vdot * cnx) * 0.45
-                    grvy = (grvy - 2.0 * vdot * cny) * 0.45
-                    grvz = (grvz - 2.0 * vdot * cnz) * 0.45
-                } else {
-                    grx = grx + grvx * dt
-                    gry = gry + grvy * dt
-                    grz = grz + grvz * dt
+            // FIXED-TIMESTEP arc: advance in the EXACT 0.016 steps the host's grenade_tick uses,
+            // accumulating real frame time, so the predicted trajectory is the same deterministic sim
+            // as the server's (identical gravity/bounce/advance) - no fps-dependent drift between them.
+            nade_acc = nade_acc + dt
+            while nade_acc >= 0.016 and nade_live {
+                nade_acc = nade_acc - 0.016
+                nfuse = nfuse - 0.016
+                grvy = grvy - nade_grav * 0.016
+                let grsp = sqrt(grvx * grvx + grvy * grvy + grvz * grvz)
+                if grsp > 0.001 {
+                    let gdx = grvx / grsp
+                    let gdy = grvy / grsp
+                    let gdz = grvz / grsp
+                    let ghb = phys3d_raycast_ex(gpc, grx, gry, grz, gdx, gdy, gdz, grsp * 0.016 + 0.08)
+                    if ghb >= 0 {
+                        let cnx = phys3d_hit_nx()
+                        let cny = phys3d_hit_ny()
+                        let cnz = phys3d_hit_nz()
+                        grx = phys3d_hit_x() + cnx * 0.06
+                        gry = phys3d_hit_y() + cny * 0.06
+                        grz = phys3d_hit_z() + cnz * 0.06
+                        let vdot = grvx * cnx + grvy * cny + grvz * cnz
+                        grvx = (grvx - 2.0 * vdot * cnx) * 0.45
+                        grvy = (grvy - 2.0 * vdot * cny) * 0.45
+                        grvz = (grvz - 2.0 * vdot * cnz) * 0.45
+                    } else {
+                        grx = grx + grvx * 0.016
+                        gry = gry + grvy * 0.016
+                        grz = grz + grvz * 0.016
+                    }
+                }
+                if nfuse <= 0.0 {
+                    nade_live = false
+                    explode = true
+                    ex_x = grx
+                    ex_y = gry
+                    ex_z = grz
+                    ex_int = nade_intensity
+                    ex_src = 0.0
+                }
+            }
+            // LAG-GRACE CORRECTION: trust the prediction within a tolerance band (the host runs ~RTT
+            // behind on the SAME arc, a sub-metre phase gap that should NOT be fought, or the throw
+            // stops feeling instant). Only a genuine large divergence - the host bounced our nade off a
+            // box that moved, say - is reconciled, and smoothly (lerp), never a hard pop.
+            if net_mode == 2 and nade_live {
+                let fxn = net_fx_count()
+                let mut fxi = 0
+                let mut sgx = 0.0
+                let mut sgy = 0.0
+                let mut sgz = 0.0
+                let mut found = 0
+                while fxi < fxn {
+                    if net_fx_kind(fxi) >= 3.5 { sgx = net_fx_x(fxi); sgy = net_fx_y(fxi); sgz = net_fx_z(fxi); found = 1 }
+                    fxi = fxi + 1
+                }
+                if found == 1 {
+                    let egx = sgx - grx
+                    let egy = sgy - gry
+                    let egz = sgz - grz
+                    let gap = sqrt(egx * egx + egy * egy + egz * egz)
+                    if gap > 4.0 { grx = grx + egx * 0.25; gry = gry + egy * 0.25; grz = grz + egz * 0.25 }
                 }
             }
             // Tumble it as it flies so it reads as a thrown object.
-            r3d_draw(nade_vis, grx, gry, grz, etime * 7.0, etime * 5.0, 0.0, 1.0)
-            if nfuse <= 0.0 {
-                nade_live = false
-                explode = true
-                ex_x = grx
-                ex_y = gry
-                ex_z = grz
-                ex_int = nade_intensity
-                ex_src = 0.0
-            }
+            if nade_live { r3d_draw(nade_vis, grx, gry, grz, etime * 7.0, etime * 5.0, 0.0, 1.0) }
         }
 
         // --- Launcher projectiles: travel-time ROCKETS (player OR bot fired). Sweep the
@@ -3477,7 +3513,9 @@ fn main() {
                 let fxz = net_fx_z(fxi)
                 let fxk = net_fx_kind(fxi)
                 let bobf = sin(etime * 3.0 + (fxi as f64)) * 0.1
-                if fxk < 0.5 { r3d_draw(heal_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 1.5 { r3d_draw(shield_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 2.5 { r3d_draw(ammo_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 3.5 { r3d_draw(proj_vis, fxx, fxy, fxz, 0.0, 0.0, 0.0, 1.0) } else { r3d_draw(nade_vis, fxx, fxy, fxz, etime * 7.0, etime * 5.0, 0.0, 1.0) } } } }
+                // The grenade (kind 4) is suppressed while nade_grace>0 - that's OUR OWN throw, which we
+                // already render from the local prediction; without this the thrower sees two offset nades.
+                if fxk < 0.5 { r3d_draw(heal_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 1.5 { r3d_draw(shield_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 2.5 { r3d_draw(ammo_vis, fxx, fxy + bobf, fxz, 0.0, etime * 3.0, 0.0, 0.7) } else { if fxk < 3.5 { r3d_draw(proj_vis, fxx, fxy, fxz, 0.0, 0.0, 0.0, 1.0) } else { if nade_grace <= 0.0 { r3d_draw(nade_vis, fxx, fxy, fxz, etime * 7.0, etime * 5.0, 0.0, 1.0) } } } } }
                 fxi = fxi + 1
             }
         }

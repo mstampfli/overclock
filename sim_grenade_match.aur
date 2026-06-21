@@ -1,0 +1,53 @@
+// Sim-to-verify the client grenade PREDICTION is the EXACT same sim as the server's grenade_tick.
+// The thrower used to see two slightly-offset grenades because the predicted arc (variable frame dt)
+// drifted from the host's fixed-0.016 arc. The client now steps at the SAME fixed 0.016 with identical
+// gravity/advance, so from the same launch the two trajectories must stay locked together step for step.
+fn main() {
+    phys3d_init(0.0, 0.0 - 20.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 50.0, 0.0, 80.0, 0.5, 80.0, 0)   // floor FAR below: the arc never bounces
+    net_host(45139)
+    let mut w = world::new_world()
+    w.actors[0].hdl = phys3d_add_character(0.0, 0.9, 60.0, 0.6, 0.3)   // thrower, off to the side
+    w.actors[0].hp = 100.0
+    // Launch identical to a client throw.
+    let lx = 0.0
+    let ly = 5.0
+    let lz = 0.0
+    let vx = 8.0
+    let vy = 3.0
+    let vz = 0.0
+    w.grx = lx; w.gry = ly; w.grz = lz
+    w.grvx = vx; w.grvy = vy; w.grvz = vz
+    w.nfuse = 1.4
+    w.nade_live = 1
+    w.nade_src = 0
+    // Parallel CLIENT-style fixed-step replica (the same math the prediction runs inline).
+    let mut mx = lx
+    let mut my = ly
+    let mut mz = lz
+    let mut mvx = vx
+    let mut mvy = vy
+    let mut mvz = vz
+    let mut mfuse = 1.4
+    let mut maxerr = 0.0
+    let mut t = 0
+    while t < 80 and w.nade_live == 1 {
+        server::grenade_tick(w, 0.016)
+        // client replica step (gravity 20, advance 0.016; floor is far so no bounce, like the host here)
+        mfuse = mfuse - 0.016
+        mvy = mvy - 20.0 * 0.016
+        mx = mx + mvx * 0.016
+        my = my + mvy * 0.016
+        mz = mz + mvz * 0.016
+        if w.nade_live == 1 {
+            let ex = w.grx - mx
+            let ey = w.gry - my
+            let ez = w.grz - mz
+            let e = sqrt(ex * ex + ey * ey + ez * ez)
+            if e > maxerr { maxerr = e }
+        }
+        t = t + 1
+    }
+    println("steps=" + str(t) + " max predicted-vs-server divergence (mm)=" + str((maxerr * 1000.0) as i64))
+    println("RESULT grenade-sims-identical=" + str((maxerr < 0.001) as i64) + " (expect 1)")
+}
