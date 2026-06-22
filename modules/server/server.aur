@@ -625,23 +625,14 @@ fn client_shots_tick(w: world::World) -> i64 {
 // later bot) rockets/grenades. The visual (boom + sparks + sound) is the client's job via the boom
 // channel; this is the authoritative DAMAGE only.
 fn explode(w: world::World, dx: f64, dy: f64, dz: f64, gi: f64, src_slot: i64) -> i64 {
-    let erad = 5.0 * gi   // nade_radius
+    let erad = 5.0 * gi   // nade_radius (damage); knockback reach is wider (8m, matching the client)
     let mut eej = 0
     while eej < 9 {
         let live = (eej < w.round.bots) or (eej >= 6 and w.apid[eej] != 9999)
         if live and w.actors[eej].hp > 0.0 {
-            let h = w.actors[eej].hdl
-            let bdx = phys3d_x(h) - dx
-            let bdy = (phys3d_y(h) + 0.5) - dy
-            let bdz = phys3d_z(h) - dz
-            let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
-            if bdd < erad {
-                let mut dmg = 150.0 * gi * (1.0 - 0.30 * bdd / erad)   // nade_dmg (a bit less than before)
-                if eej == src_slot { dmg = dmg * 0.5 }                 // your OWN blast only hurts you half
-                combat::apply_hit(w.actors, eej, dmg, 0.0, 0)          // shield-then-hp (no zoning for blasts)
-                if eej < w.round.bots { w.brains[eej].pop = 0.15 }
-                w.last_hit[eej] = src_slot
-            }
+            // Shared blast math (same fn the client predicts with). kb 0 = no shove yet
+            // (authoritative bot knockback is a pending balance call); dmg stays 150.
+            combat::blast_hit(w.actors, w.brains, w.last_hit, eej, src_slot, dx, dy, dz, 150.0 * gi, erad, 0.0, 8.0 * gi)
         }
         eej = eej + 1
     }

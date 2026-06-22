@@ -22,3 +22,33 @@ fn apply_hit(actors: [world::Actor; 9], vk: i64, base: f64, hrel: f64, bypass: i
     actors[vk].hp = actors[vk].hp - dmg
     head
 }
+
+// Apply one explosion's effect to actor `j`: linear-falloff radial damage inside `rad`
+// (the blast's own source takes half), a hit-flash, and kill-credit to `src`; then -
+// inside the wider `krad` - a knockback shove on its brain (kb = push strength along the
+// blast normal + a fixed upward pop; pass kb 0 for no shove). `dmg_base` is the full-
+// intensity centre damage. Returns 1 if the actor took damage. One source of truth for
+// grenade + rocket blasts on both the client (prediction) and the server (authority).
+fn blast_hit(actors: [world::Actor; 9], brains: [world::Brain; 9], last_hit: [i64; 9], j: i64, src: i64, cx: f64, cy: f64, cz: f64, dmg_base: f64, rad: f64, kb: f64, krad: f64) -> i64 {
+    let h = actors[j].hdl
+    let bdx = phys3d_x(h) - cx
+    let bdy = (phys3d_y(h) + 0.5) - cy
+    let bdz = phys3d_z(h) - cz
+    let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
+    let mut hit = 0
+    if bdd < rad {
+        let mut dmg = dmg_base * (1.0 - 0.30 * bdd / rad)
+        if j == src { dmg = dmg * 0.5 }
+        apply_hit(actors, j, dmg, 0.0, 0)
+        brains[j].pop = 0.15
+        last_hit[j] = src
+        hit = 1
+    }
+    if kb > 0.0 and bdd < krad and bdd > 0.01 {
+        let kf = kb * (1.0 - bdd / krad)
+        brains[j].kx = brains[j].kx + bdx / bdd * kf
+        brains[j].ky = brains[j].ky + kf * 0.7 + 12.0
+        brains[j].kz = brains[j].kz + bdz / bdd * kf
+    }
+    hit
+}
