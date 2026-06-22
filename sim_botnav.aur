@@ -1,0 +1,33 @@
+// Real-server bot NAVIGATION oracle: spin up the actual dedicated server with one bot, join as a
+// client that stands still, and verify the bot HUNTS - it closes the distance to the player. This
+// is the regression guard for moving bots onto sim_step (they must still navigate the arena).
+fn main() {
+    net_cfg_set(0, 1.0)    // one bot
+    net_cfg_set(1, 99.0)   // high kill target so the round never ends mid-test
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+    let mut t = 0
+    while t < 90 { net_send_input([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(8) }
+    // Bot's settled position; measure how far it then TRAVELS via its AI (hunt the player / seek a
+    // shield pickup - either way it must navigate the arena). Robust to whatever goal it picks.
+    let bsx = net_player_x(1000)
+    let bsz = net_player_z(1000)
+    let mut maxmove = 0.0
+    t = 0
+    while t < 300 {
+        net_send_input([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0])
+        net_update(0.016)
+        let dm = sqrt((net_player_x(1000) - bsx) * (net_player_x(1000) - bsx) + (net_player_z(1000) - bsz) * (net_player_z(1000) - bsz))
+        if dm > maxmove { maxmove = dm }
+        net_kills_clear(); net_shots_clear()
+        t = t + 1
+        sleep_ms(8)
+    }
+    println("bot travelled *10 = " + str((maxmove * 10.0) as i64) + " from its settled spot")
+    println("RESULT bot-navigates=" + str((maxmove > 8.0) as i64) + " (expect 1: bot moved >8m via its AI)")
+}

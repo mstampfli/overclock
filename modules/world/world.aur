@@ -126,7 +126,11 @@ struct World {
     cmelee_seen: [i64; 9],
     ammo_evt: [i64; 9],
     // Bot-AI clock (drives aim wobble / fire windows).
-    etime: f64
+    etime: f64,
+    // Per-bot sim state blobs + a shared input scratch (allocated by server_main via f32_blob; 0 =
+    // unset). Bots run the SAME sim::sim_step as players from these - one mover for every actor.
+    bot_state: [i64; 9],
+    bot_input: i64
 }
 
 // A zeroed/default World baseline. The caller (server_main) fills in the rest: creates the physics
@@ -149,6 +153,6 @@ fn new_world() -> World {
         grx: 0.0, gry: 0.0, grz: 0.0, grvx: 0.0, grvy: 0.0, grvz: 0.0, nfuse: 0.0, nade_live: 0, nade_cd: 0.0, nade_src: 0 - 1,
         crates: [0 - 1; 12], esx: [0.0; 5], esz: [0.0; 5],
         apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9], cmelee_seen: [0; 9], ammo_evt: [0; 9],
-        etime: 0.0
+        etime: 0.0, bot_state: [0; 9], bot_input: 0
     }
 }

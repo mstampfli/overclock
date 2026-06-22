@@ -31,7 +31,9 @@ fn main() {
         t = t + 1
     }
     let endx = phys3d_x(w.actors[0].hdl)
-    let grappled = (max_gat > 0.0 and max_kx > 15.0) as i64
+    // The grapple now feeds its leap into the sim's blast channel (input 14-16) then CLEARS kx, so
+    // detect it via the rope flag (only the grapple sets gat) + the real eastward traversal below.
+    let grappled = (max_gat > 0.0) as i64
     let traversed = (endx > startx + 8.0) as i64
     println("max_gat=" + str((max_gat * 100.0) as i64) + "/100 max_kx=" + str((max_kx * 10.0) as i64) + "/10 startx=" + str((startx * 10.0) as i64) + "/10 endx=" + str((endx * 10.0) as i64) + "/10")
     println("RESULT bot-grapple-leaps=" + str((grappled == 1 and traversed == 1) as i64) + " (expect 1)")
