@@ -2331,7 +2331,6 @@ fn main() {
             // Announce this detonation so EVERY machine renders + hears it (remotes too). The
             // host broadcasts its own blasts (source = my id); each receiver skips its own
             // (it predicted it locally). On a guest this is a no-op (only the host broadcasts).
-            if net_mode == 1 { net_push_boom(net_my_id(), ex_x, ex_y, ex_z, gi) }
             // Radial damage with linear falloff; a kill runs the usual bookkeeping.
             // HOST: explosives are authoritative - they damage remote clients too (slots past pl_i),
             // not just bots, so a guest caught in the host's blast actually takes the hit (synced via
@@ -2897,7 +2896,6 @@ fn main() {
                 // from its own sweep, so nothing is double-counted or simulated guest-side.
                 if kk >= 0 and kk != dv and net_mode != 2 {
                     if round_over == false { akills[kk] = akills[kk] + 1 }
-                    if net_mode == 1 { net_push_kill(actor_netid(kk, pl_i, apid, net_my_id()), actor_netid(dv, pl_i, apid, net_my_id())) }
                     kf_killer[kf_cur] = kk; kf_victim[kf_cur] = dv; kf_killer_pid[kf_cur] = 0 - 1; kf_victim_pid[kf_cur] = 0 - 1; kf_time[kf_cur] = 4.5; kf_cur = kf_cur + 1; if kf_cur >= 6 { kf_cur = 0 }
                     if kk == pl_i {
                         killmark = kr_mark[dv]
@@ -3098,7 +3096,6 @@ fn main() {
         }
         }
         // HOST: replicate the authoritative round clock + over-state to guests (id-0 meta 10/11).
-        if net_mode == 1 { net_set_meta(10, round_timer); net_set_meta(11, round_over as f64) }
         // WIN/LOSS (every machine, from the synced scoreboard): you win the round if you hold the
         // most kills. My kills + each rival's come from the same source the scoreboard reads, so
         // every machine shows the same result (replaces the old local kills>=target win flag).
