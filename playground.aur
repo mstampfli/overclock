@@ -391,10 +391,6 @@ fn main() {
     let vm_rifle = r3d_load_model("models/rifle.glb")
     let vm_launcher = r3d_load_model("models/launcher.glb")
     let vm_katana = r3d_load_model("models/katana.glb")
-    // TUNE-MODE preview dummy: a dedicated mannequin instance (its own anim state) so the weapon/
-    // anim preview never touches the live bot animator. DEBUG - remove with tune mode.
-    let preview_model = r3d_load_model("models/Mannequin.gltf")
-    let mut prev_playing = 0 - 1
     let rifle_scale = 0.12      // FIRST-PERSON viewmodel size (original)
     let rifle_scale_tp = 0.18   // THIRD-PERSON (on others) - 1.5x bigger so it reads at range
     let lnch_scale = 0.33       // mesh is ~1.8 units long (first-person)
@@ -422,15 +418,6 @@ fn main() {
     let mut hand_oyaw = 0.0 - 1.57
     let mut hand_opitch = 2.98
     let mut hand_oroll = 0.0 - 1.82
-    // TUNE MODE (toggle with T, practice only): freezes + pacifies + makes bots immortal so they
-    // stand as static dummies holding the weapon (can't kill you), and enables the weapon tuner.
-    // TEMPORARY debug aid - remove once the weapon offset is dialled in.
-    let mut tune_mode = 0
-    let mut t_prev = 0
-    let mut tune_weapon = 0     // which weapon the dummies show in tune mode: 0 rifle 1 launcher 2 katana
-    let mut tune_clip = 9       // which animation clip the dummies loop (cycle to preview a swing)
-    let mut tm_prev = 0         // edge: M = next weapon
-    let mut tn_prev = 0         // edge: N = next anim clip
     // Eye-tuned katana hand pose (third-person bone attach).
     let mut kat_hand_ox = 0.0 - 0.05
     let mut kat_hand_oy = 0.0 - 0.04
@@ -2462,50 +2449,6 @@ fn main() {
         let pvx_s = net_local_state(4)
         let pvz_s = net_local_state(6)
         let pspd = sqrt(pvx_s * pvx_s + pvz_s * pvz_s)
-        // TUNE MODE toggle (T, practice only): on the rising edge, respawn all bots to their
-        // anchors as standing immortal dummies; while on, they're frozen + pacified (loops below
-        // gated on tune_mode == 0) so you can walk around one + tune the weapon without dying.
-        // DISABLED: tune mode is no longer bound to any key (weapons are dialed in). The code is
-        // kept intact - to re-enable, change the line below back to `let tdn = key_down(59)`.
-        let tdn = 0
-        if tdn > 0 and t_prev == 0 and net_mode == 0 {
-            if tune_mode == 0 { tune_mode = 1 } else { tune_mode = 0 }
-            if tune_mode == 1 {
-                let mut rbz = 0
-                while rbz < bot_n {
-                    actors[rbz].hp = enemy_hp_max; actors[rbz].sh = 0.0
-                    brains[rbz].resp = 0.0; brains[rbz].vy = 0.0; death_done[rbz] = 0
-                    phys3d_set_pos(actors[rbz].hdl as i64, esx[rbz], 0.9, esz[rbz])
-                    rbz = rbz + 1
-                }
-            }
-        }
-        t_prev = tdn
-        // While tuning, keep the dummies alive (so a stray shot can't drop your reference).
-        if tune_mode == 1 { let mut tbz = 0; while tbz < bot_n { actors[tbz].hp = enemy_hp_max; tbz = tbz + 1 } }
-
-        // HOST: replicate our live bots so guests render them as ordinary remote players
-        // (their AI brain stays here; the guest has no bot concept). We push transform + hp +
-        // shield each frame; a dead/respawning bot pushes hp 0, so guests cull it uniformly.
-        if net_mode == 1 {
-            net_set_bot_count(active_bots)
-            let mut bpi = 0
-            while bpi < active_bots {
-                let bph = actors[bpi].hdl as i64
-                net_set_bot(bpi, phys3d_x(bph), phys3d_y(bph), phys3d_z(bph), brains[bpi].face)
-                net_set_bot_meta(bpi, 0, actors[bpi].hp)
-                net_set_bot_meta(bpi, 1, actors[bpi].sh)
-                net_set_bot_meta(bpi, 6, akills[bpi])   // bot kills/deaths for the synced scoreboard
-                net_set_bot_meta(bpi, 7, adeaths[bpi])
-                net_set_bot_meta(bpi, 12, actors[bpi].gax)   // bot grapple anchor + rope timer
-                net_set_bot_meta(bpi, 13, actors[bpi].gay)
-                net_set_bot_meta(bpi, 14, actors[bpi].gaz)
-                net_set_bot_meta(bpi, 15, actors[bpi].gat)
-                net_set_bot_name(bpi, bot_name(bpi))   // so guests show the bot's real name in feed/scoreboard
-                bpi = bpi + 1
-            }
-        }
-
         // ===== UNIFIED COMBAT: ONE fire path for EVERY actor - the bots AND the player.
         // Each actor's INTENT is computed here (the player from input + crosshair; a bot
         // from its AI target-pick + aim spread), then the EXACT SAME reload + ammo + shot
@@ -2517,7 +2460,7 @@ fn main() {
             // On a guest only the LOCAL player runs combat; bots are resolved host-side and
             // arrive over the wire. In tune mode, bots also don't fire (only the player) so the
             // dummies stay harmless.
-            if actors[ci].hp > 0.0 and (ci == pl_i or (net_mode != 2 and tune_mode == 0)) {
+            if actors[ci].hp > 0.0 and ci == pl_i {
                 // Reload tick (pull reserve -> mag) - identical for everyone.
                 if actors[ci].rl > 0.0 {
                     actors[ci].rl = actors[ci].rl - dt
@@ -3536,38 +3479,6 @@ fn main() {
             pi = pi + 1
         }
 
-        // ===== TUNE-MODE WEAPON/ANIM PREVIEW (debug; remove this whole block with tune mode) =====
-        // A dedicated dummy ~3m in front of you, looping the selected anim clip + holding the
-        // selected weapon, so you can judge a katana swing / launcher pose third-person. M cycles
-        // weapon (rifle/launcher/katana), N cycles the anim clip; current values shown in the HUD.
-        if tune_mode > 0 {
-            let mdn = key_down(52)
-            if mdn > 0 and tm_prev == 0 { tune_weapon = tune_weapon + 1; if tune_weapon > 2 { tune_weapon = 0 } if tune_weapon == 2 { tune_clip = kat_swing_clip } }
-            tm_prev = mdn
-            let clipn = r3d_clip_count(preview_model)   // real number of clips in the mannequin
-            let ndn = key_down(53)
-            if ndn > 0 and tn_prev == 0 { tune_clip = tune_clip + 1; if tune_clip >= clipn { tune_clip = 0 } }
-            tn_prev = ndn
-            let phx = sin(yaw)
-            let phz = 0.0 - cos(yaw)
-            let pvx = px + phx * 3.0
-            let pvz = pz + phz * 3.0
-            let pvyaw = yaw + 3.14159   // face back toward you
-            if prev_playing != tune_clip { r3d_anim_play(preview_model, tune_clip, 1, 1.0, 0.1); prev_playing = tune_clip }
-            r3d_anim_update(preview_model, dt)
-            r3d_draw(preview_model, pvx, py + actor_yoff, pvz, pvyaw + actor_yaw_off, 0.0, 0.0, actor_scale)
-            let mut pwm = vm_rifle
-            let mut pwsc = rifle_scale_tp
-            let mut pwx = hand_ox
-            let mut pwy = hand_oy
-            let mut pwz = hand_oz
-            let mut pwyaw = hand_oyaw
-            let mut pwpit = hand_opitch
-            let mut pwrol = hand_oroll
-            if tune_weapon == 1 { pwm = vm_launcher; pwsc = lnch_scale_tp }
-            if tune_weapon == 2 { pwm = vm_katana; pwsc = kat_scale_tp; pwx = kat_hand_ox; pwy = kat_hand_oy; pwz = kat_hand_oz; pwyaw = kat_hand_oyaw; pwpit = kat_hand_opitch; pwrol = kat_hand_oroll }
-            r3d_draw_on_joint(pwm, preview_model, hand_joint, pvx, py + actor_yoff, pvz, pvyaw + actor_yaw_off, 0.0, 0.0, actor_scale, pwx, pwy, pwz, pwyaw, pwpit, pwrol, pwsc)
-        }
         // ---- First-person weapon viewmodel: the equipped gun (or the katana mid-swing),
         // built from boxes and pinned to the camera. Master offset bor/bou/bof = right/down/fwd.
         if dead == false {
@@ -3850,63 +3761,6 @@ fn main() {
 
         // HUD: crosshair + a horizontal speed bar; turns gold while wallrunning.
         clear(0, 0, 0)
-        // WEAPON-ATTACH LIVE TUNER (active in tune mode): rotate/move the SELECTED weapon (M
-        // cycles rifle/launcher/katana) in the hand-bone frame, read the values, report them.
-        // Rifle+launcher share hand_o*; the katana uses kat_hand_o*.
-        if tune_mode > 0 {
-            let tstep = dt * 1.5
-            let tmove = dt * 0.5
-            if tune_weapon == 2 {
-                if key_down(2) > 0 { kat_hand_opitch = kat_hand_opitch + tstep }
-                if key_down(3) > 0 { kat_hand_opitch = kat_hand_opitch - tstep }
-                if key_down(0) > 0 { kat_hand_oyaw = kat_hand_oyaw + tstep }
-                if key_down(1) > 0 { kat_hand_oyaw = kat_hand_oyaw - tstep }
-                if key_down(54) > 0 { kat_hand_oroll = kat_hand_oroll + tstep }
-                if key_down(60) > 0 { kat_hand_oroll = kat_hand_oroll - tstep }
-                if key_down(48) > 0 { kat_hand_oz = kat_hand_oz + tmove }
-                if key_down(50) > 0 { kat_hand_oz = kat_hand_oz - tmove }
-                if key_down(49) > 0 { kat_hand_ox = kat_hand_ox - tmove }
-                if key_down(51) > 0 { kat_hand_ox = kat_hand_ox + tmove }
-                if key_down(64) > 0 { kat_hand_oy = kat_hand_oy + tmove }
-                if key_down(47) > 0 { kat_hand_oy = kat_hand_oy - tmove }
-            } else {
-                if key_down(2) > 0 { hand_opitch = hand_opitch + tstep }
-                if key_down(3) > 0 { hand_opitch = hand_opitch - tstep }
-                if key_down(0) > 0 { hand_oyaw = hand_oyaw + tstep }
-                if key_down(1) > 0 { hand_oyaw = hand_oyaw - tstep }
-                if key_down(54) > 0 { hand_oroll = hand_oroll + tstep }
-                if key_down(60) > 0 { hand_oroll = hand_oroll - tstep }
-                if key_down(48) > 0 { hand_oz = hand_oz + tmove }
-                if key_down(50) > 0 { hand_oz = hand_oz - tmove }
-                if key_down(49) > 0 { hand_ox = hand_ox - tmove }
-                if key_down(51) > 0 { hand_ox = hand_ox + tmove }
-                if key_down(64) > 0 { hand_oy = hand_oy + tmove }
-                if key_down(47) > 0 { hand_oy = hand_oy - tmove }
-            }
-            // readout reflects the SELECTED weapon's offsets
-            let mut rp = hand_opitch
-            let mut ry = hand_oyaw
-            let mut rr = hand_oroll
-            let mut rox = hand_ox
-            let mut roy = hand_oy
-            let mut roz = hand_oz
-            if tune_weapon == 2 { rp = kat_hand_opitch; ry = kat_hand_oyaw; rr = kat_hand_oroll; rox = kat_hand_ox; roy = kat_hand_oy; roz = kat_hand_oz }
-            let tc_gold = 255 * 65536 + 200 * 256 + 60
-            let tc_white = 255 * 65536 + 255 * 256 + 255
-            draw_text(20, 100, "TUNE MODE (T exit) - frozen dummies. M=weapon  N=clip", 16, tc_gold)
-            draw_text(20, 120, "arrows=pitch/yaw  O/U=roll  IJKL/YH=move", 16, tc_gold)
-            draw_text(20, 144, "weapon(0r1l2k)", 16, tc_white); draw_int(200, 144, tune_weapon, 16, tc_white)
-            draw_text(20, 164, "clip", 16, tc_white); draw_int(200, 164, tune_clip, 16, tc_white)
-            draw_text(244, 164, "of", 16, tc_white); draw_int(290, 164, r3d_clip_count(preview_model), 16, tc_white)
-            draw_text(20, 184, "pitch/yaw/roll x100", 16, tc_white)
-            draw_int(260, 184, (rp * 100.0) as i64, 16, tc_white)
-            draw_int(320, 184, (ry * 100.0) as i64, 16, tc_white)
-            draw_int(380, 184, (rr * 100.0) as i64, 16, tc_white)
-            draw_text(20, 204, "ox/oy/oz x100", 16, tc_white)
-            draw_int(200, 204, (rox * 100.0) as i64, 16, tc_white)
-            draw_int(260, 204, (roy * 100.0) as i64, 16, tc_white)
-            draw_int(320, 204, (roz * 100.0) as i64, 16, tc_white)
-        }
         // (Hit flash + low-health vignette are now the GPU damage shader, above.)
         // Crosshair: drawn from the player's customisable settings (editor in SETTINGS).
         draw_crosshair(cx, cy, ch_size, ch_gap, ch_thick, ch_dot, ch_r, ch_g, ch_b)
