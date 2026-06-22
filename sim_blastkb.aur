@@ -1,0 +1,38 @@
+// Verify SERVER-ORIGINATED player blast knockback (net_push_impulse). The client sends ZERO
+// knockback in its input (slots 14-16 are 0), fires a rocket at its own feet, and must still be
+// launched - because the SERVER detects the blast and injects the authoritative impulse into the
+// client's re-sim. Proves blasts shove players server-side (a client can't withhold it; this is
+// also what finally knocks back a remote caught in someone else's blast).
+fn main() {
+    net_cfg_set(0, 0.0)   // no bots - we only care about our own blast shoving us
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+    let mut t = 0
+    while t < 60 { net_send_input([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(8) }
+    let sx = net_local_x()
+    let sy = net_local_y()
+    let sz = net_local_z()
+    // Fire a rocket straight DOWN at our feet -> detonates ~at us -> authoritative blast shove.
+    net_projectile_intent(0, sx, sy + 0.7, sz, 0.0, 0.0 - 1.0, 0.0)
+    let mut maxd = 0.0
+    t = 0
+    while t < 130 {
+        net_send_input([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0])
+        net_update(0.016)
+        let dx = net_local_x() - sx
+        let dy = net_local_y() - sy
+        let dz = net_local_z() - sz
+        let d = sqrt(dx * dx + dy * dy + dz * dz)
+        if d > maxd { maxd = d }
+        net_kills_clear(); net_shots_clear()
+        t = t + 1
+        sleep_ms(8)
+    }
+    println("max displacement from spawn *10 = " + str((maxd * 10.0) as i64) + " (a shove launches us up/back)")
+    println("RESULT server-shoves-player-from-blast=" + str((maxd > 1.0) as i64) + " (expect 1: client moved >1m from a blast it never sent knockback for)")
+}

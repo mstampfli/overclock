@@ -630,11 +630,25 @@ fn explode(w: world::World, dx: f64, dy: f64, dz: f64, gi: f64, src_slot: i64) -
     while eej < 9 {
         let live = (eej < w.round.bots) or (eej >= 6 and w.apid[eej] != 9999)
         if live and w.actors[eej].hp > 0.0 {
-            // Shared blast math (same fn the client predicts with). Authoritative knockback
-            // at the client's intended strength (16 push / 8m reach / +12 up); dmg stays 150.
-            // Bots move from this brain shove; player/remote slots take it via their own
-            // client prediction + the server's input re-sim (their brain isn't their mover).
+            // Shared blast math (same fn the client predicts with). Bots move from this brain
+            // shove (16 push / 8m reach); damage is 150 and authoritative for everyone.
             combat::blast_hit(w.actors, w.brains, w.last_hit, eej, src_slot, dx, dy, dz, 150.0 * gi, erad, 16.0 * gi, 8.0 * gi)
+            // CLIENT slots move via the SIM, not the brain - so push an AUTHORITATIVE impulse the
+            // engine injects into their re-sim (input 14-16, the same blast_i the client predicts).
+            // Server-originated: a client can't withhold its shove, and a remote caught in someone
+            // else's blast gets knocked back too (the client's boom handler never self-knocked).
+            if eej >= 6 {
+                let h = w.actors[eej].hdl
+                let pbx = phys3d_x(h) - dx
+                let pby = phys3d_y(h) - dy
+                let pbz = phys3d_z(h) - dz
+                let pbd = sqrt(pbx * pbx + pby * pby + pbz * pbz)
+                let pkrad = 8.0 * gi   // nade_kb_radius
+                if pbd < pkrad and pbd > 0.01 {
+                    let pf = 14.0 * gi * (1.0 - pbd / pkrad)   // player_kb = 14
+                    net_push_impulse(w.apid[eej], pbx / pbd * pf, 5.0 + pf * 0.5, pbz / pbd * pf)
+                }
+            }
         }
         eej = eej + 1
     }
@@ -1099,6 +1113,8 @@ fn server_main() -> i64 {
     net_max_clients(3)             // admit up to max_remote human clients
     net_spawn_at(0.0, 0.9, 45.0)   // the real arena spawn (matches the game)
     net_spawn_input_slot(17)       // input[17..19] = respawn point -> SERVER overwrites it (authoritative)
+    net_impulse_input_slot(14)     // input[14..16] = blast knockback -> SERVER originates it (a client
+                                   // can't withhold its own shove; remotes get blasted by every blast)
     net_sim(|state, input| {
         sim::sim_step(state, input, sim::default_cfg())
         0
