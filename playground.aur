@@ -1466,9 +1466,6 @@ fn main() {
         let pesc = key_down(20)
         if pesc > 0 and esc_prev == 0 { if paused { paused = false } else { paused = true } }
         esc_prev = pesc
-        let mut frozen = false
-        if paused and net_mode == 0 { frozen = true }
-        if frozen { dt = 0.0 }
         if paused and was_paused == false { grab_mouse(0); input_suppress(1); r3d_blur(8.0) }
         if paused == false and was_paused { grab_mouse(1); input_suppress(0); r3d_blur(0.0) }
         was_paused = paused
@@ -1703,18 +1700,6 @@ fn main() {
         // the host. So we run/own NO local bots (active_bots = 0) and never park them; the
         // host is the only place the AI brain lives.
         if net_mode == 2 { active_bots = 0 }
-        // Re-sync the live bot population to active_bots (host/practice only).
-        if net_mode != 2 {
-            let mut bsy = 0
-            while bsy < bot_n {
-                if bsy >= active_bots {
-                    if brains[bsy].resp < 500000.0 { actors[bsy].hp = 0.0; brains[bsy].resp = 1000000.0 }
-                } else {
-                    if brains[bsy].resp >= 500000.0 { brains[bsy].resp = 0.5 }   // un-park: respawn shortly
-                }
-                bsy = bsy + 1
-            }
-        }
         // Bounced by a full lobby: drop back to the menu with a clear message.
         if net_rejected() > 0 {
             lobby_full = true
@@ -2468,58 +2453,6 @@ fn main() {
                         } else {
                             if mine == 1 { hxp = ox + ax * 120.0; hyp = oy + ay * 120.0; hzp = oz + az * 120.0; hit_t = 0.05 }
                         }
-                        // HOST authoritative hit via LAG-COMP. The local raycast above hits remote
-                        // render-actors whose colliders lag ~1 frame (set via phys3d_set_pos, only
-                        // synced on the next phys3d_step), so a fast-moving guest is missed (~90%).
-                        // net_fire ran the lag-comp raycast against the AUTHORITATIVE positions at
-                        // the shot tick - exactly where we render them - so use net_hit_player as the
-                        // real victim. Bots are in lag-comp too, so MP hits are uniform. The local
-                        // raycast (gated off above for mine==1+net) stays only for tracer/particles.
-                        if mine == 1 and net_mode == 1 {
-                            let lh = net_hit_player()
-                            let mut avk = 0 - 1
-                            let mut ahit_y = net_hit_y()
-                            if lh >= 1000 { let abi = lh - 1000; if abi < bot_n { avk = abi } }
-                            else { if lh >= 1 and lh < 1000 { let mut acc = bot_n + 1; while acc < nactors { if apid[acc] == lh { avk = acc } acc = acc + 1 } } }
-                            if avk >= 0 { dbg_lc = dbg_lc + 1 }
-                            // FALLBACK (fixes "can't damage other players"): lag-comp found no victim
-                            // - a target rewound out of the ray, or a stale/empty record - but the
-                            // LOCAL ray hit a body THIS shot. Damage that actor so a clean shot still
-                            // lands. Use the body-centre height (torso, no head/leg multiplier) since
-                            // the precise hit Y isn't in scope here. Bots + connected clients only.
-                            if avk < 0 and hb >= 0 {
-                                let mut fb = bot_n + 1
-                                while fb < nactors {
-                                    if apid[fb] != 9999 and hb == (actors[fb].hdl as i64) { avk = fb }
-                                    fb = fb + 1
-                                }
-                                let mut fbb = 0
-                                while fbb < bot_n {
-                                    if hb == (actors[fbb].hdl as i64) { avk = fbb }
-                                    fbb = fbb + 1
-                                }
-                                if avk >= 0 { ahit_y = phys3d_y(actors[avk].hdl as i64); dbg_fb = dbg_fb + 1 }
-                            }
-                            if avk >= 0 and avk != ci and actors[avk].hp <= 0.0 { dbg_dead = dbg_dead + 1 }
-                            if avk >= 0 and avk != ci and actors[avk].hp > 0.0 {
-                                let mut admg = gun_dmg
-                                // Headshot height = hit Y vs the victim's capsule-centre body Y. Use
-                                // the actor body (works for BOTH a bot's real body and a client's
-                                // render-actor); net_player_y returns a default for bots on the host,
-                                // which made every hit read as a headshot. The 0.5 threshold has
-                                // enough margin that the render-actor's ~1-frame lag never flips it.
-                                let ahrel = ahit_y - phys3d_y(actors[avk].hdl as i64)
-                                if ahrel > 0.5 { admg = admg * 2.0; play_sound(12, 90, 0) } else { if ahrel < (0.0 - 0.4) { admg = admg * 0.65 } }
-                                if actors[avk].sh > 0.0 { if actors[avk].sh >= admg { actors[avk].sh = actors[avk].sh - admg; admg = 0.0 } else { admg = admg - actors[avk].sh; actors[avk].sh = 0.0 } }
-                                actors[avk].hp = actors[avk].hp - admg
-                                if avk < bot_n { brains[avk].pop = 0.1 }
-                                hitmark = 0.18; play_noise(45, 14)
-                                last_hit[avk] = ci; kr_mark[avk] = 0.35
-                                let mut aocg = 13.0
-                                if net_local_state(7) < 0.5 { aocg = 20.0 }
-                                kr_oc[avk] = aocg
-                            }
-                        }
                         // One tracer system for everyone. The local player's tracer starts
                         // at the EYE (like the original single player tracer) so it reads the
                         // same; bots/remotes start at their body muzzle.
@@ -2622,17 +2555,6 @@ fn main() {
                 let kk = last_hit[dv]
                 let dbx = phys3d_x(actors[dv].hdl as i64)
                 let dbz = phys3d_z(actors[dv].hdl as i64)
-                // Drops are host-owned: a guest spawns NONE locally (the host spawns its drops and
-                // replicates them over the fx channel), so loot never doubles or desyncs.
-                if net_mode != 2 {
-                    if dv == pl_i {
-                        if actors[dv].cells > 0 { dropx[dropcur] = dbx + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 } }
-                    } else {
-                        dropx[dropcur] = dbx; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 0.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                        dropx[dropcur] = dbx - 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 2.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 }
-                        if actors[dv].cells > 0 { dropx[dropcur] = dbx + 0.6; dropy[dropcur] = 0.6; dropz[dropcur] = dbz; droptype[dropcur] = 1.0; droplife[dropcur] = drop_life; dropcur = dropcur + 1; if dropcur >= drop_n { dropcur = 0 } }
-                    }
-                }
                 actors[dv].cells = 0
                 if dv == pl_i {
                     dead = true; respawn_cd = 3.0; deaths = deaths + 1; play_sound(0 - 26, 260, 0)
@@ -3875,7 +3797,6 @@ fn main() {
                         qy = qy + 1
                     }
                     draw_text(cx - text_width("PAUSED", 46) / 2, ply + 20, "PAUSED", 46, col_gold)
-                    if net_mode == 0 { draw_text(cx - text_width("practice - sim frozen", 16) / 2, ply + 74, "practice - sim frozen", 16, col_white) }
                     if net_mode != 0 { draw_text(cx - text_width("online - match still live", 16) / 2, ply + 74, "online - match still live", 16, col_white) }
                     if menu_btn(cx - 110, ply + 110, 220, 44, pmx, pmy) == 1 { if pclick == 1 { paused = false; grab_mouse(1); input_suppress(0); r3d_blur(0.0); was_paused = false } }
                     draw_centered("RESUME", cx - 110, ply + 110, 220, 44, 24, col_white)
