@@ -2950,42 +2950,6 @@ fn main() {
             }
             cd2 = cd2 + 1
         }
-        // Pickups: available fixed spots (green heal / blue shield / yellow ammo), bobbing. A guest
-        // (host==guest: net_mode 2) owns NO local pickup state - it renders the server's authoritative
-        // available spots from the fx channel just below, same as drops. Only host/practice render here.
-        let mut pkd = 0
-        while pkd < pk_n and net_mode != 2 {
-            if pkcd[pkd] <= 0.0 {
-                let bob = sin(etime * 2.0 + (pkd as f64)) * 0.12
-                if pktype[pkd] < 0.5 {
-                    r3d_draw(heal_vis, pkx[pkd], pky[pkd] + bob, pkz[pkd], 0.0, etime * 2.0, 0.0, 1.0)
-                } else { if pktype[pkd] < 1.5 {
-                    r3d_draw(shield_vis, pkx[pkd], pky[pkd] + bob, pkz[pkd], 0.0, etime * 2.0, 0.0, 1.0)
-                } else {
-                    r3d_draw(ammo_vis, pkx[pkd], pky[pkd] + bob, pkz[pkd], 0.0, etime * 2.0, 0.0, 1.0)
-                } }
-            }
-            pkd = pkd + 1
-        }
-        // Enemy drops (smaller orbs) while alive.
-        // Local drops (host/practice). A guest owns NO local drops - it renders the host's
-        // authoritative drops + in-flight projectiles from the fx channel just below instead.
-        let mut drd = 0
-        while drd < drop_n and net_mode != 2 {
-            if droplife[drd] > 0.0 {
-                let bob2 = sin(etime * 3.0 + (drd as f64)) * 0.1
-                if droptype[drd] < 0.5 {
-                    r3d_draw(heal_vis, dropx[drd], dropy[drd] + bob2, dropz[drd], 0.0, etime * 3.0, 0.0, 0.7)
-                } else {
-                    if droptype[drd] < 1.5 {
-                        r3d_draw(shield_vis, dropx[drd], dropy[drd] + bob2, dropz[drd], 0.0, etime * 3.0, 0.0, 0.7)
-                    } else {
-                        r3d_draw(ammo_vis, dropx[drd], dropy[drd] + bob2, dropz[drd], 0.0, etime * 3.0, 0.0, 0.7)
-                    }
-                }
-            }
-            drd = drd + 1
-        }
         // GUEST: render the host's authoritative transient visuals - loot drops (kind 0-2) and
         // OTHERS' in-flight rockets (3) / grenades (4). Our own predicted rocket is still drawn by
         // the local projectile loop, so we see incoming explosives in time to dodge them.
