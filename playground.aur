@@ -19,8 +19,8 @@
 // Modularity: inputs are rebindable ACTIONS (never raw keys), and every movement
 // constant lives in one `cfg` array that the controller reads, so feel is data.
 
-// ----- player state blob (f32; engine reads [0..3]=xyz, [3]=yaw) --------------
-//  0 x   1 y   2 z   3 yaw   4 vx   5 vy   6 vz
+// ----- player state blob (f32; engine reads [0..3]=xyz, [3]=cs.yaw) --------------
+//  0 x   1 y   2 z   3 cs.yaw   4 vx   5 vy   6 vz
 //  7 grounded  8 air_jumps_left  9 dash_cooldown  10 jump_prev  11 dash_prev
 //  12 sliding  13 wall_contact  14 wall_normal_x  15 wall_normal_z  16 wall_time
 //  17 wall_jump_lockout  18 slide_prev  19 coyote_timer  20 jump_buffer_timer
@@ -32,8 +32,8 @@
 //  [27 = slide cooldown (anti-spam; cleared when airborne), NOT replicated]
 //  [28 = time grounded (landing-grace friction skip for hop momentum), NOT replicated]
 // ----- per-tick input blob (f32) ----------------------------------------------
-//  0 forward(-1..1)  1 strafe-right(-1..1)  2 yaw  3 jump  4 slide  5 dash  6 dt
-//  7 pitch  8 respawn (combat death -> teleport to spawn)
+//  0 forward(-1..1)  1 strafe-right(-1..1)  2 cs.yaw  3 jump  4 slide  5 dash  6 dt
+//  7 cs.pitch  8 respawn (combat death -> teleport to spawn)
 // ----- cfg (f64) --------------------------------------------------------------
 //  0 gravity 1 jump_vel 2 ground_speed 3 ground_accel 4 ground_friction
 //  5 air_speed 6 air_accel 7 slide_boost 8 slide_friction 9 slide_min
@@ -45,6 +45,7 @@
 
 fn main() {
     window_open(1280, 720)
+    let mut cs = client::new_client_state()
     grab_mouse(1)
     // Load a font for the HUD text/numbers (score, timer). Falls back to no text if
     // the file isn't found - draw_text/draw_int just no-op then.
@@ -108,7 +109,7 @@ fn main() {
     let proj_vis = r3d_make_box_emissive(0.12, 0.12, 0.12, 1.0, 0.4, 1.0)
     // First-person weapon viewmodels: downloaded CC0 low-poly meshes (Quaternius assault rifle +
     // grenade launcher, flat-shaded to match the mannequin; a katana). Drawn pinned to the camera
-    // (see render). Per-weapon scale + yaw/pitch/roll offsets align each mesh's barrel/blade with
+    // (see render). Per-weapon scale + cs.yaw/cs.pitch/cs.roll offsets align each mesh's barrel/blade with
     // forward (rifle/launcher are modelled along +X, the katana along +Y). All TUNABLE.
     let vm_rifle = r3d_load_model("models/rifle.glb")
     let vm_launcher = r3d_load_model("models/launcher.glb")
@@ -127,10 +128,10 @@ fn main() {
     let kat_roll = 0.0
     // Bone-attach: 3rd-person weapons ride the mannequin's RIGHT HAND (joint 29 = DEF-hand.R,
     // found via r3d_joint_dump). The h_* offsets are the weapon's pose IN the hand bone's local
-    // space - TUNE BY EYE (position + the local yaw/pitch/roll) to seat it in the grip.
+    // space - TUNE BY EYE (position + the local cs.yaw/cs.pitch/cs.roll) to seat it in the grip.
     let hand_joint = 29
     // hand_o* = the weapon's pose in the hand-bone local frame. The bone's axes aren't obvious by
-    // eye, so these are LIVE-TUNABLE in-game: hold T and use arrows (pitch/yaw) + O/U (roll) +
+    // eye, so these are LIVE-TUNABLE in-game: hold T and use arrows (cs.pitch/cs.yaw) + O/U (cs.roll) +
     // I/K (forward-back) + J/L (left-right) + Y/H (up-down). The values are drawn on-screen; once
     // it seats right, tell me the numbers and I bake them in as the defaults below.
     // Eye-tuned in-game via tune mode (T): the weapon now seats correctly in the hand.
@@ -162,7 +163,7 @@ fn main() {
     let mut astate_t = [0.0; 9]     // time in the current base clip (min-dwell anti-flicker)
     let mut ajump = [0.0; 9]        // airborne latch (hold the jump clip through the apex)
     let mut aidle_t = [0.0; 9]      // time spent slow (idle only after a SUSTAINED stop)
-    let mut ayaw = [0.0; 9]         // smoothed displayed body yaw (so facing never snaps/jitters)
+    let mut ayaw = [0.0; 9]         // smoothed displayed body cs.yaw (so facing never snaps/jitters)
     let upper_mask_root = 3         // DEF-spine.002: overlay torso+arms, hips+legs keep locomotion
     let actor_scale = 1.0           // mannequin bind height 1.83m = real human scale
     let actor_yoff = 0.0 - 0.9      // model origin is at the feet; actor pos is the capsule centre
@@ -422,15 +423,6 @@ fn main() {
     let mut join_addr = "127.0.0.1"   // JOIN target: IP or hostname (default loopback for testing)
     let mut addr_len = 9
 
-    let mut yaw = 0.0
-    let mut pitch = 0.0
-    let mut crouch = 0.0
-    let mut roll = 0.0
-    let mut lean = 0.0
-    let mut dip = 0.0        // camera compression spring offset (jump push + land absorb)
-    let mut dipv = 0.0       // its velocity
-    let mut prev_vy = 0.0    // last frame's vy, so we know the speed we hit ground at
-    let mut prev_air = false // were we airborne last frame
     let mut hit_t = 0.0
     let mut hxp = 0.0
     let mut hyp = 0.0
@@ -587,11 +579,6 @@ fn main() {
     let mut trz2 = [0.0; 24]
     let mut trlife = [0.0; 24]
     let mut trcur = 0
-    let mut slidetilt = 0.0  // camera reclines back while sliding
-    let mut dashwind = 0.0   // one-time wind-line burst on a dash (decays)
-    let mut prev_dcd = 0.0   // previous dash cooldown, to detect a fresh dash
-    let mut shake = 0.0      // light camera shake on landing (decays)
-    let mut windlvl = 0.0    // smoothed wind-line intensity (rises fast, lingers down)
 
     // Combat tuning (data-driven). Player gun is a fast hitscan; bots are slower.
     let gun_dmg = 17.0           // rifle hits harder now (still fast); explosives are the heavy hits
@@ -691,7 +678,7 @@ fn main() {
             if disp_applied == 0 { window_fullscreen(disp_mode); disp_applied = 1 }
         // Clear the persistent game post-overlays so the red damage vignette + speed
         // lines don't linger over the menu/pause/settings. The game loop reapplies them
-        // from hurt_flash/windlvl on resume.
+        // from hurt_flash/cs.windlvl on resume.
         r3d_damage(0.0, 0.0, 0.0, 0.0, 0.0)
         r3d_speedlines(0.0, 0.0)
         menu_t = menu_t + frame_dt()
@@ -1199,10 +1186,10 @@ fn main() {
 
         // Mouse look (skipped while paused so the released cursor doesn't swing the view).
         if paused == false {
-            yaw = yaw + mouse_dx() * sens
-            pitch = pitch - mouse_dy() * sens
-            if pitch > 1.4 { pitch = 1.4 }
-            if pitch < 0.0 - 1.4 { pitch = 0.0 - 1.4 }
+            cs.yaw = cs.yaw + mouse_dx() * sens
+            cs.pitch = cs.pitch - mouse_dy() * sens
+            if cs.pitch > 1.4 { cs.pitch = 1.4 }
+            if cs.pitch < 0.0 - 1.4 { cs.pitch = 0.0 - 1.4 }
         }
 
         // Gather rebindable input into this tick's blob and run the sim. While DEAD,
@@ -1264,7 +1251,7 @@ fn main() {
         }
         let spawn_x = spx[best_si]
         let spawn_z = spz[best_si]
-        let blob = [fwd, strafe, yaw, jump as f64, slide as f64, dash as f64, dt, pitch, respawn_req, oc_mult, gx, gy, gz, g_flag, blast_ix, blast_iy, blast_iz, spawn_x, 1.1, spawn_z]
+        let blob = [fwd, strafe, cs.yaw, jump as f64, slide as f64, dash as f64, dt, cs.pitch, respawn_req, oc_mult, gx, gy, gz, g_flag, blast_ix, blast_iy, blast_iz, spawn_x, 1.1, spawn_z]
         // Broadcast our combat state to everyone via the metadata channel (separate from the
         // sim state, so it can't disturb movement/reconciliation). Remotes read it below.
         net_set_meta(0, actors[5].hp)
@@ -1362,7 +1349,7 @@ fn main() {
                     if net_player_meta(amy, 9) >= g_resp_ctr - 0.5 or g_resp_wait_t <= 0.0 { g_resp_wait = 0 }
                 }
                 if g_resp_wait == 0 {
-                    if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; shake = 0.05; g_hurt = 1 }   // took damage; resolve direction below
+                    if newhp < g_hp_prev - 0.5 and dead == false { hurt_flash = 0.6; cs.shake = 0.05; g_hurt = 1 }   // took damage; resolve direction below
                     // SERVER-DRIVEN pickup sounds: the host owns collection, so play the sound when my
                     // replicated hp/cells (or local ammo refill) goes UP. Reliable, vs the old local-
                     // prediction sound that raced the host's collect + usually lost (= "no sound").
@@ -1435,93 +1422,93 @@ fn main() {
         blast_iz = 0.0
 
         // Camera from the locally-predicted state (capsule centre -> eye). The
-        // eye dips smoothly while sliding (lerp the crouch offset, no teleport).
+        // eye dips smoothly while sliding (lerp the cs.crouch offset, no teleport).
         let px = net_local_x()
         let py = net_local_y()
         let pz = net_local_z()
         let mut crouch_target = 0.0
         if net_local_state(12) > 0.5 { crouch_target = 0.45 }
-        crouch = crouch + (crouch_target - crouch) * 0.2
+        cs.crouch = cs.crouch + (crouch_target - cs.crouch) * 0.2
 
-        // Camera dip: a damped spring that compresses on a jump LAUNCH (the leg
+        // Camera cs.dip: a damped spring that compresses on a jump LAUNCH (the leg
         // push) and on LANDING (the absorb), then bounces back to neutral. It fires
         // on EVERY jump, moving or standing - that's what makes a jump read as a
         // weighty human motion rather than an instant teleport up.
         let vy_now = net_local_state(5)
         let air_now = net_local_state(7) < 0.5
         // Anticipation: while the sim holds the standing-jump windup, load DOWN
-        // (the crouch before the jump). dip>0 lowers the eye.
-        if net_local_state(22) > 0.0 { dipv = dipv + 9.0 * dt }
+        // (the cs.crouch before the jump). cs.dip>0 lowers the eye.
+        if net_local_state(22) > 0.0 { cs.dipv = cs.dipv + 9.0 * dt }
         // Launch: left the ground this frame with upward speed -> flick the view UP
-        // (legs extend / takeoff pop). dipv negative raises the eye.
-        if prev_air == false and air_now and vy_now > 1.0 { dipv = dipv - 1.5 }
+        // (legs extend / takeoff pop). cs.dipv negative raises the eye.
+        if cs.prev_air == false and air_now and vy_now > 1.0 { cs.dipv = cs.dipv - 1.5 }
         // Landing: hit the ground -> absorb DOWN scaled by the fall speed (read LAST
-        // frame's vy, since the sim zeroes vy the instant it lands) + light shake.
-        if prev_air and air_now == false {
-            let impact = 0.0 - prev_vy
+        // frame's vy, since the sim zeroes vy the instant it lands) + light cs.shake.
+        if cs.prev_air and air_now == false {
+            let impact = 0.0 - cs.prev_vy
             if impact > 2.0 {
                 let mut k = impact * 0.18
                 if k > 3.2 { k = 3.2 }
-                dipv = dipv + k
+                cs.dipv = cs.dipv + k
                 let mut shk = impact * 0.008
                 if shk > 0.085 { shk = 0.085 }
-                if shk > shake { shake = shk }
+                if shk > cs.shake { cs.shake = shk }
             }
         }
-        prev_vy = vy_now
-        prev_air = air_now
+        cs.prev_vy = vy_now
+        cs.prev_air = air_now
         // Integrate the spring (stiffness + damping, lightly underdamped for a small
         // settle bounce). Clamp the step so a frame hitch can't blow it up.
         let mut sdt = dt
         if sdt > 0.033 { sdt = 0.033 }
-        dipv = dipv - dip * 55.0 * sdt - dipv * 12.0 * sdt
-        dip = dip + dipv * sdt
-        // Decay the landing shake (quick damped wobble).
-        shake = shake - shake * 14.0 * dt
-        if shake < 0.0 { shake = 0.0 }
+        cs.dipv = cs.dipv - cs.dip * 55.0 * sdt - cs.dipv * 12.0 * sdt
+        cs.dip = cs.dip + cs.dipv * sdt
+        // Decay the landing cs.shake (quick damped wobble).
+        cs.shake = cs.shake - cs.shake * 14.0 * dt
+        if cs.shake < 0.0 { cs.shake = 0.0 }
 
-        let eye = py + 0.7 - crouch - dip
+        let eye = py + 0.7 - cs.crouch - cs.dip
 
         // Camera juice (visual only - aim/shoot use the same eff_pitch so the
         // crosshair stays true). Bank hard toward the wall while wallrunning, tilt
-        // a little when strafing, and lean forward/back a touch with run input.
+        // a little when strafing, and cs.lean forward/back a touch with run input.
         // Only bank when the SIM is actually wallrunning (slot 23). On the floor
         // next to a wall this is always false, so the camera just does the small
         // strafe tilt and never snaps - no more glitch.
         let wallrunning = net_local_state(23) > 0.5
         let mut roll_target = strafe * 0.05
         if wallrunning {
-            let side = net_local_state(14) * cos(yaw) + net_local_state(15) * sin(yaw)
+            let side = net_local_state(14) * cos(cs.yaw) + net_local_state(15) * sin(cs.yaw)
             roll_target = side * 0.28
         }
-        roll = roll + (roll_target - roll) * 0.15
-        lean = lean + ((fwd * 0.03) - lean) * 0.12
-        // Recline the view back a touch while sliding (lean back into the slide).
+        cs.roll = cs.roll + (roll_target - cs.roll) * 0.15
+        cs.lean = cs.lean + ((fwd * 0.03) - cs.lean) * 0.12
+        // Recline the view back a touch while sliding (cs.lean back into the slide).
         let mut stilt_t = 0.0
         if net_local_state(12) > 0.5 { stilt_t = 0.04 }
-        slidetilt = slidetilt + (stilt_t - slidetilt) * 0.12
-        let eff_pitch = pitch + lean + slidetilt
+        cs.slidetilt = cs.slidetilt + (stilt_t - cs.slidetilt) * 0.12
+        let eff_pitch = cs.pitch + cs.lean + cs.slidetilt
 
         // Dash wind: detect the dash off the INPUT edge while airborne (the sim's own dash
         // condition), independent of the cooldown - the cooldown is now 0, so the old
         // "cooldown jumped up" detection no longer fires.
         let dash_in_now = input_down(act_dash)
-        if dash_in_now > 0 and prev_dcd < 0.5 and net_local_state(7) < 0.5 { dashwind = 1.0 }
-        prev_dcd = dash_in_now as f64
-        dashwind = dashwind - dt * 2.5
-        if dashwind < 0.0 { dashwind = 0.0 }
+        if dash_in_now > 0 and cs.prev_dcd < 0.5 and net_local_state(7) < 0.5 { cs.dashwind = 1.0 }
+        cs.prev_dcd = dash_in_now as f64
+        cs.dashwind = cs.dashwind - dt * 2.5
+        if cs.dashwind < 0.0 { cs.dashwind = 0.0 }
 
         let cp = cos(eff_pitch)
-        let fx = cp * sin(yaw)
+        let fx = cp * sin(cs.yaw)
         let fy = sin(eff_pitch)
-        let fz = 0.0 - cp * cos(yaw)
-        net_set_meta(19, eff_pitch)   // share our look pitch so the host's katana arc matches ours exactly (full 3D)
-        r3d_camera_roll(roll)
-        // Landing shake: jitter the camera POSITION (eye + target by the same offset,
+        let fz = 0.0 - cp * cos(cs.yaw)
+        net_set_meta(19, eff_pitch)   // share our look cs.pitch so the host's katana arc matches ours exactly (full 3D)
+        r3d_camera_roll(cs.roll)
+        // Landing cs.shake: jitter the camera POSITION (eye + target by the same offset,
         // so the view shakes but the aim direction is unchanged). Damped wobble.
-        let sjx = sin(etime * 130.0) * shake
-        let sjy = sin(etime * 170.0) * shake
-        let sjz = cos(etime * 150.0) * shake
+        let sjx = sin(etime * 130.0) * cs.shake
+        let sjy = sin(etime * 170.0) * cs.shake
+        let sjz = cos(etime * 150.0) * cs.shake
         r3d_camera(px + sjx, eye + sjy, pz + sjz, px + fx + sjx, eye + fy + sjy, pz + fz + sjz, 95.0)
         // 3D audio: ears at the eye, facing the look dir -> positional sounds (shots,
         // explosions) pan + attenuate by direction and distance.
@@ -1576,7 +1563,7 @@ fn main() {
                         actors[mvk].hp = actors[mvk].hp - melee_dmg
                         brains[mvk].pop = 0.2
                         hitmark = 0.2
-                        shake = 0.4
+                        cs.shake = 0.4
                         play_sound(0 - 18, 105, 0)   // heavy slash thud
                         let mhx = phys3d_x(actors[mvk].hdl as i64)
                         let mhy = phys3d_y(actors[mvk].hdl as i64) + 0.5
@@ -1846,7 +1833,7 @@ fn main() {
                 sim::crate_blast_impulse(crates[ck] as i64, ex_x, ex_y, ex_z, gi)
                 ck = ck + 1
             }
-            // Player distance -> self-damage, knockback, and shake.
+            // Player distance -> self-damage, knockback, and cs.shake.
             let pbx = px - ex_x
             let pby = py - ex_y
             let pbz = pz - ex_z
@@ -1891,15 +1878,15 @@ fn main() {
             if pbd < shrad {
                 let bnear = 1.0 - pbd / shrad
                 let bshake = bnear * bnear * 1.4 * gi   // MUCH stronger up close
-                if shake < bshake { shake = bshake }
+                if cs.shake < bshake { cs.shake = bshake }
             }
             // A DIRECT or VERY-near explosive (only explosives - bullets don't do this) lands a
             // ~4x jolt right at the epicentre; falls off fast so a mid-range blast is unchanged.
             let vnrad = 4.0 * gi
             if pbd < vnrad {
                 let vn = 1.0 - pbd / vnrad
-                let vshake = vn * vn * 5.6 * gi   // ~4x the old direct-blast shake (1.4)
-                if shake < vshake { shake = vshake }
+                let vshake = vn * vn * 5.6 * gi   // ~4x the old direct-blast cs.shake (1.4)
+                if cs.shake < vshake { cs.shake = vshake }
             }
         }
 
@@ -2144,12 +2131,12 @@ fn main() {
                                     if vk < bot_n { brains[vk].pop = 0.1 }
                                     if mine == 1 { hitmark = 0.18; play_noise(45, 14) }
                                     if vk == pl_i and pinvuln <= 0.0 and dead == false {
-                                        dmg_timer = 0.0; hurt_flash = 0.6; shake = 0.085
+                                        dmg_timer = 0.0; hurt_flash = 0.6; cs.shake = 0.085
                                         play_sound(0 - 18, 70, 0)
                                         let rcx = sox - px
                                         let rcz = soz - pz
-                                        let fwd_c = rcx * sin(yaw) + rcz * (0.0 - cos(yaw))
-                                        let rgt_c = rcx * cos(yaw) + rcz * sin(yaw)
+                                        let fwd_c = rcx * sin(cs.yaw) + rcz * (0.0 - cos(cs.yaw))
+                                        let rgt_c = rcx * cos(cs.yaw) + rcz * sin(cs.yaw)
                                         dmg_dir = atan2(rgt_c, fwd_c)
                                     }
                                     // Killer + player-kill reward context for the unified
@@ -2512,7 +2499,7 @@ fn main() {
             r3d_draw(gmesh[gd], gcx[gd], gcy[gd], gcz[gd], 0.0, 0.0, 0.0, 1.0)
             gd = gd + 1
         }
-        // Ramps + perches. r3d_draw takes (yaw=Y, pitch=X, roll=Z), so the X-tilt goes
+        // Ramps + perches. r3d_draw takes (cs.yaw=Y, cs.pitch=X, cs.roll=Z), so the X-tilt goes
         // in the PITCH slot and the Z-tilt in ROLL to match the collider's axis-angle.
         let mut exd = 0
         while exd < ext_n {
@@ -2657,7 +2644,7 @@ fn main() {
                     if ajump[ed] < 0.0 { ajump[ed] = 0.0 }
                     // Desired BASE clip. Bias toward RUN: any sustained motion -> run instantly;
                     // idle ONLY after the bot has been slow for 0.35s straight (a real stop, not a
-                    // juke/strafe dip). Jump latch wins. Small dwell as a final anti-strobe guard.
+                    // juke/strafe cs.dip). Jump latch wins. Small dwell as a final anti-strobe guard.
                     let mut desired = astate[ed]
                     if desired == anim_jump { desired = anim_idle }
                     if spd > 1.4 { desired = anim_run; aidle_t[ed] = 0.0 } else { aidle_t[ed] = aidle_t[ed] + dt; if aidle_t[ed] > 0.35 { desired = anim_idle } }
@@ -2678,7 +2665,7 @@ fn main() {
                     if ashoot[ed] > 0.0 { uwant = anim_shoot }
                     if ushoot[ed] != uwant { r3d_anim_play_upper(actor_models[ed], uwant, 1, 1.0, 0.12, upper_mask_root); ushoot[ed] = uwant }
                     r3d_anim_update(actor_models[ed], dt)
-                    // Face the aim target, SMOOTHLY: low-pass the yaw the short way around, snap
+                    // Face the aim target, SMOOTHLY: low-pass the cs.yaw the short way around, snap
                     // only on a big (>115 deg) reorient. No raw-delta jitter, no target/move toggle.
                     // Draw at the plain scale - NO hit "pop" (a throbbing humanoid reads as flicker).
                     let tyaw = brains[ed].face + actor_yaw_off
@@ -2754,10 +2741,10 @@ fn main() {
                 actors[ai].gaz = net_player_meta(pid, 14)
                 actors[ai].gat = net_player_meta(pid, 15)
                 let mut eyaw = net_player_yaw(pid)
-                // HUMAN remotes broadcast their raw LOOK-yaw. The renderer faces (sin yaw, cos yaw)
+                // HUMAN remotes broadcast their raw LOOK-cs.yaw. The renderer faces (sin cs.yaw, cos cs.yaw)
                 // (glam from_euler YXZ, model local forward +Z - confirmed by bots, drawn with
                 // face=atan2(dx,dz)). The player's look forward is (sin eyaw, -cos eyaw), so the
-                // correct draw-yaw is PI - eyaw (makes sin/cos match the look dir). NOT eyaw+PI,
+                // correct draw-cs.yaw is PI - eyaw (makes sin/cos match the look dir). NOT eyaw+PI,
                 // which X-flips (looking east renders facing west). Bots (pid>=1000) already
                 // broadcast draw-space `face`, so leave them.
                 if pid < 1000 { eyaw = 3.14159 - eyaw }
@@ -2851,12 +2838,12 @@ fn main() {
             let bor = 0.16                            // right
             let mut bou = 0.0 - 0.15                  // down
             let mut bof = 0.40 - recoil               // forward
-            // Reload: dip the gun down + back, then bring it up again (a bump over the reload time).
+            // Reload: cs.dip the gun down + back, then bring it up again (a bump over the reload time).
             if actors[5].rl > 0.0 {
                 let rfr = actors[5].rl / reload_w[actors[5].wpn]
-                let dip = sin(rfr * 3.14159) * 0.34
-                bou = bou - dip
-                bof = bof - dip * 0.25
+                let rdip = sin(rfr * 3.14159) * 0.34
+                bou = bou - rdip
+                bof = bof - rdip * 0.25
             }
             if actors[5].heal > 0.0 {
                 // SHIELD-UP: hold the blue energy cube up in view while channeling a shield-apply.
@@ -2952,8 +2939,8 @@ fn main() {
         if g_hurt == 1 and hd_found == 1 {
             let rcx = hd_ox - px
             let rcz = hd_oz - pz
-            let fwd_c = rcx * sin(yaw) + rcz * (0.0 - cos(yaw))
-            let rgt_c = rcx * cos(yaw) + rcz * sin(yaw)
+            let fwd_c = rcx * sin(cs.yaw) + rcz * (0.0 - cos(cs.yaw))
+            let rgt_c = rcx * cos(cs.yaw) + rcz * sin(cs.yaw)
             dmg_dir = atan2(rgt_c, fwd_c)
         }
         g_hurt = 0
@@ -2998,7 +2985,7 @@ fn main() {
                 if rpbd < rshrad {
                     let rbn = 1.0 - rpbd / rshrad
                     let rbshake = rbn * rbn * 1.4 * rbi
-                    if shake < rbshake { shake = rbshake }
+                    if cs.shake < rbshake { cs.shake = rbshake }
                 }
                 // Fling nearby boxes from this REMOTE blast too - SHARED impulse, so another player's
                 // explosion shoves the boxes the same way on our screen as on the host (once per boom).
@@ -3149,12 +3136,12 @@ fn main() {
             wtarget = (spd - 5.0) * 0.085
             if wtarget < 0.0 { wtarget = 0.0 }
         }
-        if dashwind > wtarget { wtarget = dashwind }
+        if cs.dashwind > wtarget { wtarget = cs.dashwind }
         if wtarget > 1.0 { wtarget = 1.0 }
         let mut wk = 0.5
-        if wtarget < windlvl { wk = 0.05 }
-        windlvl = windlvl + (wtarget - windlvl) * wk
-        r3d_speedlines(windlvl, etime)
+        if wtarget < cs.windlvl { wk = 0.05 }
+        cs.windlvl = cs.windlvl + (wtarget - cs.windlvl) * wk
+        r3d_speedlines(cs.windlvl, etime)
 
         let mut bar = (spd * 18.0) as i64
         if bar > fbw - 80 { bar = fbw - 80 }

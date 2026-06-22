@@ -1,0 +1,27 @@
+// OVERCLOCK - the client's mutable game state, bundled into ONE struct (like the server's World)
+// so the client's per-section logic can be split into functions that all share it by reference.
+// Grown incrementally; new_client_state() returns a zeroed/default baseline that main() then fills.
+struct ClientState {
+    // Camera + view feel.
+    yaw: f64,
+    pitch: f64,
+    crouch: f64,
+    roll: f64,
+    lean: f64,
+    dip: f64,
+    dipv: f64,
+    prev_vy: f64,
+    prev_air: bool,
+    slidetilt: f64,
+    dashwind: f64,
+    prev_dcd: f64,
+    shake: f64,
+    windlvl: f64
+}
+
+fn new_client_state() -> ClientState {
+    ClientState {
+        yaw: 0.0, pitch: 0.0, crouch: 0.0, roll: 0.0, lean: 0.0, dip: 0.0, dipv: 0.0,
+        prev_vy: 0.0, prev_air: false, slidetilt: 0.0, dashwind: 0.0, prev_dcd: 0.0, shake: 0.0, windlvl: 0.0
+    }
+}
