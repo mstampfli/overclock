@@ -468,7 +468,14 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                 }
                 vi = vi + 1
             }
-            if tgv >= 0 { w.brains[ci].face = atan2(tgx - bsx, tgz - bsz) }
+            // Smooth the body's facing toward the target via direction vectors (wraps cleanly at
+            // +-pi) instead of snapping - the bot's own strafing motion otherwise jittered the aim.
+            if tgv >= 0 {
+                let tf = atan2(tgx - bsx, tgz - bsz)
+                let nfx = sin(w.brains[ci].face) + (sin(tf) - sin(w.brains[ci].face)) * 0.3
+                let nfz = cos(w.brains[ci].face) + (cos(tf) - cos(w.brains[ci].face)) * 0.3
+                w.brains[ci].face = atan2(nfx, nfz)
+            }
             // LAUNCHER at range: when the target is far + the bot still has a rocket + a periodic
             // window opens, lob a travel-time rocket (dodgeable) instead of the rifle. Consumes a
             // rocket (mag[1] reloads from res[1]) and takes the slow fire cooldown.
@@ -924,11 +931,15 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             let tdx = tmx - bx0
             let tdz = tmz - bz0
             let tdist = sqrt(tdx * tdx + tdz * tdz)
-            let mut juke = sin(w.etime * 2.2 + (ei2 as f64) * 1.7) * 0.5
+            let mut juke = sin(w.etime * 2.2 + (ei2 as f64) * 1.7) * 0.35   // gentler weave - sim momentum made the old 0.5 oscillate
+            // PROPORTIONAL standoff: ease the forward input down as we near the ring instead of
+            // flipping advance<->retreat at hard thresholds. With sim friction this settles smoothly
+            // at ~4m (no momentum overshoot/oscillation - that jitter was what flickered the bot + its aim).
             let mut adv = 1.0
-            if tdist < 4.0 { adv = 0.0 }
-            if tdist < 2.0 { adv = 0.0 - 1.0 }
-            if by0 - tmy > 0.4 and tdist < 2.5 { adv = 0.0 - 1.5 }
+            if tdist < 9.0 { adv = (tdist - 4.0) / 5.0 }
+            if adv > 1.0 { adv = 1.0 }
+            if adv < 0.0 - 1.0 { adv = 0.0 - 1.0 }
+            if by0 - tmy > 0.4 and tdist < 2.5 { adv = 0.0 - 1.0 }   // get off the player if it's right below
             if seeking == 1 {
                 // sprint STRAIGHT in to the pickup (no weave, so it homes close enough to collect)
                 adv = 1.0
@@ -1003,7 +1014,13 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             w.brains[ei2].kx = 0.0
             w.brains[ei2].ky = 0.0
             w.brains[ei2].kz = 0.0
-            sim::sim_step(w.bot_state[ei2], bin, sim::default_cfg())
+            // Bots run a touch faster than base player ground speed (they don't slide/dash to gain
+            // pace like a human) and sprint when far, so they can cross the arena for ammo + enemies
+            // like the old direct-velocity bots did. Same sim_step, just bot-tuned ground speed.
+            let mut bcfg = sim::default_cfg()
+            bcfg[2] = 9.5
+            if tdist > 18.0 { bcfg[2] = 12.5 }
+            sim::sim_step(w.bot_state[ei2], bin, bcfg)
         } else {
             phys3d_set_pos(h, w.esx[ei2], 0.0 - 50.0, w.esz[ei2])
             w.brains[ei2].resp = w.brains[ei2].resp - dt
