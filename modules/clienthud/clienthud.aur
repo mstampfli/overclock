@@ -1,0 +1,282 @@
+// OVERCLOCK - client HUD/UI helper functions (extracted from playground.aur). Pure: each closes
+// over NO game state, only its parameters + engine draw builtins (pixel/draw_text/r3d_draw/etc.),
+// so the menu/settings/HUD all share one consistent look. No module dependencies.
+
+// Draw a filled UI button into the HUD framebuffer; returns 1 if the cursor is over
+// it (brighter when hovered). Used by the main menu + settings screen.
+
+// Draw `text` centred BOTH horizontally and vertically inside the box (bx,by,bw,bh).
+// One helper for every label / field / button so centring is consistent everywhere.
+// The vertical term backs off the baseline a touch (px/8) so glyphs sit optically
+// centred rather than slightly low. (text_width now works for runtime strings too.)
+fn draw_centered(text: str, bx: i64, by: i64, bw: i64, bh: i64, px: i64, color: i64) {
+    let tx = bx + (bw - text_width(text, px)) / 2
+    let ty = by + (bh - px) / 2 - px / 8
+    draw_text(tx, ty, text, px, color)
+}
+
+// Draw a customisable crosshair centred at (cx,cy): an optional centre dot + four ticks
+// running from `gap` to `gap+size`, `thick` px wide. One place for the HUD + the editor
+// preview so they always match.
+fn draw_crosshair(cx: i64, cy: i64, size: i64, gap: i64, thick: i64, dot: i64, r: i64, g: i64, b: i64) {
+    let hd = thick / 2
+    if dot > 0 {
+        let mut dy = 0 - hd
+        while dy <= hd {
+            let mut dx = 0 - hd
+            while dx <= hd {
+                pixel(cx + dx, cy + dy, r, g, b)
+                dx = dx + 1
+            }
+            dy = dy + 1
+        }
+    }
+    let mut t = 0
+    while t < thick {
+        let off = t - thick / 2
+        let mut i = gap
+        while i <= gap + size {
+            pixel(cx + i, cy + off, r, g, b)        // right arm
+            pixel(cx - i, cy + off, r, g, b)        // left arm
+            pixel(cx + off, cy + i, r, g, b)        // bottom arm
+            pixel(cx + off, cy - i, r, g, b)        // top arm
+            i = i + 1
+        }
+        t = t + 1
+    }
+}
+
+fn menu_btn(x: i64, y: i64, w: i64, h: i64, mx: i64, my: i64) -> i64 {
+    let mut hov = 0
+    if mx >= x and mx <= x + w and my >= y and my <= y + h { hov = 1 }
+    // Dark translucent-looking panel fill (brighter when hovered).
+    let mut br = 18
+    if hov == 1 { br = 46 }
+    let mut yy = 0
+    while yy < h {
+        let mut xx = 0
+        while xx < w {
+            pixel(x + xx, y + yy, br, br + 16, br + 28)
+            xx = xx + 1
+        }
+        yy = yy + 1
+    }
+    // Neon cyan border (full bright on hover) - the futuristic accent.
+    let mut bg = 120
+    if hov == 1 { bg = 255 }
+    let mut bi = 0
+    while bi < w {
+        pixel(x + bi, y, 40, bg, 255)
+        pixel(x + bi, y + 1, 40, bg, 255)
+        pixel(x + bi, y + h - 1, 40, bg, 255)
+        pixel(x + bi, y + h - 2, 40, bg, 255)
+        bi = bi + 1
+    }
+    let mut bj = 0
+    while bj < h {
+        pixel(x, y + bj, 40, bg, 255)
+        pixel(x + 1, y + bj, 40, bg, 255)
+        pixel(x + w - 1, y + bj, 40, bg, 255)
+        pixel(x + w - 2, y + bj, 40, bg, 255)
+        bj = bj + 1
+    }
+    hov
+}
+
+// Human-readable label for an input code, so keybinds read "W" / "SPACE" / "LMB"
+// instead of raw numbers. Mirrors the engine's code_to_key map.
+fn key_name(code: i64) -> str {
+    if code == 100 { return "LMB" }
+    if code == 101 { return "RMB" }
+    if code == 102 { return "MMB" }
+    if code == 103 { return "M4" }
+    if code == 104 { return "M5" }
+    if code == 4 { return "SPACE" }
+    if code == 9 { return "ENTER" }
+    if code == 10 { return "LSHIFT" }
+    if code == 11 { return "LCTRL" }
+    if code == 20 { return "ESC" }
+    if code == 0 { return "LEFT" }
+    if code == 1 { return "RIGHT" }
+    if code == 2 { return "UP" }
+    if code == 3 { return "DOWN" }
+    if code == 5 { return "W" }
+    if code == 6 { return "A" }
+    if code == 7 { return "S" }
+    if code == 8 { return "D" }
+    if code == 14 { return "R" }
+    if code == 15 { return "E" }
+    if code == 16 { return "Q" }
+    if code == 17 { return "F" }
+    if code == 18 { return "C" }
+    if code == 19 { return "V" }
+    if code >= 30 and code <= 39 { return substr("1234567890", code - 30, 1) }
+    if code >= 40 and code <= 65 { return substr("ABCDEFGHIJKLMNOPQRSTUVWXYZ", code - 40, 1) }
+    return str(code)
+}
+
+// Bot callsigns for the scoreboard (one per bot slot).
+fn bot_name(i: i64) -> str {
+    if i == 0 { return "REAPER" }
+    if i == 1 { return "VORTEX" }
+    if i == 2 { return "ECHO" }
+    if i == 3 { return "RAZOR" }
+    if i == 4 { return "NYX" }
+    return "BOT"
+}
+
+// Typed-text helpers for name/address fields: is a char code allowed, and its 1-char string.
+fn is_name_char(c: i64) -> i64 {
+    if c >= 48 and c <= 57 { return 1 }
+    if c >= 65 and c <= 90 { return 1 }
+    if c >= 97 and c <= 122 { return 1 }
+    if c == 46 or c == 45 or c == 95 or c == 32 { return 1 }
+    return 0
+}
+fn code_char(c: i64) -> str {
+    if c >= 48 and c <= 57 { return substr("0123456789", c - 48, 1) }
+    if c >= 65 and c <= 90 { return substr("ABCDEFGHIJKLMNOPQRSTUVWXYZ", c - 65, 1) }
+    if c >= 97 and c <= 122 { return substr("abcdefghijklmnopqrstuvwxyz", c - 97, 1) }
+    if c == 46 { return "." }
+    if c == 45 { return "-" }
+    if c == 95 { return "_" }
+    return " "
+}
+
+// Display name for an actor slot (bot callsign / your username / remote guest).
+fn slot_name(slot: i64, pli: i64, uname: str, ulen: i64, apid: [i64; 9]) -> str {
+    if slot == pli { if ulen > 0 { return uname } return "PLAYER" }
+    // apid-FIRST: any slot mapped to a net id is a network actor (a remote human OR, on a
+    // guest, a host bot relayed over the wire). Build its REPLICATED name char-by-char. This
+    // is what keeps the guest correct - on a guest the bot slots 0..4 hold net actors, so we
+    // must NOT fall through to the local bot_name() table for them.
+    let pid = apid[slot]
+    if pid != 9999 {
+        let nl = net_player_name_len(pid)
+        if nl > 0 {
+            let mut nm = ""
+            let mut ci = 0
+            while ci < nl { nm = nm + code_char(net_player_name_char(pid, ci)); ci = ci + 1 }
+            return nm
+        }
+        return "GUEST"
+    }
+    // No net mapping: a LOCAL bot (host/practice). Use the local name table.
+    if slot < pli { return bot_name(slot) }
+    return "GUEST"
+}
+
+// Build a display name directly from a NET id (for kill-feed entries that arrive as net kill
+// events, where we have ids not local actor slots). myid -> our own name; else the replicated name.
+fn name_from_pid(pid: i64, myid: i64, uname: str, ulen: i64) -> str {
+    if pid == myid { if ulen > 0 { return uname } return "PLAYER" }
+    let nl = net_player_name_len(pid)
+    if nl > 0 {
+        let mut nm = ""
+        let mut ci = 0
+        while ci < nl { nm = nm + code_char(net_player_name_char(pid, ci)); ci = ci + 1 }
+        return nm
+    }
+    return "GUEST"
+}
+
+// Map a local actor SLOT to its NET id, for announcing host-authoritative kills: the host
+// player is id 0, bots are ids 1000+slot, and remote humans use their apid mapping.
+// The STABLE net id of an actor slot - the single source of truth for colour + kill events, so it
+// must be IDENTICAL on host and guests. Keyed off apid (the real net id), NOT the slot position:
+// on the host slots 0..bot_n-1 are local bots, but on a GUEST those same low slots hold HUMAN
+// remotes, so the old "slot < bot_n => bot" rule gave a different (wrong) id per machine.
+fn actor_netid(slot: i64, pli: i64, apid: [i64; 9], myid: i64) -> i64 {
+    if slot == pli { return myid }              // self: my own net id (0 on host, my id on a guest)
+    if apid[slot] != 9999 { return apid[slot] } // a networked actor (a client; or a guest's bots+humans)
+    return 1000 + slot                          // a host-LOCAL bot (has no apid mapping)
+}
+
+// Each player/bot gets a UNIQUE colour derived from its STABLE net id (host=0, clients=1..,
+// bots=1000+i). Every machine computes the same colour for a given id, so the scoreboard,
+// killfeed and overclock glow all agree without transmitting anything. `ch`: 0=r 1=g 2=b (0..255).
+fn pcchan(pid: i64, ch: i64) -> i64 {
+    let mut ci = pid
+    if pid >= 1000 { ci = 9 + (pid - 1000) }
+    if ci < 0 { ci = 0 }
+    ci = ci - (ci / 14) * 14
+    // 14 MAXIMALLY-DISTINCT colours (no near-duplicate hues). Host(0) + up to 8 players take the
+    // well-separated low indices 0..8; bots take 9..13. red/blue/green/yellow/orange/magenta/cyan/
+    // violet/pink, then lime/teal/brown/sky/white.
+    let pr = [235, 50, 70, 245, 250, 230, 50, 150, 250, 175, 40, 180, 130, 225]
+    let pg = [55, 130, 205, 215, 135, 60, 215, 90, 120, 225, 175, 120, 195, 225]
+    let pb = [55, 250, 80, 45, 35, 200, 220, 245, 170, 50, 150, 70, 255, 225]
+    if ch == 0 { return pr[ci] }
+    if ch == 1 { return pg[ci] }
+    return pb[ci]
+}
+// Packed 0xRRGGBB for draw_text / draw_int (HUD colour ints).
+fn pcolor(pid: i64) -> i64 {
+    return pcchan(pid, 0) * 65536 + pcchan(pid, 1) * 256 + pcchan(pid, 2)
+}
+// Additive albedo OFFSET (r3d_draw_tint) that repaints a model in a player's colour. The offset is
+// measured FROM the mannequin's base ORANGE albedo (Mannequin.gltf material = 0.799/0.402/0.042),
+// so base + offset lands exactly on the player's colour. `strength` 1.0 = that colour; >1 over-
+// saturates into a glow (overclock).
+fn ptint(pid: i64, ch: i64, strength: f64) -> f64 {
+    let base = [0.799, 0.402, 0.042]
+    return ((pcchan(pid, ch) as f64) / 255.0 - base[ch]) * strength
+}
+
+// A settings slider bar: neon fill over a dark track. Returns 1 if the cursor is over
+// it (so the caller can let a click set the value directly).
+fn draw_bar(x: i64, y: i64, w: i64, h: i64, frac: f64, mx: i64, my: i64) -> i64 {
+    let mut f = frac
+    if f < 0.0 { f = 0.0 }
+    if f > 1.0 { f = 1.0 }
+    let fw = (f * (w as f64)) as i64
+    let mut yy = 0
+    while yy < h {
+        let mut xx = 0
+        while xx < w {
+            if xx < fw { pixel(x + xx, y + yy, 60, 210, 255) }
+            else { pixel(x + xx, y + yy, 34, 40, 50) }
+            xx = xx + 1
+        }
+        yy = yy + 1
+    }
+    let mut bi = 0
+    while bi < w {
+        pixel(x + bi, y, 40, 120, 200)
+        pixel(x + bi, y + h - 1, 40, 120, 200)
+        bi = bi + 1
+    }
+    let mut hov = 0
+    if mx >= x and mx <= x + w and my >= y and my <= y + h { hov = 1 }
+    hov
+}
+
+// Draw an action's name (keybind list). One place for all 15 labels.
+fn draw_action_name(i: i64, x: i64, y: i64, col: i64) {
+    if i == 0 { draw_text(x, y, "Move Forward", 18, col) }
+    if i == 1 { draw_text(x, y, "Move Back", 18, col) }
+    if i == 2 { draw_text(x, y, "Move Left", 18, col) }
+    if i == 3 { draw_text(x, y, "Move Right", 18, col) }
+    if i == 4 { draw_text(x, y, "Jump", 18, col) }
+    if i == 5 { draw_text(x, y, "Slide", 18, col) }
+    if i == 6 { draw_text(x, y, "Dash", 18, col) }
+    if i == 7 { draw_text(x, y, "Fire", 18, col) }
+    if i == 8 { draw_text(x, y, "Reload", 18, col) }
+    if i == 9 { draw_text(x, y, "Overclock", 18, col) }
+    if i == 10 { draw_text(x, y, "Grapple", 18, col) }
+    if i == 11 { draw_text(x, y, "Frag", 18, col) }
+    if i == 12 { draw_text(x, y, "Apply Shield", 18, col) }
+    if i == 13 { draw_text(x, y, "Weapon 1", 18, col) }
+    if i == 14 { draw_text(x, y, "Weapon 2", 18, col) }
+    if i == 15 { draw_text(x, y, "Melee", 18, col) }
+}
+
+// Draw a viewmodel box at a camera-relative offset. (lr,lu,lf) = offset along the camera's
+// right/up/forward; (ex,ey,ez) eye pos; (rx,rz)/(ux,uy,uz)/(fx,fy,fz) the camera basis; the
+// box is oriented (byaw,bpitch) so its local +Z runs along the camera forward.
+fn vm_box(m: i64, lr: f64, lu: f64, lf: f64, ex: f64, ey: f64, ez: f64, rx: f64, rz: f64, ux: f64, uy: f64, uz: f64, fx: f64, fy: f64, fz: f64, byaw: f64, bpitch: f64) {
+    let wx = ex + rx * lr + ux * lu + fx * lf
+    let wy = ey + uy * lu + fy * lf
+    let wz = ez + rz * lr + uz * lu + fz * lf
+    r3d_draw(m, wx, wy, wz, byaw, bpitch, 0.0, 1.0)
+}
