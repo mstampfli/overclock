@@ -1,27 +1,159 @@
 // OVERCLOCK - the client's mutable game state, bundled into ONE struct (like the server's World)
 // so the client's per-section logic can be split into functions that all share it by reference.
-// Grown incrementally; new_client_state() returns a zeroed/default baseline that main() then fills.
+// new_client_state() returns a zeroed/default baseline; main()'s preamble then fills every field
+// with its real init (the camera/feel fields rely on these defaults; everything else is reassigned).
 struct ClientState {
     // Camera + view feel.
-    yaw: f64,
-    pitch: f64,
-    crouch: f64,
-    roll: f64,
-    lean: f64,
-    dip: f64,
-    dipv: f64,
-    prev_vy: f64,
-    prev_air: bool,
-    slidetilt: f64,
-    dashwind: f64,
-    prev_dcd: f64,
-    shake: f64,
-    windlvl: f64
+    yaw: f64, pitch: f64, crouch: f64, roll: f64, lean: f64,
+    dip: f64, dipv: f64, prev_vy: f64, prev_air: bool,
+    slidetilt: f64, dashwind: f64, prev_dcd: f64, shake: f64, windlvl: f64,
+
+    // Text font handle.
+    font_ok: i64,
+
+    // Viewmodel hand offsets (rifle + katana): pos + yaw/pitch/roll.
+    hand_ox: f64, hand_oy: f64, hand_oz: f64, hand_oyaw: f64, hand_opitch: f64, hand_oroll: f64,
+    kat_hand_ox: f64, kat_hand_oy: f64, kat_hand_oz: f64, kat_hand_oyaw: f64, kat_hand_opitch: f64, kat_hand_oroll: f64,
+
+    // Per-actor render/animation state (parallel to actors[]).
+    actor_models: [i64; 9], astate: [i64; 9], aprevx: [f64; 9], aprevz: [f64; 9],
+    ashoot: [f64; 9], ushoot: [i64; 9], aspd: [f64; 9], astate_t: [f64; 9],
+    ajump: [f64; 9], aidle_t: [f64; 9], ayaw: [f64; 9],
+
+    // Loose gun-crate meshes (visual) + explosion-debris meshes.
+    gcx: [f64; 30], gcy: [f64; 30], gcz: [f64; 30], ghx: [f64; 30], ghy: [f64; 30], ghz: [f64; 30], gmesh: [i64; 30],
+    exmesh: [i64; 8],
+
+    // Fixed-pickup respawn cooldowns (client mirror).
+    pkcd: [f64; 11],
+
+    // The shared actor + bot-brain arrays (player + bots + remotes).
+    actors: [world::Actor; 9], brains: [world::Brain; 9],
+
+    // Keybinds + settings.
+    bind_code: [f64; 16], sens: f64, vol: i64, disp_mode: i64, disp_applied: i64, lobby_focus: i64,
+    username: str, uname_len: i64, uname_codes: [i64; 16],
+    ch_size: i64, ch_gap: i64, ch_thick: i64, ch_dot: i64, ch_r: i64, ch_g: i64, ch_b: i64, active_preset: i64,
+    settings: [f64; 100],
+
+    // Net / lobby.
+    net_mode: i64, net_started: bool, lobby_full: bool, join_addr: str, addr_len: i64,
+
+    // Hit feedback + HUD framebuffer size.
+    hit_t: f64, hxp: f64, hyp: f64, hzp: f64, hitmark: f64, killmark: f64, fbw: i64, fbh: i64,
+
+    // Score.
+    kills: i64, deaths: i64,
+
+    // Net survivability bookkeeping (slot -> net id, respawn/heal counters seen).
+    apid: [i64; 9], cpid_h: [i64; 9], cresp_seen: [i64; 9], cheal_seen: [i64; 9],
+
+    // Guest-side reconcile state + debug.
+    g_resp_ctr: f64, g_heal_ctr: f64, g_hp_prev: f64, g_pk_cells: i64, g_pk_res: i64,
+    g_ammo_applied: i64, g_hit_seq: i64, g_hurt: i64, dbg_lc: i64, dbg_fb: i64, dbg_dead: i64,
+    vig_hp: f64, g_resp_wait: i64, g_resp_wait_t: f64, g_joined: i64, g_disc_t: f64,
+
+    // Scoreboard + kill feed.
+    akills: [i64; 9], adeaths: [i64; 9], last_hit: [i64; 9], death_done: [i64; 9],
+    kr_oc: [f64; 9], kr_mark: [f64; 9],
+    kf_killer: [i64; 6], kf_victim: [i64; 6], kf_time: [f64; 6],
+    kf_killer_pid: [i64; 6], kf_victim_pid: [i64; 6], kf_cur: i64,
+
+    // Round config + state.
+    kill_target: i64, round_len: f64, bot_count: i64, round_timer: f64, round_over: bool, over_t: f64, won: bool,
+
+    // Death / damage.
+    dmg_dir: f64, dead: bool, prev_dead: bool, respawn_cd: f64, prev_weapon: i64,
+
+    // Overclock meter.
+    oc_meter: f64, oc_active: bool, oc_timer: f64, oc_gain_t: f64,
+
+    // Grapple.
+    grapple_on: bool, gx: f64, gy: f64, gz: f64, g_cd: f64, g_time: f64, g_prev: i64, g_lx: f64, g_ly: f64, g_lz: f64,
+
+    // Grenade.
+    nade_live: bool, grx: f64, gry: f64, grz: f64, grvx: f64, grvy: f64, grvz: f64,
+    nfuse: f64, nade_cd: f64, nade_prev: i64, nade_acc: f64, nade_grace: f64,
+
+    // Melee.
+    melee_cd: f64, melee_prev: i64, g_melee_ctr: i64,
+
+    // Explosion visuals + the client's pending blast impulse echo.
+    boom_t: f64, boom_int: f64, boomx: f64, boomy: f64, boomz: f64,
+    explode: bool, ex_x: f64, ex_y: f64, ex_z: f64, ex_int: f64, ex_src: f64,
+    blast_ix: f64, blast_iy: f64, blast_iz: f64,
+
+    // Client-visual projectiles.
+    prjx: [f64; 12], prjy: [f64; 12], prjz: [f64; 12], prjvx: [f64; 12], prjvy: [f64; 12], prjvz: [f64; 12],
+    prjlife: [f64; 12], prjsrc: [f64; 12], prjcur: i64,
+
+    // Tracer segments.
+    trx1: [f64; 24], try1: [f64; 24], trz1: [f64; 24], trx2: [f64; 24], try2: [f64; 24], trz2: [f64; 24],
+    trlife: [f64; 24], trcur: i64,
+
+    // Combat timers.
+    dmg_timer: f64, pinvuln: f64, hurt_flash: f64, respawn_req: f64, etime: f64,
+
+    // Spark particles.
+    ppx: [f64; 28], ppy: [f64; 28], ppz: [f64; 28], pvx: [f64; 28], pvy: [f64; 28], pvz: [f64; 28],
+    plife: [f64; 28], pcur: i64,
+
+    // Loot drops (client mirror).
+    dropx: [f64; 6], dropy: [f64; 6], dropz: [f64; 6], droptype: [f64; 6], droplife: [f64; 6], dropcur: i64,
+
+    // Menu / screen flow.
+    screen: i64, set_back: i64, do_reset: bool, menu_t: f64, mprev: i64, rebind: i64, rebind_armed: i64, esc_prev: i64
 }
 
 fn new_client_state() -> ClientState {
     ClientState {
-        yaw: 0.0, pitch: 0.0, crouch: 0.0, roll: 0.0, lean: 0.0, dip: 0.0, dipv: 0.0,
-        prev_vy: 0.0, prev_air: false, slidetilt: 0.0, dashwind: 0.0, prev_dcd: 0.0, shake: 0.0, windlvl: 0.0
+        yaw: 0.0, pitch: 0.0, crouch: 0.0, roll: 0.0, lean: 0.0,
+        dip: 0.0, dipv: 0.0, prev_vy: 0.0, prev_air: false,
+        slidetilt: 0.0, dashwind: 0.0, prev_dcd: 0.0, shake: 0.0, windlvl: 0.0,
+        font_ok: 0,
+        hand_ox: 0.0, hand_oy: 0.0, hand_oz: 0.0, hand_oyaw: 0.0, hand_opitch: 0.0, hand_oroll: 0.0,
+        kat_hand_ox: 0.0, kat_hand_oy: 0.0, kat_hand_oz: 0.0, kat_hand_oyaw: 0.0, kat_hand_opitch: 0.0, kat_hand_oroll: 0.0,
+        actor_models: [0; 9], astate: [0; 9], aprevx: [0.0; 9], aprevz: [0.0; 9],
+        ashoot: [0.0; 9], ushoot: [0; 9], aspd: [0.0; 9], astate_t: [0.0; 9],
+        ajump: [0.0; 9], aidle_t: [0.0; 9], ayaw: [0.0; 9],
+        gcx: [0.0; 30], gcy: [0.0; 30], gcz: [0.0; 30], ghx: [0.0; 30], ghy: [0.0; 30], ghz: [0.0; 30], gmesh: [0; 30],
+        exmesh: [0; 8],
+        pkcd: [0.0; 11],
+        actors: [ world::Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
+        brains: [ world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 } ; 9 ],
+        bind_code: [0.0; 16], sens: 0.0, vol: 0, disp_mode: 0, disp_applied: 0, lobby_focus: 0,
+        username: "", uname_len: 0, uname_codes: [0; 16],
+        ch_size: 0, ch_gap: 0, ch_thick: 0, ch_dot: 0, ch_r: 0, ch_g: 0, ch_b: 0, active_preset: 0,
+        settings: [0.0; 100],
+        net_mode: 0, net_started: false, lobby_full: false, join_addr: "", addr_len: 0,
+        hit_t: 0.0, hxp: 0.0, hyp: 0.0, hzp: 0.0, hitmark: 0.0, killmark: 0.0, fbw: 0, fbh: 0,
+        kills: 0, deaths: 0,
+        apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9],
+        g_resp_ctr: 0.0, g_heal_ctr: 0.0, g_hp_prev: 100.0, g_pk_cells: 0, g_pk_res: 60,
+        g_ammo_applied: 0, g_hit_seq: 0, g_hurt: 0, dbg_lc: 0, dbg_fb: 0, dbg_dead: 0,
+        vig_hp: 100.0, g_resp_wait: 0, g_resp_wait_t: 0.0, g_joined: 0, g_disc_t: 0.0,
+        akills: [0; 9], adeaths: [0; 9], last_hit: [0; 9], death_done: [0; 9],
+        kr_oc: [0.0; 9], kr_mark: [0.0; 9],
+        kf_killer: [0; 6], kf_victim: [0; 6], kf_time: [0.0; 6],
+        kf_killer_pid: [0 - 1; 6], kf_victim_pid: [0 - 1; 6], kf_cur: 0,
+        kill_target: 15, round_len: 120.0, bot_count: 5, round_timer: 120.0, round_over: false, over_t: 0.0, won: false,
+        dmg_dir: 0.0, dead: false, prev_dead: false, respawn_cd: 0.0, prev_weapon: 0,
+        oc_meter: 0.0, oc_active: false, oc_timer: 0.0, oc_gain_t: 3.0,
+        grapple_on: false, gx: 0.0, gy: 0.0, gz: 0.0, g_cd: 0.0, g_time: 0.0, g_prev: 0, g_lx: 0.0, g_ly: 0.0, g_lz: 0.0,
+        nade_live: false, grx: 0.0, gry: 0.0, grz: 0.0, grvx: 0.0, grvy: 0.0, grvz: 0.0,
+        nfuse: 0.0, nade_cd: 0.0, nade_prev: 0, nade_acc: 0.0, nade_grace: 0.0,
+        melee_cd: 0.0, melee_prev: 0, g_melee_ctr: 0,
+        boom_t: 0.0, boom_int: 1.0, boomx: 0.0, boomy: 0.0, boomz: 0.0,
+        explode: false, ex_x: 0.0, ex_y: 0.0, ex_z: 0.0, ex_int: 1.0, ex_src: 0.0,
+        blast_ix: 0.0, blast_iy: 0.0, blast_iz: 0.0,
+        prjx: [0.0; 12], prjy: [0.0; 12], prjz: [0.0; 12], prjvx: [0.0; 12], prjvy: [0.0; 12], prjvz: [0.0; 12],
+        prjlife: [0.0; 12], prjsrc: [0.0; 12], prjcur: 0,
+        trx1: [0.0; 24], try1: [0.0; 24], trz1: [0.0; 24], trx2: [0.0; 24], try2: [0.0; 24], trz2: [0.0; 24],
+        trlife: [0.0; 24], trcur: 0,
+        dmg_timer: 0.0, pinvuln: 0.0, hurt_flash: 0.0, respawn_req: 0.0, etime: 0.0,
+        ppx: [0.0; 28], ppy: [0.0; 28], ppz: [0.0; 28], pvx: [0.0; 28], pvy: [0.0; 28], pvz: [0.0; 28],
+        plife: [0.0; 28], pcur: 0,
+        dropx: [0.0; 6], dropy: [0.0; 6], dropz: [0.0; 6], droptype: [0.0; 6], droplife: [0.0; 6], dropcur: 0,
+        screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1
     }
 }
