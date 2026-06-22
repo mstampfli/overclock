@@ -924,28 +924,17 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             let tdx = tmx - bx0
             let tdz = tmz - bz0
             let tdist = sqrt(tdx * tdx + tdz * tdz)
-            let mut mdx = 0.0
-            let mut mdz = 0.0
-            if tdist > 0.001 { mdx = tdx / tdist; mdz = tdz / tdist }
-            let perpx = 0.0 - mdz
-            let perpz = mdx
             let mut juke = sin(w.etime * 2.2 + (ei2 as f64) * 1.7) * 0.5
-            let mut runsp = 9.0
-            if tdist > 18.0 { runsp = 12.0 }
             let mut adv = 1.0
             if tdist < 4.0 { adv = 0.0 }
             if tdist < 2.0 { adv = 0.0 - 1.0 }
             if by0 - tmy > 0.4 and tdist < 2.5 { adv = 0.0 - 1.5 }
             if seeking == 1 {
                 // sprint STRAIGHT in to the pickup (no weave, so it homes close enough to collect)
-                runsp = 12.0
                 adv = 1.0
                 juke = 0.0
                 if tdist < 1.0 { adv = 0.0 }
             }
-            let mut bvx = (mdx * adv + perpx * juke) * runsp
-            let mut bvz = (mdz * adv + perpz * juke) * runsp
-            if channeling == 1 or passive == 1 { bvx = 0.0; bvz = 0.0 }   // hold still (shielding or test-passive)
             // Gravity + jump are now the SIM's (cfg-driven), not manual. Decide whether to jump and
             // feed it as input below; the sim does the launch + coyote/buffer like a player.
             let moved = sqrt((bx0 - w.brains[ei2].px0) * (bx0 - w.brains[ei2].px0) + (bz0 - w.brains[ei2].pz0) * (bz0 - w.brains[ei2].pz0))
