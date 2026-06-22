@@ -5,3 +5,4 @@ lib = "server.aur"
 [dependencies]
 world = "../world"
 sim = "../sim"
+combat = "../combat"

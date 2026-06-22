@@ -143,7 +143,7 @@ fn sync_clients(w: world::World) -> i64 {
                                 // than the target blocks the swing; our own + the target's capsule don't.
                                 let mlos = phys3d_raycast_world(w.actors[slot].hdl, mpx, mpy, mpz, tdx / tdd, tdy / tdd, tdz / tdd, tdd)
                                 if mlos < 0 {
-                                    w.actors[mt].hp = w.actors[mt].hp - 75.0   // BYPASS shield -> straight to hp
+                                    combat::apply_hit(w.actors, mt, 75.0, 0.0, 1)   // katana: BYPASS shield -> straight to hp
                                     w.brains[mt].kx = mhx * 14.0
                                     w.brains[mt].ky = 6.0
                                     w.brains[mt].kz = mhz * 14.0
@@ -532,14 +532,8 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                         let mut vk = 0
                         while vk < 9 {
                             if vk != ci and hb == w.actors[vk].hdl and w.actors[vk].hp > 0.0 {
-                                let mut dmg = 17.0   // gun_dmg
                                 let hrel = tey - phys3d_y(w.actors[vk].hdl)
-                                if hrel > 0.5 { dmg = dmg * 2.0 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
-                                if w.actors[vk].sh > 0.0 {
-                                    if w.actors[vk].sh >= dmg { w.actors[vk].sh = w.actors[vk].sh - dmg; dmg = 0.0 }
-                                    else { dmg = dmg - w.actors[vk].sh; w.actors[vk].sh = 0.0 }
-                                }
-                                w.actors[vk].hp = w.actors[vk].hp - dmg
+                                combat::apply_hit(w.actors, vk, 17.0, hrel, 0)   // gun_dmg, shield-then-hp + zoning
                                 if vk < nb { w.brains[vk].pop = 0.1 }
                                 w.last_hit[vk] = ci
                             }
@@ -586,14 +580,8 @@ fn client_shots_tick(w: world::World) -> i64 {
             }
         }
         if vai >= 0 and w.actors[vai].hp > 0.0 {
-            let mut dmg = 17.0   // gun_dmg
             let hrel = hY - phys3d_y(w.actors[vai].hdl)
-            if hrel > 0.5 { dmg = dmg * 2.0 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
-            if w.actors[vai].sh > 0.0 {
-                if w.actors[vai].sh >= dmg { w.actors[vai].sh = w.actors[vai].sh - dmg; dmg = 0.0 }
-                else { dmg = dmg - w.actors[vai].sh; w.actors[vai].sh = 0.0 }
-            }
-            w.actors[vai].hp = w.actors[vai].hp - dmg
+            combat::apply_hit(w.actors, vai, 17.0, hrel, 0)   // gun_dmg, shield-then-hp + zoning
             if vai < 5 { w.brains[vai].pop = 0.1 }
             // Credit the shooter (a client slot) so the death sweep counts the kill for them.
             let mut sai = 0 - 1
@@ -650,11 +638,7 @@ fn explode(w: world::World, dx: f64, dy: f64, dz: f64, gi: f64, src_slot: i64) -
             if bdd < erad {
                 let mut dmg = 150.0 * gi * (1.0 - 0.30 * bdd / erad)   // nade_dmg (a bit less than before)
                 if eej == src_slot { dmg = dmg * 0.5 }                 // your OWN blast only hurts you half
-                if w.actors[eej].sh > 0.0 {
-                    if w.actors[eej].sh >= dmg { w.actors[eej].sh = w.actors[eej].sh - dmg; dmg = 0.0 }
-                    else { dmg = dmg - w.actors[eej].sh; w.actors[eej].sh = 0.0 }
-                }
-                w.actors[eej].hp = w.actors[eej].hp - dmg
+                combat::apply_hit(w.actors, eej, dmg, 0.0, 0)          // shield-then-hp (no zoning for blasts)
                 if eej < w.round.bots { w.brains[eej].pop = 0.15 }
                 w.last_hit[eej] = src_slot
             }

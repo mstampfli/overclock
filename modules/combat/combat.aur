@@ -1,0 +1,24 @@
+// OVERCLOCK - shared combat module. The authoritative combat MATH, shared by the
+// dedicated server AND the client's local prediction, so a hit/blast/slash resolves
+// IDENTICALLY on both sides - no deviation, only lag correction. Every function
+// operates on the world::Actor array BY REFERENCE (mutations persist); each caller
+// passes its OWN array (the server its World.actors, the client its local actors).
+// Shared CODE, separate DATA - that is what stops client/server drift.
+
+// Apply one hit's damage to actor `vk`: hit-location zoning first (head 2x when the
+// impact is above the capsule centre by +0.5, legs 0.65x below -0.4, torso 1x), then
+// shield-then-health UNLESS `bypass` is set (the katana goes straight to green hp).
+// Returns 1 if it was a headshot so the caller can play the headshot ding. This is the
+// single source of truth for: the rifle, the bot rifle, lag-comp'd client shots,
+// explosions (pass hrel 0 = no zoning), and the katana (pass bypass 1).
+fn apply_hit(actors: [world::Actor; 9], vk: i64, base: f64, hrel: f64, bypass: i64) -> i64 {
+    let mut dmg = base
+    let mut head = 0
+    if hrel > 0.5 { dmg = dmg * 2.0; head = 1 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+    if bypass == 0 and actors[vk].sh > 0.0 {
+        if actors[vk].sh >= dmg { actors[vk].sh = actors[vk].sh - dmg; dmg = 0.0 }
+        else { dmg = dmg - actors[vk].sh; actors[vk].sh = 0.0 }
+    }
+    actors[vk].hp = actors[vk].hp - dmg
+    head
+}
