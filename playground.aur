@@ -2095,7 +2095,6 @@ fn main() {
             // host re-simulates the guest's launch and applies the real damage). pl_i is skipped here
             // because the player's own self-damage is handled separately below.
             let mut ecap = bot_n
-            if net_mode == 1 { ecap = nactors }
             let mut ej = 0
             while ej < ecap {
                 if ej != pl_i and actors[ej].hp > 0.0 {
@@ -2533,14 +2532,6 @@ fn main() {
                         trlife[trcur] = 0.06
                         trcur = trcur + 1
                         if trcur >= tracer_n { trcur = 0 }
-                        // HOST: announce this shot (its own + its bots') so every guest draws the
-                        // tracer + hears it. Shooter net id: 0 = host, 1000+slot = a bot. Relayed
-                        // CLIENT shots are announced by the engine in the fire handler.
-                        if net_mode == 1 {
-                            let mut shpid = net_my_id()
-                            if ci != pl_i { shpid = 1000 + ci }
-                            net_push_shot(shpid, ox, oy, oz, tex, tey, tez, wp)
-                        }
                     } else {
                         // PREDICT the rocket locally on EVERY machine (instant travel-time feel, just like
                         // before the refactor). A guest ALSO tells the host (intent), which flies its own
@@ -3326,7 +3317,6 @@ fn main() {
             let ssh = net_shot_shooter(sci)
             let mut show = 1
             if ssh == net_my_id() { show = 0 }
-            if net_mode == 1 and ssh >= 1000 { show = 0 }
             if show == 1 {
                 let sx1 = net_shot_field(sci, 0)
                 let sy1 = net_shot_field(sci, 1)
@@ -3521,18 +3511,6 @@ fn main() {
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
         draw_text(12, 12, "BUILD NETV2-22 host==guest + bot shield-AI", 18, 65280)
-        // Host hit-resolution diagnostics (tiny, top-left under the stamp): how the host's own
-        // shots at players resolved. lc = lag-comp hits, fb = local-ray fallback hits (the fix for
-        // "can't damage players"), dx = shots that found a victim already DEAD. If you can't damage
-        // someone and lc+fb both stay flat while you're clearly on target, that's the smoking gun.
-        if net_mode == 1 {
-            draw_text(12, 34, "hit lc", 14, 8947848)
-            draw_int(58, 34, dbg_lc, 14, 8947848)
-            draw_text(86, 34, "fb", 14, 8947848)
-            draw_int(108, 34, dbg_fb, 14, 8947848)
-            draw_text(136, 34, "dx", 14, 8947848)
-            draw_int(158, 34, dbg_dead, 14, 8947848)
-        }
         // GUEST join/disconnect banner: "joining" until the host inits our character, and a clear
         // "disconnected" -> back to the menu if the host vanishes (net_connected goes false).
         if net_mode == 2 {
@@ -3694,18 +3672,10 @@ fn main() {
         draw_int(cx - 46, 66, kills, 26, col_gold)
         draw_text(cx - 6, 66, "/", 26, col_white)
         draw_int(cx + 14, 66, kill_target, 26, col_white)
-        // MP roster. Host owns bots, so it shows connected humans + its bot budget. A guest
-        // has no bot concept - everyone on the wire is just a combatant, so it shows one total.
+        // MP roster: everyone on the wire is just a combatant, so show one total.
         if net_started {
-            if net_mode == 1 {
-                draw_text(fbw - 168, 18, "players ", 16, col_gold)
-                draw_int(fbw - 96, 18, net_player_count(), 16, col_white)
-                draw_text(fbw - 168, 38, "bots ", 16, col_gold)
-                draw_int(fbw - 96, 38, active_bots, 16, col_white)
-            } else {
-                draw_text(fbw - 168, 18, "in match ", 16, col_gold)
-                draw_int(fbw - 96, 18, net_player_count(), 16, col_white)
-            }
+            draw_text(fbw - 168, 18, "in match ", 16, col_gold)
+            draw_int(fbw - 96, 18, net_player_count(), 16, col_white)
         }
 
         // Kill feed (top-right): "KILLER > VICTIM". Decrement every timer FIRST so expiry
