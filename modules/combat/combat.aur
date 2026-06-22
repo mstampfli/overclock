@@ -52,3 +52,31 @@ fn blast_hit(actors: [world::Actor; 9], brains: [world::Brain; 9], last_hit: [i6
     }
     hit
 }
+
+// True if actor `mt` is a valid katana target from `ox,oy,oz` looking along (fwx,fwy,fwz): within
+// `range`, inside the ~120-deg swing arc (forward-dot > 0.5), and with WALL line-of-sight (a wall
+// between you and it blocks; your own + the target's capsule don't). `exclude` = the attacker's
+// collider. Shared so the client's predicted swing and the host's authoritative one match exactly.
+fn in_melee_arc(actors: [world::Actor; 9], mt: i64, ox: f64, oy: f64, oz: f64, fwx: f64, fwy: f64, fwz: f64, range: f64, exclude: i64) -> i64 {
+    let h = actors[mt].hdl
+    let tdx = phys3d_x(h) - ox
+    let tdy = (phys3d_y(h) + 0.5) - oy
+    let tdz = phys3d_z(h) - oz
+    let tdd = sqrt(tdx * tdx + tdy * tdy + tdz * tdz)
+    if tdd <= 0.001 or tdd >= range { return 0 }
+    if (tdx * fwx + tdy * fwy + tdz * fwz) / tdd <= 0.5 { return 0 }
+    if phys3d_raycast_world(exclude, ox, oy, oz, tdx / tdd, tdy / tdd, tdz / tdd, tdd) < 0 { return 1 }
+    0
+}
+
+// Land a katana hit on `mt`: BYPASS shield -> `dmg` straight to green hp, a hit-flash, a horizontal
+// shove (hx,hz) via its brain (+ a fixed upward pop), and kill-credit to `attacker`. Shared by the
+// host (authoritative swing) and the client (prediction), so the slash resolves identically.
+fn melee_hit(actors: [world::Actor; 9], brains: [world::Brain; 9], last_hit: [i64; 9], mt: i64, attacker: i64, hx: f64, hz: f64, dmg: f64) {
+    apply_hit(actors, mt, dmg, 0.0, 1)
+    brains[mt].pop = 0.2
+    brains[mt].kx = hx * 14.0
+    brains[mt].ky = 6.0
+    brains[mt].kz = hz * 14.0
+    last_hit[mt] = attacker
+}

@@ -133,23 +133,9 @@ fn sync_clients(w: world::World) -> i64 {
                 while mt < 9 {
                     let menemy = (mt < w.round.bots) or (mt >= 6 and w.apid[mt] != 9999)
                     if mt != slot and menemy and w.actors[mt].hp > 0.0 {
-                        let tdx = phys3d_x(w.actors[mt].hdl) - mpx
-                        let tdy = (phys3d_y(w.actors[mt].hdl) + 0.5) - mpy
-                        let tdz = phys3d_z(w.actors[mt].hdl) - mpz
-                        let tdd = sqrt(tdx * tdx + tdy * tdy + tdz * tdz)
-                        if tdd > 0.001 and tdd < 2.8 {
-                            if (tdx * mfx + tdy * mfy + tdz * mfz) / tdd > 0.5 {
-                                // LOS = WALLS only (phys3d_raycast_world skips characters): a wall closer
-                                // than the target blocks the swing; our own + the target's capsule don't.
-                                let mlos = phys3d_raycast_world(w.actors[slot].hdl, mpx, mpy, mpz, tdx / tdd, tdy / tdd, tdz / tdd, tdd)
-                                if mlos < 0 {
-                                    combat::apply_hit(w.actors, mt, 75.0, 0.0, 1)   // katana: BYPASS shield -> straight to hp
-                                    w.brains[mt].kx = mhx * 14.0
-                                    w.brains[mt].ky = 6.0
-                                    w.brains[mt].kz = mhz * 14.0
-                                    w.last_hit[mt] = slot
-                                }
-                            }
+                        // Shared arc test + hit (the SAME code the client predicts the swing with).
+                        if combat::in_melee_arc(w.actors, mt, mpx, mpy, mpz, mfx, mfy, mfz, 2.8, w.actors[slot].hdl) == 1 {
+                            combat::melee_hit(w.actors, w.brains, w.last_hit, mt, slot, mhx, mhz, 75.0)
                         }
                     }
                     mt = mt + 1
