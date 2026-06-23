@@ -165,7 +165,7 @@ fn new_client_state() -> ClientState {
         screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1,
         preview_model: 0, tune_mode: 0, tune_clip: 9, tune_weapon: 0, tune_play: 0 - 1, tune_tp: 0, tune_np: 0, tune_mp: 0,
         sl_thigh: 0.0 - 1.02, sl_shin: 0.03, sl_hip: 0.0 - 0.46, sl_drop: 0.0 - 0.56, tune_sel: 0, tune_cp: 0,
-        sl_lthx: 0.0 - 1.02, sl_lthy: 0.0, sl_lthz: 0.0, sl_lshx: 0.03, sl_lshy: 0.0, sl_lshz: 0.0
+        sl_lthx: 0.0 - 0.62, sl_lthy: 0.0, sl_lthz: 0.0, sl_lshx: 0.03, sl_lshy: 0.0, sl_lshz: 0.0
     }
 }
 
