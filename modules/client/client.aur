@@ -157,3 +157,420 @@ fn new_client_state() -> ClientState {
         screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1
     }
 }
+
+// Read-only assets + config the extracted client functions draw from. Built once in main()
+// after the preamble (handles/geometry need the window open + models loaded), then passed
+// alongside cs. The mutable game state is cs; the immutable config/handles are env.
+struct ClientEnv {
+    // Screen-mode ids.
+    s_title: i64, s_settings: i64, s_pause: i64, s_game: i64, s_quit: i64, s_lobby: i64, s_crosshair: i64,
+    // Counts + the sim config blob + the loopback server port.
+    act_n: i64, bot_n: i64, max_remote: i64, net_port: i64, geo_n: i64, ext_n: i64,
+    cfg: [f64; 21],
+    // Backdrop geometry: ground plane + the extra ramp meshes (pos + rot).
+    ground_vis: i64,
+    exx: [f64; 8], exy: [f64; 8], exz: [f64; 8], exrx: [f64; 8], exrz: [f64; 8]
+}
+
+// ---------- MENU (title / settings / pause / lobby / crosshair) ----------
+// One self-contained loop: draws the orbiting backdrop + the active menu screen, handles
+// its clicks/keys, and returns only once a non-menu screen is chosen (PLAY/RESUME -> game,
+// QUIT/window-close -> quit). All mutable state lives in cs; env holds the read-only
+// backdrop geometry + the server-start config.
+fn run_menu(cs: ClientState, env: ClientEnv) {
+    grab_mouse(0)           // free cursor + clear grab_wanted (no click-recapture)
+    loop {
+        if r3d_present() == 0 { cs.screen = env.s_quit; break }
+        r3d_begin()
+        // Apply the saved display mode once the window exists.
+        if cs.disp_applied == 0 { window_fullscreen(cs.disp_mode); cs.disp_applied = 1 }
+    // Clear the persistent game post-overlays so the red damage vignette + speed
+    // lines don't linger over the menu/pause/cs.settings. The game loop reapplies them
+    // from cs.hurt_flash/cs.windlvl on resume.
+    r3d_damage(0.0, 0.0, 0.0, 0.0, 0.0)
+    r3d_speedlines(0.0, 0.0)
+    cs.menu_t = cs.menu_t + frame_dt()
+    let sw = surface_w()
+    let sh = surface_h()
+    if sw > 0 and (sw != cs.fbw or sh != cs.fbh) { framebuffer(sw, sh); cs.fbw = sw; cs.fbh = sh }
+    let cx = cs.fbw / 2
+    let cy = cs.fbh / 2
+    // Backdrop: slowly orbit INSIDE the roofed hall (an outside camera would just
+    // see the roof). Floor + all geometry + ramps.
+    let ca = cs.menu_t * 0.12
+    r3d_camera(cos(ca) * 26.0, 13.0, sin(ca) * 26.0, 0.0, 5.0, 0.0, 65.0)
+    r3d_draw(env.ground_vis, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+    let mut gd = 0
+    while gd < env.geo_n {
+        r3d_draw(cs.gmesh[gd], cs.gcx[gd], cs.gcy[gd], cs.gcz[gd], 0.0, 0.0, 0.0, 1.0)
+        gd = gd + 1
+    }
+    let mut xd = 0
+    while xd < env.ext_n {
+        r3d_draw(cs.exmesh[xd], env.exx[xd], env.exy[xd], env.exz[xd], 0.0, env.exrx[xd], env.exrz[xd], 1.0)
+        xd = xd + 1
+    }
+    clear(0, 0, 0)
+    let mx = mouse_x()
+    let my = mouse_y()
+    let mdn = mouse_down()
+    let mut clicked = 0
+    if mdn > 0 and cs.mprev == 0 { clicked = 1 }
+    cs.mprev = mdn
+    let wht = 255 * 65536 + 255 * 256 + 255
+    let gold = 255 * 65536 + 200 * 256 + 60
+    if cs.screen == env.s_title {
+        let tw = text_width("OVERCLOCK", 64)
+        draw_text(cx - tw / 2, cy - 175, "OVERCLOCK", 64, gold)
+        let bx = cx - 110
+        let bc = cx   // button centre x (buttons are centred on cx, width 220)
+        if clienthud::menu_btn(bx, cy - 30, 220, 48, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_lobby; cs.lobby_focus = 0 } }
+        clienthud::draw_centered("PLAY", bx, cy - 30, 220, 48, 28, wht)
+        if clienthud::menu_btn(bx, cy + 34, 220, 48, mx, my) == 1 { if clicked == 1 { cs.set_back = env.s_title; cs.screen = env.s_settings } }
+        clienthud::draw_centered("SETTINGS", bx, cy + 34, 220, 48, 28, wht)
+        if clienthud::menu_btn(bx, cy + 98, 220, 48, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_quit } }
+        clienthud::draw_centered("QUIT", bx, cy + 98, 220, 48, 28, wht)
+    } else { if cs.screen == env.s_pause {
+        // ---- PAUSE (Escape during play): resume / cs.settings / quit to title ----
+        draw_text(cx - text_width("PAUSED", 56) / 2, cy - 175, "PAUSED", 56, gold)
+        let bx = cx - 110
+        let bc = cx
+        if clienthud::menu_btn(bx, cy - 30, 220, 48, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_game } }
+        draw_text(bc - text_width("RESUME", 28) / 2, cy - 30 + 8, "RESUME", 28, wht)
+        if clienthud::menu_btn(bx, cy + 34, 220, 48, mx, my) == 1 { if clicked == 1 { cs.set_back = env.s_pause; cs.screen = env.s_settings } }
+        draw_text(bc - text_width("SETTINGS", 28) / 2, cy + 34 + 8, "SETTINGS", 28, wht)
+        if clienthud::menu_btn(bx, cy + 98, 220, 48, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_title } }
+        draw_text(bc - text_width("QUIT TO TITLE", 26) / 2, cy + 98 + 9, "QUIT TO TITLE", 26, wht)
+        // Escape again resumes (toggle). Uses the shared edge so a held key cs.won't fire.
+        let esc_now = key_down(20)
+        if esc_now > 0 and cs.esc_prev == 0 { cs.screen = env.s_game }
+        cs.esc_prev = esc_now
+    } else { if cs.screen == env.s_lobby {
+        // ---- LOBBY / MATCH SETUP: pick the match cs.settings + network mode, then START ----
+        draw_text(cx - text_width("MATCH SETUP", 40) / 2, 14, "MATCH SETUP", 40, gold)
+        let cl = cx - 230
+        // Route typed characters to whichever text field is focused (name = 1, host = 2).
+        let mut tc = input_char()
+        while tc != 0 {
+            if cs.lobby_focus == 1 {
+                if tc == 8 { if cs.uname_len > 0 { cs.uname_len = cs.uname_len - 1; cs.username = substr(cs.username, 0, cs.uname_len) } } else { if clienthud::is_name_char(tc) == 1 and cs.uname_len < 16 { cs.uname_codes[cs.uname_len] = tc; cs.uname_len = cs.uname_len + 1; cs.username = cs.username + clienthud::code_char(tc) } }
+            } else { if cs.lobby_focus == 2 {
+                if tc == 8 { if cs.addr_len > 0 { cs.addr_len = cs.addr_len - 1; cs.join_addr = substr(cs.join_addr, 0, cs.addr_len) } } else { if clienthud::is_name_char(tc) == 1 and cs.addr_len < 40 { cs.join_addr = cs.join_addr + clienthud::code_char(tc); cs.addr_len = cs.addr_len + 1 } }
+            } }
+            tc = input_char()
+        }
+        // Name field (click to edit; empty shows as PLAYER on the scoreboard).
+        draw_text(cl, 78, "Name", 24, wht)
+        let mut ncol = gold
+        if cs.lobby_focus == 1 { ncol = 255 * 65536 + 120 * 256 + 120 }
+        if clienthud::menu_btn(cl + 110, 74, 300, 30, mx, my) == 1 { if clicked == 1 { cs.lobby_focus = 1 } }
+        let mut nshow = cs.username
+        if cs.uname_len == 0 { nshow = "PLAYER" }
+        clienthud::draw_centered(nshow, cl + 110, 74, 300, 30, 22, ncol)
+        draw_text(cl, 116, "Opponents", 24, wht)   // bots + joining players replace them
+        if clienthud::menu_btn(cl + 210, 112, 32, 32, mx, my) == 1 { if clicked == 1 { cs.bot_count = cs.bot_count - 1; if cs.bot_count < 0 { cs.bot_count = 0 } } }
+        clienthud::draw_centered("-", cl + 210, 112, 32, 32, 24, wht)
+        draw_int(cl + 258, 117, cs.bot_count, 24, gold)
+        if clienthud::menu_btn(cl + 300, 112, 32, 32, mx, my) == 1 { if clicked == 1 { cs.bot_count = cs.bot_count + 1; if cs.bot_count > env.bot_n { cs.bot_count = env.bot_n } } }
+        clienthud::draw_centered("+", cl + 300, 112, 32, 32, 24, wht)
+        draw_text(cl, 166, "Round (s)", 24, wht)
+        if clienthud::menu_btn(cl + 210, 162, 32, 32, mx, my) == 1 { if clicked == 1 { cs.round_len = cs.round_len - 30.0; if cs.round_len < 30.0 { cs.round_len = 30.0 } } }
+        clienthud::draw_centered("-", cl + 210, 162, 32, 32, 24, wht)
+        draw_int(cl + 250, 167, cs.round_len as i64, 24, gold)
+        if clienthud::menu_btn(cl + 300, 162, 32, 32, mx, my) == 1 { if clicked == 1 { cs.round_len = cs.round_len + 30.0; if cs.round_len > 600.0 { cs.round_len = 600.0 } } }
+        clienthud::draw_centered("+", cl + 300, 162, 32, 32, 24, wht)
+        draw_text(cl, 216, "Kills to win", 24, wht)
+        if clienthud::menu_btn(cl + 210, 212, 32, 32, mx, my) == 1 { if clicked == 1 { cs.kill_target = cs.kill_target - 5; if cs.kill_target < 5 { cs.kill_target = 5 } } }
+        clienthud::draw_centered("-", cl + 210, 212, 32, 32, 24, wht)
+        draw_int(cl + 258, 217, cs.kill_target, 24, gold)
+        if clienthud::menu_btn(cl + 300, 212, 32, 32, mx, my) == 1 { if clicked == 1 { cs.kill_target = cs.kill_target + 5; if cs.kill_target > 50 { cs.kill_target = 50 } } }
+        clienthud::draw_centered("+", cl + 300, 212, 32, 32, 24, wht)
+        draw_text(cl, 280, "Mode", 24, wht)
+        let mut mc0 = wht
+        if cs.net_mode == 0 { mc0 = gold }
+        if clienthud::menu_btn(cl + 110, 276, 116, 34, mx, my) == 1 { if clicked == 1 { cs.net_mode = 0 } }
+        clienthud::draw_centered("PRACTICE", cl + 110, 276, 116, 34, 20, mc0)
+        let mut mc1 = wht
+        if cs.net_mode == 1 { mc1 = gold }
+        if clienthud::menu_btn(cl + 234, 276, 78, 34, mx, my) == 1 { if clicked == 1 { cs.net_mode = 1 } }
+        clienthud::draw_centered("HOST", cl + 234, 276, 78, 34, 20, mc1)
+        let mut mc2 = wht
+        if cs.net_mode == 2 { mc2 = gold }
+        if clienthud::menu_btn(cl + 320, 276, 78, 34, mx, my) == 1 { if clicked == 1 { cs.net_mode = 2 } }
+        clienthud::draw_centered("JOIN", cl + 320, 276, 78, 34, 20, mc2)
+        if cs.net_mode == 2 {
+            // Host-address text field (click to edit) - type an IP or a hostname.
+            draw_text(cl, 340, "Host", 22, wht)
+            let mut hcol = gold
+            if cs.lobby_focus == 2 { hcol = 255 * 65536 + 120 * 256 + 120 }
+            if clienthud::menu_btn(cl + 86, 334, 330, 28, mx, my) == 1 { if clicked == 1 { cs.lobby_focus = 2 } }
+            clienthud::draw_centered(cs.join_addr, cl + 86, 334, 330, 28, 22, hcol)
+            draw_text(cl, 372, "(IP or hostname, e.g. overclock.mstampfli.com)", 14, wht)
+        }
+        if cs.net_started {
+            draw_text(cx - text_width("connected (cs.settings reapply on start)", 16) / 2, cs.fbh - 150, "connected (cs.settings reapply on start)", 16, wht)
+            // Host: how many players are in, of the cap (the rest of the budget is bots).
+            let mut lcap = cs.bot_count
+            if lcap > env.max_remote { lcap = env.max_remote }
+            draw_text(cx - 90, cs.fbh - 174, "players ", 18, gold)
+            draw_int(cx - 18, cs.fbh - 174, net_player_count(), 18, wht)
+            draw_text(cx - 2, cs.fbh - 174, " / ", 18, wht)
+            draw_int(cx + 22, cs.fbh - 174, lcap + 1, 18, wht)
+        }
+        if cs.lobby_full { draw_text(cx - text_width("LOBBY FULL - that host is full, try another", 18) / 2, cs.fbh - 196, "LOBBY FULL - that host is full, try another", 18, 235 * 65536 + 70 * 256 + 60) }
+        if clienthud::menu_btn(cx - 90, cs.fbh - 72, 180, 46, mx, my) == 1 {
+            if clicked == 1 {
+                if cs.net_started == false {
+                    cs.lobby_full = false
+                    if cs.net_mode == 2 {
+                        net_join(cs.join_addr, env.net_port)
+                        cs.g_joined = 0   // re-run the join handshake (wait for character init) on every join
+                    } else {
+                        // HOST == GUEST: a host (or practice) launches the DEDICATED server on its
+                        // own thread - it owns the authoritative World and runs the entire sim
+                        // (bots, combat, explosions, projectiles, cs.deaths, round, loot) - then joins
+                        // it as a PURE client over loopback, exactly like a remote guest. The server
+                        // binds 0.0.0.0, so port-forwarded remote players join the very same way.
+                        // Everyone, including the host, now receives the identical net stream.
+                        // Pass the lobby cs.settings to the server thread over the control channel.
+                        net_cfg_set(0, cs.bot_count as f64)
+                        net_cfg_set(1, cs.kill_target as f64)
+                        net_cfg_set(2, cs.round_len)
+                        net_serve(|| { server::server_main() })
+                        sleep_ms(200)   // let the server thread bind before we connect
+                        net_join("127.0.0.1", env.net_port)
+                        cs.g_joined = 0
+                        cs.net_mode = 2    // we are now just a client; main runs the cs.net_mode==2 path
+                    }
+                    net_sim(|state, input| {
+                        sim::sim_step(state, input, env.cfg)
+                        0
+                    }, 21, 20)
+                    net_spawn_at(0.0, 0.9, 45.0)
+                    cs.net_started = true
+                }
+                // Persist the cs.username (length + char codes) into the cs.settings file.
+                cs.settings[20] = cs.uname_len as f64
+                let mut us = 0
+                while us < cs.uname_len { cs.settings[21 + us] = cs.uname_codes[us] as f64; us = us + 1 }
+                save_settings(cs.settings)
+                cs.do_reset = true
+                cs.screen = env.s_game
+            }
+        }
+        clienthud::draw_centered("START", cx - 90, cs.fbh - 72, 180, 46, 28, wht)
+        if clienthud::menu_btn(cx - 90, cs.fbh - 128, 180, 40, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_title } }
+        clienthud::draw_centered("BACK", cx - 90, cs.fbh - 128, 180, 40, 22, wht)
+        // Escape backs out of the lobby to the title.
+        let esc_l = key_down(20)
+        if esc_l > 0 and cs.esc_prev == 0 { cs.screen = env.s_title }
+        cs.esc_prev = esc_l
+    } else { if cs.screen == env.s_crosshair {
+        // ---- CROSSHAIR EDITOR: live preview + size/gap/thickness/dot/colour ----
+        draw_text(cx - text_width("CROSSHAIR", 44) / 2, 30, "CROSSHAIR", 44, gold)
+        let xl = cx - 250
+        // Live preview on a dim checkerboard pad (top-right, clear of the colour bars).
+        let cpx = cx + 200
+        let cpy = 158
+        draw_text(cpx - text_width("PREVIEW", 16) / 2, cpy - 84, "PREVIEW", 16, wht)
+        let mut cby = cpy - 64
+        while cby < cpy + 64 {
+            let mut cbx = cpx - 64
+            while cbx < cpx + 64 { if (cbx + cby) % 2 == 0 { pixel(cbx, cby, 10, 12, 16) } cbx = cbx + 1 }
+            cby = cby + 1
+        }
+        clienthud::draw_crosshair(cpx, cpy, cs.ch_size, cs.ch_gap, cs.ch_thick, cs.ch_dot, cs.ch_r, cs.ch_g, cs.ch_b)
+        // Size
+        draw_text(xl, 114, "Size", 22, wht)
+        if clienthud::menu_btn(xl + 150, 110, 32, 30, mx, my) == 1 { if clicked == 1 { cs.ch_size = cs.ch_size - 1; if cs.ch_size < 1 { cs.ch_size = 1 } } }
+        clienthud::draw_centered("-", xl + 150, 110, 32, 30, 22, wht)
+        draw_int(xl + 200, 114, cs.ch_size, 22, gold)
+        if clienthud::menu_btn(xl + 240, 110, 32, 30, mx, my) == 1 { if clicked == 1 { cs.ch_size = cs.ch_size + 1; if cs.ch_size > 40 { cs.ch_size = 40 } } }
+        clienthud::draw_centered("+", xl + 240, 110, 32, 30, 22, wht)
+        // Gap
+        draw_text(xl, 154, "Gap", 22, wht)
+        if clienthud::menu_btn(xl + 150, 150, 32, 30, mx, my) == 1 { if clicked == 1 { cs.ch_gap = cs.ch_gap - 1; if cs.ch_gap < 0 { cs.ch_gap = 0 } } }
+        clienthud::draw_centered("-", xl + 150, 150, 32, 30, 22, wht)
+        draw_int(xl + 200, 154, cs.ch_gap, 22, gold)
+        if clienthud::menu_btn(xl + 240, 150, 32, 30, mx, my) == 1 { if clicked == 1 { cs.ch_gap = cs.ch_gap + 1; if cs.ch_gap > 40 { cs.ch_gap = 40 } } }
+        clienthud::draw_centered("+", xl + 240, 150, 32, 30, 22, wht)
+        // Thickness
+        draw_text(xl, 194, "Thickness", 22, wht)
+        if clienthud::menu_btn(xl + 150, 190, 32, 30, mx, my) == 1 { if clicked == 1 { cs.ch_thick = cs.ch_thick - 1; if cs.ch_thick < 1 { cs.ch_thick = 1 } } }
+        clienthud::draw_centered("-", xl + 150, 190, 32, 30, 22, wht)
+        draw_int(xl + 200, 194, cs.ch_thick, 22, gold)
+        if clienthud::menu_btn(xl + 240, 190, 32, 30, mx, my) == 1 { if clicked == 1 { cs.ch_thick = cs.ch_thick + 1; if cs.ch_thick > 9 { cs.ch_thick = 9 } } }
+        clienthud::draw_centered("+", xl + 240, 190, 32, 30, 22, wht)
+        // Centre dot toggle
+        draw_text(xl, 234, "Dot", 22, wht)
+        if clienthud::menu_btn(xl + 150, 230, 122, 30, mx, my) == 1 { if clicked == 1 { if cs.ch_dot > 0 { cs.ch_dot = 0 } else { cs.ch_dot = 1 } } }
+        let mut dottxt = "OFF"
+        if cs.ch_dot > 0 { dottxt = "ON" }
+        clienthud::draw_centered(dottxt, xl + 150, 230, 122, 30, 20, gold)
+        // Colour (R/G/B bars 0..255)
+        draw_text(xl, 284, "Red", 22, wht)
+        if clienthud::draw_bar(xl + 150, 284, 220, 20, (cs.ch_r as f64) / 255.0, mx, my) == 1 { if clicked == 1 { cs.ch_r = (((mx - (xl + 150)) as f64) / 220.0 * 255.0) as i64; if cs.ch_r < 0 { cs.ch_r = 0 } if cs.ch_r > 255 { cs.ch_r = 255 } } }
+        draw_text(xl, 324, "Green", 22, wht)
+        if clienthud::draw_bar(xl + 150, 324, 220, 20, (cs.ch_g as f64) / 255.0, mx, my) == 1 { if clicked == 1 { cs.ch_g = (((mx - (xl + 150)) as f64) / 220.0 * 255.0) as i64; if cs.ch_g < 0 { cs.ch_g = 0 } if cs.ch_g > 255 { cs.ch_g = 255 } } }
+        draw_text(xl, 364, "Blue", 22, wht)
+        if clienthud::draw_bar(xl + 150, 364, 220, 20, (cs.ch_b as f64) / 255.0, mx, my) == 1 { if clicked == 1 { cs.ch_b = (((mx - (xl + 150)) as f64) / 220.0 * 255.0) as i64; if cs.ch_b < 0 { cs.ch_b = 0 } if cs.ch_b > 255 { cs.ch_b = 255 } } }
+        // Crosshair presets (6 slots, saved to the cs.settings file on disk). Click a slot
+        // to load it (and make it active); SAVE writes the current crosshair into it.
+        draw_text(xl, 414, "Presets", 22, wht)
+        let mut pp = 0
+        while pp < 6 {
+            let pslot = xl + 150 + pp * 44
+            let mut pcol = wht
+            if cs.active_preset == pp { pcol = gold }
+            if clienthud::menu_btn(pslot, 410, 38, 30, mx, my) == 1 { if clicked == 1 {
+                cs.active_preset = pp
+                let pb = 56 + pp * 7
+                if cs.settings[pb] > 0.0 {
+                    cs.ch_size = cs.settings[pb] as i64; cs.ch_gap = cs.settings[pb + 1] as i64; cs.ch_thick = cs.settings[pb + 2] as i64; cs.ch_dot = cs.settings[pb + 3] as i64
+                    cs.ch_r = cs.settings[pb + 4] as i64; cs.ch_g = cs.settings[pb + 5] as i64; cs.ch_b = cs.settings[pb + 6] as i64
+                }
+                cs.settings[98] = cs.active_preset as f64
+                save_settings(cs.settings)
+            } }
+            clienthud::draw_centered(str(pp + 1), pslot, 410, 38, 30, 20, pcol)
+            pp = pp + 1
+        }
+        let psave = xl + 150 + 6 * 44 + 12
+        if clienthud::menu_btn(psave, 410, 110, 30, mx, my) == 1 { if clicked == 1 {
+            let pb2 = 56 + cs.active_preset * 7
+            cs.settings[pb2] = cs.ch_size as f64; cs.settings[pb2 + 1] = cs.ch_gap as f64; cs.settings[pb2 + 2] = cs.ch_thick as f64; cs.settings[pb2 + 3] = cs.ch_dot as f64
+            cs.settings[pb2 + 4] = cs.ch_r as f64; cs.settings[pb2 + 5] = cs.ch_g as f64; cs.settings[pb2 + 6] = cs.ch_b as f64
+            cs.settings[98] = cs.active_preset as f64
+            save_settings(cs.settings)
+        } }
+        clienthud::draw_centered("SAVE P" + str(cs.active_preset + 1), psave, 410, 110, 30, 18, gold)
+        // BACK: persist the crosshair + return to cs.settings. Escape does the same.
+        if clienthud::menu_btn(cx - 60, cs.fbh - 62, 120, 44, mx, my) == 1 { if clicked == 1 {
+            cs.settings[40] = cs.ch_size as f64; cs.settings[41] = cs.ch_gap as f64; cs.settings[42] = cs.ch_thick as f64; cs.settings[43] = cs.ch_dot as f64
+            cs.settings[44] = cs.ch_r as f64; cs.settings[45] = cs.ch_g as f64; cs.settings[46] = cs.ch_b as f64
+            save_settings(cs.settings)
+            cs.screen = env.s_settings
+        } }
+        clienthud::draw_centered("BACK", cx - 60, cs.fbh - 62, 120, 44, 24, wht)
+        let esc_c = key_down(20)
+        if esc_c > 0 and cs.esc_prev == 0 {
+            cs.settings[40] = cs.ch_size as f64; cs.settings[41] = cs.ch_gap as f64; cs.settings[42] = cs.ch_thick as f64; cs.settings[43] = cs.ch_dot as f64
+            cs.settings[44] = cs.ch_r as f64; cs.settings[45] = cs.ch_g as f64; cs.settings[46] = cs.ch_b as f64
+            save_settings(cs.settings)
+            cs.screen = env.s_settings
+        }
+        cs.esc_prev = esc_c
+    } else {
+        draw_text(cx - text_width("SETTINGS", 44) / 2, 30, "SETTINGS", 44, gold)
+        // Sensitivity: a bar adjusted in steps of EXACTLY 1 (one unit = 0.0001), so it
+        // goes very low. -/+ step by one; clicking the bar jumps to that level.
+        let sens_unit = 0.0001
+        let sens_max = 0.012
+        // Centred panel: everything is laid out from `cl` (a centred left edge) so the
+        // whole cs.settings cs.screen sits in the middle of any window size.
+        let cl = cx - 260
+        draw_text(cl, 108, "Sensitivity", 22, wht)
+        if clienthud::menu_btn(cl + 160, 104, 34, 30, mx, my) == 1 { if clicked == 1 { cs.sens = cs.sens - sens_unit; if cs.sens < sens_unit { cs.sens = sens_unit } } }
+        clienthud::draw_centered("-", cl + 160, 104, 34, 30, 22, wht)
+        let sbx = cl + 202
+        let sbw = 230
+        if clienthud::draw_bar(sbx, 108, sbw, 22, cs.sens / sens_max, mx, my) == 1 { if clicked == 1 { let sf = ((mx - sbx) as f64) / (sbw as f64) * sens_max; let slv = (sf / sens_unit + 0.5) as i64; cs.sens = (slv as f64) * sens_unit; if cs.sens < sens_unit { cs.sens = sens_unit } if cs.sens > sens_max { cs.sens = sens_max } } }
+        if clienthud::menu_btn(cl + 440, 104, 34, 30, mx, my) == 1 { if clicked == 1 { cs.sens = cs.sens + sens_unit; if cs.sens > sens_max { cs.sens = sens_max } } }
+        clienthud::draw_centered("+", cl + 440, 104, 34, 30, 22, wht)
+        draw_int(cl + 486, 108, (cs.sens / sens_unit + 0.5) as i64, 22, gold)
+        // Volume: a bar, 0..100, stepped by EXACTLY 1.
+        draw_text(cl, 158, "Volume", 22, wht)
+        if clienthud::menu_btn(cl + 160, 154, 34, 30, mx, my) == 1 { if clicked == 1 { cs.vol = cs.vol - 1; if cs.vol < 0 { cs.vol = 0 } audio_volume(cs.vol) } }
+        clienthud::draw_centered("-", cl + 160, 154, 34, 30, 22, wht)
+        let vbx = cl + 202
+        let vbw = 230
+        if clienthud::draw_bar(vbx, 158, vbw, 22, (cs.vol as f64) / 100.0, mx, my) == 1 { if clicked == 1 { let vf = ((mx - vbx) as f64) / (vbw as f64) * 100.0; cs.vol = vf as i64; if cs.vol < 0 { cs.vol = 0 } if cs.vol > 100 { cs.vol = 100 } audio_volume(cs.vol) } }
+        if clienthud::menu_btn(cl + 440, 154, 34, 30, mx, my) == 1 { if clicked == 1 { cs.vol = cs.vol + 1; if cs.vol > 100 { cs.vol = 100 } audio_volume(cs.vol) } }
+        clienthud::draw_centered("+", cl + 440, 154, 34, 30, 22, wht)
+        draw_int(cl + 486, 158, cs.vol, 22, gold)
+        // Keybinds: click a code box, then press a key.
+        draw_text(cl, 206, "Keybinds - click a box, then press a key", 18, gold)
+        let mut ki = 0
+        while ki < env.act_n {
+            let ry = 230 + ki * 26
+            clienthud::draw_action_name(ki, cl + 10, ry + 4, wht)
+            let mut kc = gold
+            if cs.rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
+            if clienthud::menu_btn(cl + 220, ry, 90, 24, mx, my) == 1 { if clicked == 1 { cs.rebind = ki; cs.rebind_armed = 0 } }
+            clienthud::draw_centered(clienthud::key_name(cs.bind_code[ki] as i64), cl + 220, ry, 90, 24, 18, kc)
+            ki = ki + 1
+        }
+        // Capture the next key for the action being rebound.
+        if cs.rebind > (0 - 1) {
+            // Arm only once the box-click LMB is released, then the next key OR mouse button
+            // (LMB 100 / RMB 101 / MMB 102) becomes the bind.
+            if mouse_button(0) < 1 and mouse_button(1) < 1 and mouse_button(2) < 1 and mouse_button(3) < 1 and mouse_button(4) < 1 { cs.rebind_armed = 1 }
+            let mut kc2 = 0
+            let mut found = 0 - 1
+            if cs.rebind_armed == 1 {
+                while kc2 < 66 {
+                    if key_down(kc2) > 0 and found < 0 { found = kc2 }
+                    kc2 = kc2 + 1
+                }
+                if mouse_button(0) > 0 { found = 100 }
+                if mouse_button(1) > 0 { found = 101 }
+                if mouse_button(2) > 0 { found = 102 }
+                if mouse_button(3) > 0 { found = 103 }
+                if mouse_button(4) > 0 { found = 104 }
+            }
+            if found > (0 - 1) {
+                cs.bind_code[cs.rebind] = found as f64
+                input_bind(cs.rebind, found)
+                cs.rebind = 0 - 1
+                cs.settings[0] = cs.sens
+                cs.settings[1] = cs.vol as f64
+                let mut wi = 0
+                while wi < env.act_n { cs.settings[2 + wi] = cs.bind_code[wi]; wi = wi + 1 }
+                save_settings(cs.settings)
+            }
+        }
+        // Crosshair editor (its own cs.screen).
+        if clienthud::menu_btn(cx - 130, cs.fbh - 160, 260, 38, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_crosshair } }
+        clienthud::draw_centered("Crosshair editor", cx - 130, cs.fbh - 160, 260, 38, 22, wht)
+        // BACK (saves everything).
+        // Display mode cycle: Windowed -> Borderless -> Fullscreen.
+        let mut dlabel = "Display: Windowed"
+        if cs.disp_mode == 1 { dlabel = "Display: Borderless" } else { if cs.disp_mode == 2 { dlabel = "Display: Fullscreen" } }
+        if clienthud::menu_btn(cx - 130, cs.fbh - 116, 260, 38, mx, my) == 1 { if clicked == 1 {
+            cs.disp_mode = cs.disp_mode + 1
+            if cs.disp_mode > 2 { cs.disp_mode = 0 }
+            window_fullscreen(cs.disp_mode)
+            cs.settings[18] = cs.disp_mode as f64
+            save_settings(cs.settings)
+        } }
+        clienthud::draw_centered(dlabel, cx - 130, cs.fbh - 116, 260, 38, 22, wht)
+        if clienthud::menu_btn(cx - 60, cs.fbh - 62, 120, 44, mx, my) == 1 {
+            if clicked == 1 {
+                cs.settings[0] = cs.sens
+                cs.settings[1] = cs.vol as f64
+                let mut wi2 = 0
+                while wi2 < env.act_n { cs.settings[2 + wi2] = cs.bind_code[wi2]; wi2 = wi2 + 1 }
+                save_settings(cs.settings)
+                cs.rebind = 0 - 1
+                cs.screen = cs.set_back
+            }
+        }
+        clienthud::draw_centered("BACK", cx - 60, cs.fbh - 62, 120, 44, 24, wht)
+        // Escape also backs out one level (saves first; ignored mid-cs.rebind).
+        let esc_s = key_down(20)
+        if esc_s > 0 and cs.esc_prev == 0 and cs.rebind < 0 {
+            cs.settings[0] = cs.sens
+            cs.settings[1] = cs.vol as f64
+            let mut wi3 = 0
+            while wi3 < env.act_n { cs.settings[2 + wi3] = cs.bind_code[wi3]; wi3 = wi3 + 1 }
+            save_settings(cs.settings)
+            cs.rebind = 0 - 1
+            cs.screen = cs.set_back
+        }
+        cs.esc_prev = esc_s
+    } } } }
+        // Leave the menu loop only once a non-menu cs.screen is chosen: PLAY/RESUME ->
+        // game, QUIT/window-close -> quit. title/cs.settings/pause keep looping here.
+        if cs.screen == env.s_game or cs.screen == env.s_quit { break }
+    }
+}

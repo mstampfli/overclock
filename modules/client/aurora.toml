@@ -4,3 +4,6 @@ lib = "client.aur"
 
 [dependencies]
 world = "../world"
+clienthud = "../clienthud"
+sim = "../sim"
+server = "../server"
