@@ -2397,7 +2397,12 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             if mw > 1.0 { mw = 1.0 }
                             if mw < 0.0 { mw = 0.0 }
                             if rsliding { mw = 0.0 }
-                            r3d_anim_blend(cs.actor_models[ai], env.anim_idle, env.anim_run, mw, 1.0, 0.14)
+                            // Speed-warp the run clip to ground speed so the feet plant instead of sliding
+                            // (phase-sync to travel). Clamped so it never freezes or sprints absurdly.
+                            let mut rwarp = rspd / 4.2
+                            if rwarp < 0.45 { rwarp = 0.45 }
+                            if rwarp > 1.8 { rwarp = 1.8 }
+                            r3d_anim_blend(cs.actor_models[ai], env.anim_idle, env.anim_run, mw, rwarp, 0.14)
                             cs.astate[ai] = 0 - 2
                         }
                         // Upper-body overlay: the katana SWING (clip 41) while this remote is meleeing
