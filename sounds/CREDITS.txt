@@ -1,11 +1,12 @@
 Third-party audio bundled with OVERCLOCK and their licenses.
 
-rifle.wav, deagle.wav, launcher.wav
-  Trimmed + normalized single-shots from the "Gunshot Sounds" pack
-  (sks / mosin / shotty) by Vincent Sevedge.
-  Source : https://opengameart.org/content/gunshot-sounds
-  License: Creative Commons Attribution 3.0 Unported (CC BY 3.0)
-           https://creativecommons.org/licenses/by/3.0/
+rifle.wav     - single shot from a Carl Gustav M45 (SMG)
+deagle.wav    - single shot from a Colt 1911 (.45 pistol)
+launcher.wav  - single shot from a Tikka rifle
+  All three trimmed + normalized from "The Free Firearm Sound Library"
+  (a.k.a. Prepared SFX Library).
+  Source : https://opengameart.org/content/the-free-firearm-sound-library
+  License: CC0 1.0 (public domain, no rights reserved)
 
 explosion.wav
   Trimmed + normalized from an explosion sound on OpenGameArt.

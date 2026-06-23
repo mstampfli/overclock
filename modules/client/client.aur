@@ -2420,7 +2420,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         if r_reload {
                             if cs.ushoot[ai] != 22 { r3d_anim_play_upper(cs.actor_models[ai], 22, 1, 1.0, 0.12, env.upper_mask_root); cs.ushoot[ai] = 22 }
                         } else { if r_melee {
-                            if cs.ushoot[ai] != env.kat_swing_clip { r3d_anim_play_upper(cs.actor_models[ai], env.kat_swing_clip, 1, 1.7, 0.1, env.upper_mask_root); cs.ushoot[ai] = env.kat_swing_clip }
+                            // Blend INTO the swing (0.18s overlay crossfade) and skip the clip's 0.15s
+                            // wind-up so the slash reads immediately. Blend OUT is the aim branch below.
+                            if cs.ushoot[ai] != env.kat_swing_clip { r3d_anim_play_upper(cs.actor_models[ai], env.kat_swing_clip, 1, 1.7, 0.18, env.upper_mask_root); r3d_anim_seek_upper(cs.actor_models[ai], 0.15); cs.ushoot[ai] = env.kat_swing_clip }
                         } else { if r_recoil {
                             // Per-SHOT recoil: each incoming round (arshot pulse) RESTARTS clip 23 from
                             // frame 0 (play once, fast), so the kick lines up with every shot, any weapon.
@@ -2437,7 +2439,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             let mut cb = 19
                             let mut bw = pw * 2.0
                             if pw > 0.5 { ca = 19; cb = 20; bw = (pw - 0.5) * 2.0 }
-                            r3d_anim_aim_upper(cs.actor_models[ai], ca, cb, bw, 1.0, 0.14, env.upper_mask_root)
+                            r3d_anim_aim_upper(cs.actor_models[ai], ca, cb, bw, 1.0, 0.18, env.upper_mask_root)
                             cs.ushoot[ai] = 0 - 1
                         } } }
                         r3d_anim_update(cs.actor_models[ai], dt)
@@ -2516,11 +2518,17 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     // A real diagonal slash: the blade sweeps upper-right -> lower-left AND tilts down
                     // through the arc (the mesh isn't rigged, so we animate its whole transform).
                     let sp = (cs.melee_cd - (env.melee_cooldown - 0.35)) / 0.35   // 1 -> 0 over the slash
-                    let prog = 1.0 - sp
-                    let swr = bor + 0.30 - prog * 0.46
-                    let swu = bou + 0.26 - prog * 0.44
-                    let swp = (0.5 - sp) * 1.6                             // blade pitches down through it
-                    let swrl = (sp - 0.5) * 1.4                            // and rolls into the cut
+                    let phase = 1.0 - sp                                  // 0 at start -> 1 at end
+                    // Skip the 0.15s wind-up: start the slash ~0.43 (= 0.15/0.35) of the way in, mid-cut.
+                    let prog = phase + 0.43
+                    // Ease the blade IN from / OUT to the neutral hold (kbw 0->1->0) so it doesn't snap.
+                    let mut kbw = 1.0
+                    if phase < 0.16 { kbw = phase / 0.16 }
+                    if phase > 0.84 { kbw = (1.0 - phase) / 0.16 }
+                    let swr = bor + (0.30 - prog * 0.46) * kbw
+                    let swu = bou + (0.26 - prog * 0.44) * kbw
+                    let swp = (0.5 - sp) * 1.6 * kbw                       // blade pitches down through it
+                    let swrl = (sp - 0.5) * 1.4 * kbw                     // and rolls into the cut
                     let kx = vex + vrx * swr + vux * swu + fx * bof
                     let ky = vey + vuy * swu + fy * bof
                     let kz = vez + vrz * swr + vuz * swu + fz * bof
