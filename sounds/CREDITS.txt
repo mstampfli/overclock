@@ -1,0 +1,17 @@
+Third-party audio bundled with OVERCLOCK and their licenses.
+
+rifle.wav, deagle.wav, launcher.wav
+  Trimmed + normalized single-shots from the "Gunshot Sounds" pack
+  (sks / mosin / shotty) by Vincent Sevedge.
+  Source : https://opengameart.org/content/gunshot-sounds
+  License: Creative Commons Attribution 3.0 Unported (CC BY 3.0)
+           https://creativecommons.org/licenses/by/3.0/
+
+explosion.wav
+  Trimmed + normalized from an explosion sound on OpenGameArt.
+  Source : https://opengameart.org/content/explosion-0
+  License: CC0 1.0 (public domain, no rights reserved)
+
+reload.wav
+  Synthesized with sox for OVERCLOCK (mechanical mag-out / mag-in / charging
+  rack). No third-party rights.

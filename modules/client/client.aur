@@ -236,6 +236,11 @@ struct ClientEnv {
     deagle_head: f64,
     deagle_scale: f64,
     vm_deagle: i64,
+    snd_rifle: i64,
+    snd_deagle: i64,
+    snd_launcher: i64,
+    snd_explosion: i64,
+    snd_reload: i64,
     geo_n: i64,
     ground_vis: i64,
     gun_dmg: f64,
@@ -1497,8 +1502,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 if cs.pcur >= 28 { cs.pcur = 0 }
                 bp = bp + 1
             }
-            play_sound_at(0 - 30, 150, 90, cs.ex_x, cs.ex_y, cs.ex_z)   // loud foreground boom (3D)
-            play_sound_at(0 - 16, 70, 70, cs.ex_x, cs.ex_y, cs.ex_z)    // positional crack layer (was non-3D noise)
+            play_sound_handle_at(env.snd_explosion, 115, cs.ex_x, cs.ex_y, cs.ex_z)   // real explosion (3D)
             let shrad = 14.0 * gi
             if pbd < shrad {
                 let bnear = 1.0 - pbd / shrad
@@ -1574,7 +1578,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     ax = fx; ay = fy; az = fz
                     let mut crl = env.reload_w[cs.actors[ci].wpn]
                     if cs.oc_active { crl = env.reload_w[cs.actors[ci].wpn] * 0.4 }
-                    if input_down(env.act_reload) > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[cs.actors[ci].wpn] < env.mag_size_w[cs.actors[ci].wpn] and cs.actors[ci].res[cs.actors[ci].wpn] > 0 and cs.dead == false { cs.actors[ci].rl = crl; cs.actors[ci].rlw = cs.actors[ci].wpn }
+                    if input_down(env.act_reload) > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[cs.actors[ci].wpn] < env.mag_size_w[cs.actors[ci].wpn] and cs.actors[ci].res[cs.actors[ci].wpn] > 0 and cs.dead == false { cs.actors[ci].rl = crl; cs.actors[ci].rlw = cs.actors[ci].wpn; play_sound_handle(env.snd_reload, 95) }
                     // Fire intent: rifle/launcher are full-auto (fire while held). The Desert Eagle is
                     // SINGLE-FIRE: it only fires on a fresh press (rising edge), gated further by its own
                     // long cooldown below. cs.fire_held tracks the button across frames for the edge.
@@ -1711,7 +1715,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 let wp = cs.actors[ci].wpn
                 if want > 0 and cs.actors[ci].mag[wp] > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].heal <= 0.0 and cs.actors[ci].fcd <= 0.0 {
                     cs.actors[ci].mag[wp] = cs.actors[ci].mag[wp] - 1
-                    if cs.actors[ci].mag[wp] <= 0 and cs.actors[ci].res[wp] > 0 { cs.actors[ci].rl = env.reload_w[wp]; cs.actors[ci].rlw = wp }
+                    if cs.actors[ci].mag[wp] <= 0 and cs.actors[ci].res[wp] > 0 { cs.actors[ci].rl = env.reload_w[wp]; cs.actors[ci].rlw = wp; if mine == 1 { play_sound_handle(env.snd_reload, 95) } }
                     if ci != env.pl_i { cs.ashoot[ci] = 0.6 }   // hold the shoot overlay across brief fire gaps
                     let ox = sox + ax * 0.6
                     let oy = soy + ay * 0.6
@@ -1719,7 +1723,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     if wp == 0 or wp == 2 {
                         let mut sg = 6
                         if mine == 1 { sg = 8 }
-                        if wp == 2 { play_sound_at(0 - 5, 45, sg + 2, ox, oy, oz) } else { play_sound_at(2, 26, sg, ox, oy, oz) }
+                        if wp == 2 { play_sound_handle_at(env.snd_deagle, 100, ox, oy, oz) } else { play_sound_handle_at(env.snd_rifle, 72, ox, oy, oz) }
                         // Tell the host about my shot so IT validates the hit (lag-comp) and
                         // applies authoritative damage. My local raycast below is prediction
                         // (tracer + hitmarker); the host owns the real hp. Host's own net_fire
@@ -1830,7 +1834,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         if cs.prjcur >= env.proj_n { cs.prjcur = 0 }
                         let mut lg = 45
                         if mine == 1 { lg = 55 }
-                        play_sound_at(0 - 8, 70, lg, ox, oy, oz)
+                        play_sound_handle_at(env.snd_launcher, 100, ox, oy, oz)
                         // GUEST: send the rocket LAUNCH INTENT so the host applies authoritative damage.
                         if mine == 1 and cs.net_mode == 2 { net_projectile_intent(0, ox, oy, oz, ax, ay, az) }
                     }
@@ -2578,7 +2582,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 cs.trlife[cs.trcur] = 0.06
                 cs.trcur = cs.trcur + 1
                 if cs.trcur >= env.tracer_n { cs.trcur = 0 }
-                play_sound_at(2, 26, 6, sx1, sy1, sz1)   // remote rifle crack at the muzzle
+                play_sound_handle_at(env.snd_rifle, 72, sx1, sy1, sz1)   // remote gunfire at the muzzle
                 // Kick the shooter's upper body into the recoil overlay (clip 23): map its pid -> slot.
                 let mut rsa = 0
                 while rsa < env.nactors {
@@ -2635,8 +2639,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     if cs.pcur >= 28 { cs.pcur = 0 }
                     rbp = rbp + 1
                 }
-                play_sound_at(0 - 30, 150, 90, rbx, rby, rbz)   // foreground boom (3D)
-                play_sound_at(0 - 16, 70, 70, rbx, rby, rbz)    // positional crack layer
+                play_sound_handle_at(env.snd_explosion, 115, rbx, rby, rbz)   // real explosion (3D)
                 let rpbx = px - rbx
                 let rpby = py - rby
                 let rpbz = pz - rbz
