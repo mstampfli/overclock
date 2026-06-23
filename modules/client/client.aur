@@ -2182,89 +2182,6 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             }
         }
 
-        // Live enemy bots at their physics positions (cs.dead ones are hidden). Host/practice
-        // only - on a guest these same bots are drawn by the unified remote loop below.
-        let mut ed = 0
-        while ed < env.bot_n and cs.net_mode != 2 {
-            if cs.actors[ed].hp > 0.0 {
-                let h = cs.actors[ed].hdl as i64
-                let bx = phys3d_x(h)
-                let by = phys3d_y(h)
-                let bz = phys3d_z(h)
-                let psc = 1.0 + cs.brains[ed].pop   // brief scale pop when hit (flinch)
-                if cs.actor_models[ed] >= 0 {
-                    let svx = bx - cs.aprevx[ed]
-                    let svz = bz - cs.aprevz[ed]
-                    let mut inst = sqrt(svx * svx + svz * svz) / safedt
-                    if inst > 40.0 { inst = 0.0 }   // ignore respawn teleports
-                    cs.aspd[ed] = cs.aspd[ed] + (inst - cs.aspd[ed]) * 0.12   // low-pass smooth
-                    let spd = cs.aspd[ed]
-                    cs.ashoot[ed] = cs.ashoot[ed] - dt
-                    if cs.ashoot[ed] < 0.0 { cs.ashoot[ed] = 0.0 }
-                    let knock = sqrt(cs.brains[ed].kx * cs.brains[ed].kx + cs.brains[ed].ky * cs.brains[ed].ky + cs.brains[ed].kz * cs.brains[ed].kz)
-                    // Airborne LATCH: set on a real takeoff/leap/hard fall, hold ~0.45s through the
-                    // apex, clear only when actually grounded - so jump never strobes around vy = 0.
-                    if cs.brains[ed].vy > 3.0 or knock > 4.0 or cs.brains[ed].vy < (0.0 - 5.0) { cs.ajump[ed] = 0.45 }
-                    if phys3d_grounded(h) == 1 and cs.brains[ed].vy < 1.0 { cs.ajump[ed] = 0.0 }
-                    cs.ajump[ed] = cs.ajump[ed] - dt
-                    if cs.ajump[ed] < 0.0 { cs.ajump[ed] = 0.0 }
-                    // Desired BASE clip. Bias toward RUN: any sustained motion -> run instantly;
-                    // idle ONLY after the bot has been slow for 0.35s straight (a real stop, not a
-                    // juke/strafe cs.dip). Jump latch wins. Small dwell as a final anti-strobe guard.
-                    let mut desired = cs.astate[ed]
-                    if desired == env.anim_jump { desired = env.anim_idle }
-                    if spd > 1.4 { desired = env.anim_run; cs.aidle_t[ed] = 0.0 } else { cs.aidle_t[ed] = cs.aidle_t[ed] + dt; if cs.aidle_t[ed] > 0.35 { desired = env.anim_idle } }
-                    if cs.ajump[ed] > 0.0 { desired = env.anim_jump }
-                    cs.astate_t[ed] = cs.astate_t[ed] + dt
-                    let mut allow = 0
-                    if cs.astate[ed] < 0 { allow = 1 }
-                    if cs.astate_t[ed] > 0.15 { allow = 1 }
-                    if desired == env.anim_jump { allow = 1 }
-                    if cs.astate[ed] == env.anim_jump and cs.ajump[ed] <= 0.0 { allow = 1 }
-                    if allow == 1 and cs.astate[ed] != desired { r3d_anim_play(cs.actor_models[ed], desired, 1, 1.0, 0.14); cs.astate[ed] = desired; cs.astate_t[ed] = 0.0 }
-                    // UPPER-BODY overlay = the shoot pose on the torso/arms while the legs keep
-                    // running or jumping (Aurora's animation-layering feature). So a bot can now
-                    // run-and-gun or shoot midair, not freeze to one full-body clip.
-                    // ALWAYS hold a weapon pose on the upper body (Pistol_Idle); swap to the shoot
-                    // pose while firing. cs.ushoot stores the clip currently overlaid (0 = unset).
-                    let mut uwant = env.anim_aim
-                    if cs.ashoot[ed] > 0.0 { uwant = env.anim_shoot }
-                    if cs.ushoot[ed] != uwant { r3d_anim_play_upper(cs.actor_models[ed], uwant, 1, 1.0, 0.12, env.upper_mask_root); cs.ushoot[ed] = uwant }
-                    r3d_anim_update(cs.actor_models[ed], dt)
-                    // Face the aim target, SMOOTHLY: low-pass the cs.yaw the short way around, snap
-                    // only on a big (>115 deg) reorient. No raw-delta jitter, no target/move toggle.
-                    // Draw at the plain scale - NO hit "pop" (a throbbing humanoid reads as flicker).
-                    let tyaw = cs.brains[ed].face + env.actor_yaw_off
-                    let dyaw = atan2(sin(tyaw - cs.ayaw[ed]), cos(tyaw - cs.ayaw[ed]))
-                    if dyaw > 2.0 or dyaw < (0.0 - 2.0) { cs.ayaw[ed] = tyaw } else { cs.ayaw[ed] = cs.ayaw[ed] + dyaw * 0.2 }
-                    // Tint the actual model: orange while I'm overclocked (enemies pop against the
-                    // dimmed world), blue while shielded, otherwise untinted.
-                    if cs.oc_active { r3d_draw_tint(cs.actor_models[ed], bx, by + env.actor_yoff, bz, cs.ayaw[ed], 0.0, 0.0, env.actor_scale, clienthud::ptint(1000 + ed, 0, 1.5), clienthud::ptint(1000 + ed, 1, 1.5), clienthud::ptint(1000 + ed, 2, 1.5)) } else { if cs.actors[ed].sh > 0.0 { r3d_draw_shield(cs.actor_models[ed], bx, by + env.actor_yoff, bz, cs.ayaw[ed], 0.0, 0.0, env.actor_scale, 1.0, cs.etime) } else { r3d_draw_tint(cs.actor_models[ed], bx, by + env.actor_yoff, bz, cs.ayaw[ed], 0.0, 0.0, env.actor_scale, clienthud::ptint(1000 + ed, 0, 1.0), clienthud::ptint(1000 + ed, 1, 1.0), clienthud::ptint(1000 + ed, 2, 1.0)) } }
-                    // Third-person weapon ATTACHED to the right-hand bone (joint 29): it rides
-                    // the hand, so reload/aim/run hand motion comes from the animation itself.
-                    let mut twm = env.vm_rifle
-                    let mut twsc = env.rifle_scale_tp
-                    if cs.actors[ed].wpn == 1 { twm = env.vm_launcher; twsc = env.lnch_scale_tp }
-                    r3d_draw_on_joint(twm, cs.actor_models[ed], env.hand_joint, bx, by + env.actor_yoff, bz, cs.ayaw[ed], 0.0, 0.0, env.actor_scale, cs.hand_ox, cs.hand_oy, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, twsc)
-                    cs.aprevx[ed] = bx
-                    cs.aprevz[ed] = bz
-                } else {
-                    // Fallback: the original box body + head (glow while overclocked, cyan if shielded).
-                    if cs.oc_active {
-                        r3d_draw(env.enemy_glow_body, bx, by, bz, 0.0, 0.0, 0.0, psc)
-                        r3d_draw(env.enemy_glow_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
-                    } else {
-                        if cs.actors[ed].sh > 0.0 {
-                            r3d_draw(env.enemy_vis_sh, bx, by, bz, 0.0, 0.0, 0.0, psc)
-                        } else {
-                            r3d_draw(env.enemy_vis, bx, by, bz, 0.0, 0.0, 0.0, psc)
-                        }
-                        r3d_draw(env.enemy_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
-                    }
-                }
-            }
-            ed = ed + 1
-        }
 
         // Network-driven ACTORS: every other player on the wire (humans AND, on a guest, the
         // host's bots) is synced to its replicated position + drawn. Their COMBAT is host-
@@ -2337,6 +2254,14 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         // apex, clear only when actually grounded - so it never strobes around vy=0.
                         let rvy = net_player_state(pid, 5)
                         let rground = net_player_state(pid, 7)
+                        // SLIDE pose (third person): sim_step sets state[12] while sliding and it's
+                        // replicated, so bots AND human remotes read identically (one path, like the rest).
+                        // Drop + lean the model back into a slide; the legs keep their run clip and the
+                        // weapon overlay stays on the torso, so a sliding actor still reads as armed.
+                        let mut slideoff = 0.0
+                        let mut slidelean = 0.0
+                        if net_player_state(pid, 12) > 0.5 { slideoff = 0.0 - 0.5; slidelean = 0.0 - 0.6 }
+                        let aydraw = ey + slideoff + env.actor_yoff
                         if rvy > 3.0 or rvy < (0.0 - 5.0) { cs.ajump[ai] = 0.45 }
                         if rground > 0.5 and rvy < 1.0 { cs.ajump[ai] = 0.0 }
                         cs.ajump[ai] = cs.ajump[ai] - dt
@@ -2359,18 +2284,18 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         // A remote that is ITSELF overclocked (its replicated meta 2) glows a bright pulsing
                         // GOLD so everyone can read who's powered up - independent of my own overclock. Checked
                         // first; otherwise the existing tint (orange pop while I'M overclocked, shield, or plain).
-                        if net_player_meta(pid, 2) > 0.5 { let ocg = 1.9 + sin(cs.etime * 11.0) * 0.45; r3d_draw_tint(cs.actor_models[ai], ex, ey + env.actor_yoff, ez, eyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, ocg, ocg * 0.74, 0.28) } else { if cs.oc_active { r3d_draw_tint(cs.actor_models[ai], ex, ey + env.actor_yoff, ez, eyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, clienthud::ptint(cs.apid[ai], 0, 1.5), clienthud::ptint(cs.apid[ai], 1, 1.5), clienthud::ptint(cs.apid[ai], 2, 1.5)) } else { if cs.actors[ai].sh > 0.0 { r3d_draw_shield(cs.actor_models[ai], ex, ey + env.actor_yoff, ez, eyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, 1.0, cs.etime) } else { r3d_draw_tint(cs.actor_models[ai], ex, ey + env.actor_yoff, ez, eyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, clienthud::ptint(cs.apid[ai], 0, 1.0), clienthud::ptint(cs.apid[ai], 1, 1.0), clienthud::ptint(cs.apid[ai], 2, 1.0)) } } }
+                        if net_player_meta(pid, 2) > 0.5 { let ocg = 1.9 + sin(cs.etime * 11.0) * 0.45; r3d_draw_tint(cs.actor_models[ai], ex, aydraw, ez, eyaw + env.actor_yaw_off, slidelean, 0.0, env.actor_scale, ocg, ocg * 0.74, 0.28) } else { if cs.oc_active { r3d_draw_tint(cs.actor_models[ai], ex, aydraw, ez, eyaw + env.actor_yaw_off, slidelean, 0.0, env.actor_scale, clienthud::ptint(cs.apid[ai], 0, 1.5), clienthud::ptint(cs.apid[ai], 1, 1.5), clienthud::ptint(cs.apid[ai], 2, 1.5)) } else { if cs.actors[ai].sh > 0.0 { r3d_draw_shield(cs.actor_models[ai], ex, aydraw, ez, eyaw + env.actor_yaw_off, slidelean, 0.0, env.actor_scale, 1.0, cs.etime) } else { r3d_draw_tint(cs.actor_models[ai], ex, aydraw, ez, eyaw + env.actor_yaw_off, slidelean, 0.0, env.actor_scale, clienthud::ptint(cs.apid[ai], 0, 1.0), clienthud::ptint(cs.apid[ai], 1, 1.0), clienthud::ptint(cs.apid[ai], 2, 1.0)) } } }
                         // Third-person weapon ATTACHED to the remote's right-hand bone (joint 29).
                         let ryr = eyaw + env.actor_yaw_off
                         // Draw the katana while swinging (its own offset/scale), the held blue cube while
                         // channeling a shield (meta 16), else the rifle.
                         if net_player_meta(pid, 8) > 0.5 {
-                            r3d_draw_on_joint(env.vm_katana, cs.actor_models[ai], env.hand_joint, ex, ey + env.actor_yoff, ez, ryr, 0.0, 0.0, env.actor_scale, cs.kat_hand_ox, cs.kat_hand_oy, cs.kat_hand_oz, cs.kat_hand_oyaw, cs.kat_hand_opitch, cs.kat_hand_oroll, env.kat_scale_tp)
+                            r3d_draw_on_joint(env.vm_katana, cs.actor_models[ai], env.hand_joint, ex, aydraw, ez, ryr, slidelean, 0.0, env.actor_scale, cs.kat_hand_ox, cs.kat_hand_oy, cs.kat_hand_oz, cs.kat_hand_oyaw, cs.kat_hand_opitch, cs.kat_hand_oroll, env.kat_scale_tp)
                         } else {
                             if net_player_meta(pid, 16) > 0.5 {
-                                r3d_draw_on_joint(env.shieldcube_vis, cs.actor_models[ai], env.hand_joint, ex, ey + env.actor_yoff, ez, ryr, 0.0, 0.0, env.actor_scale, cs.hand_ox, cs.hand_oy + 0.18, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, 1.6)
+                                r3d_draw_on_joint(env.shieldcube_vis, cs.actor_models[ai], env.hand_joint, ex, aydraw, ez, ryr, slidelean, 0.0, env.actor_scale, cs.hand_ox, cs.hand_oy + 0.18, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, 1.6)
                             } else {
-                                r3d_draw_on_joint(env.vm_rifle, cs.actor_models[ai], env.hand_joint, ex, ey + env.actor_yoff, ez, ryr, 0.0, 0.0, env.actor_scale, cs.hand_ox, cs.hand_oy, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, env.rifle_scale_tp)
+                                r3d_draw_on_joint(env.vm_rifle, cs.actor_models[ai], env.hand_joint, ex, aydraw, ez, ryr, slidelean, 0.0, env.actor_scale, cs.hand_ox, cs.hand_oy, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, env.rifle_scale_tp)
                             }
                         }
                         cs.aprevx[ai] = ex
