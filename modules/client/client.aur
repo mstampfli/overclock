@@ -2518,17 +2518,11 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     // A real diagonal slash: the blade sweeps upper-right -> lower-left AND tilts down
                     // through the arc (the mesh isn't rigged, so we animate its whole transform).
                     let sp = (cs.melee_cd - (env.melee_cooldown - 0.35)) / 0.35   // 1 -> 0 over the slash
-                    let phase = 1.0 - sp                                  // 0 at start -> 1 at end
-                    // Skip the 0.15s wind-up: start the slash ~0.43 (= 0.15/0.35) of the way in, mid-cut.
-                    let prog = phase + 0.43
-                    // Ease the blade IN from / OUT to the neutral hold (kbw 0->1->0) so it doesn't snap.
-                    let mut kbw = 1.0
-                    if phase < 0.16 { kbw = phase / 0.16 }
-                    if phase > 0.84 { kbw = (1.0 - phase) / 0.16 }
-                    let swr = bor + (0.30 - prog * 0.46) * kbw
-                    let swu = bou + (0.26 - prog * 0.44) * kbw
-                    let swp = (0.5 - sp) * 1.6 * kbw                       // blade pitches down through it
-                    let swrl = (sp - 0.5) * 1.4 * kbw                     // and rolls into the cut
+                    let prog = 1.0 - sp
+                    let swr = bor + 0.30 - prog * 0.46
+                    let swu = bou + 0.26 - prog * 0.44
+                    let swp = (0.5 - sp) * 1.6                             // blade pitches down through it
+                    let swrl = (sp - 0.5) * 1.4                            // and rolls into the cut
                     let kx = vex + vrx * swr + vux * swu + fx * bof
                     let ky = vey + vuy * swu + fy * bof
                     let kz = vez + vrz * swr + vuz * swu + fz * bof
