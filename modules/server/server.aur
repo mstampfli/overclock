@@ -1223,6 +1223,8 @@ fn server_main() -> i64 {
         if active < 0 { active = 0 }
         if active > lobby_bots { active = lobby_bots }
         w.round.bots = active
+        phys3d_step(0.016)   // advance the dynamic world (crates) exactly ONCE per tick (updates the
+                             // query for this tick's character moves; integrates last tick's impulses)
         sync_clients(w)
         bots_tick(w, 0.016)
         combat_tick(w, 0.016)

@@ -7,7 +7,7 @@ fn main() {
     net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
     net_spawn_at(0.0, 0.9, 45.0)
     let mut t = 0
-    while t < 60 { net_send_input([0.0; 20]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    while t < 60 { net_send_input([0.0; 20]); phys3d_step(0.016); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
     let n = net_object_count()
     let x0 = net_object_x(5)
     println("objects seen = " + str(n) + " (expect 12); a crate x*10 = " + str((x0*10.0) as i64))

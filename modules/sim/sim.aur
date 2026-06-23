@@ -766,9 +766,11 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     let mut si = 0
     while si < steps {
         phys3d_move_character(player, mvx * sdt, vy * sdt, mvz * sdt, sdt)
-        phys3d_step(sdt)
         si = si + 1
     }
+    // NOTE: the dynamic world (crates) is advanced by ONE phys3d_step per TICK by the caller
+    // (server_main / run_game / the sims), NOT here - sim_step runs once per actor, so stepping the
+    // whole world here advanced the crates once per actor and they flew N-times too fast.
     f32_store(state, 0, phys3d_x(player))
     f32_store(state, 1, phys3d_y(player))
     f32_store(state, 2, phys3d_z(player))

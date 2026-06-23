@@ -858,6 +858,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         net_set_meta(15, cs.actors[5].gat)
         if cs.uname_len > 0 { net_set_name(cs.username) }
         net_send_input(blob)
+        phys3d_step(dt)   // advance the dynamic world (crates) ONCE per frame - sim_step no longer does
+                          // it per-actor (that flew the boxes N-times too fast and desynced them)
         net_update(dt)
         // CRATES: client-side PREDICTION with the SAME physics the host runs. The host and each client
         // are separate physics worlds, but they execute identical code - shared crate_shot_impulse /

@@ -11,7 +11,7 @@ fn main() {
     net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
     net_spawn_at(0.0, 0.9, 45.0)
     let mut t = 0
-    while t < 50 { net_send_input([0.0; 20]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    while t < 50 { net_send_input([0.0; 20]); phys3d_step(0.016); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
     let myid = net_my_id()
     let timer_early = net_player_meta(1000, 10)
     let mut saw_bots = 0
@@ -50,7 +50,7 @@ fn main() {
             let dl = sqrt(dx * dx + dy * dy + dz * dz)
             if dl > 0.1 { net_fire(ex, ey, ez, dx / dl, dy / dl, dz / dl, 0) }
         }
-        net_update(0.016)
+        phys3d_step(0.016); net_update(0.016)
         // sample every channel as the session runs
         if net_player_meta(1000, 0) > 0.0 and net_player_meta(1001, 0) > 0.0 and net_player_meta(1002, 0) > 0.0 { saw_bots = 1 }
         if net_fx_count() > 0 { saw_fx = 1 }

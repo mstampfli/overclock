@@ -8,10 +8,10 @@ fn main() {
     net_spawn_at(0.0, 0.9, 45.0)
     let input = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     let mut t = 0
-    while t < 50 { net_send_input(input); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    while t < 50 { net_send_input(input); phys3d_step(0.016); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
     let timer_early = net_player_meta(1000, 10)
     t = 0
-    while t < 400 { net_send_input(input); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+    while t < 400 { net_send_input(input); phys3d_step(0.016); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
     let timer_late = net_player_meta(1000, 10)
     let over = net_player_meta(1000, 11)
     let bot_kills = (net_player_meta(1000,6) + net_player_meta(1001,6) + net_player_meta(1002,6)) as i64
