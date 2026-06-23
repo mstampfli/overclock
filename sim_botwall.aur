@@ -1,0 +1,32 @@
+// Bot wall-avoidance: a dry bot at z=12 must reach an ammo spot at (0,0) with a solid WALL
+// (x=-6..6 at z=5) directly between them. It has to steer AROUND the ends, not grind through.
+fn main() {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 80.0, 0.5, 80.0, 0)
+    phys3d_add_box(0.0, 1.5, 5.0, 6.0, 2.0, 0.5, 0)
+    net_host(45137)
+    let mut w = world::new_world()
+    w.round.bots = 1
+    w.actors[0].hdl = phys3d_add_character(0.0, 0.9, 12.0, 0.6, 0.3)
+    w.actors[0].hp = 100.0
+    w.actors[0].mag[0] = 0
+    w.actors[0].res[0] = 0
+    w.pkx[9] = 0.0
+    w.pkz[9] = 0.0
+    w.pkx[3] = 200.0
+    w.pkz[3] = 200.0
+    w.pkx[4] = 200.0
+    w.pkz[4] = 0.0 - 200.0
+    let mut closest = 100000.0
+    let mut t = 0
+    while t < 700 {
+        server::bots_tick(w, 0.016)
+        phys3d_step(0.016)
+        server::pickups_tick(w, 0.016)
+        let d = sqrt(phys3d_x(w.actors[0].hdl) * phys3d_x(w.actors[0].hdl) + phys3d_z(w.actors[0].hdl) * phys3d_z(w.actors[0].hdl))
+        if d < closest { closest = d }
+        t = t + 1
+    }
+    println("closest to target behind wall = " + str((closest * 100.0) as i64) + "/100 m")
+    println("RESULT bot-rounds-wall=" + str((closest < 2.0) as i64) + " (expect 1)")
+}

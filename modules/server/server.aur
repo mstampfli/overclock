@@ -1028,12 +1028,25 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                 // bots veering the wrong way in Z (fine only when the goal shared the bot's Z, which is
                 // why same-row tests never caught it). This is the move heading; aim/face are separate.
                 let mut myaw = atan2(tmx - bx0, bz0 - tmz)
-                if wallstuck {
-                    let mut vsign = 1.0
-                    if sin(w.etime * 0.8 + (ei2 as f64) * 2.3) < 0.0 { vsign = 0.0 - 1.0 }
-                    myaw = myaw + 1.3 * vsign
+                if seeking == 1 and tdist > 2.5 {
+                    // SEEKING a fixed pickup (never an enemy): rotate the heading RIGHTWARD until the path
+                    // ahead is clear of walls - consistent wall-following, so the bot commits to circling
+                    // one way around an obstacle instead of jittering between sides and stalling. Gated to
+                    // seeking ONLY because raycasts also hit characters; we must never "avoid" an enemy.
+                    let mut probe = 0.0
+                    while probe < 2.7 and phys3d_raycast_ex(h, bx0, by0 + 0.5, bz0, sin(myaw + probe), 0.0, 0.0 - cos(myaw + probe), 2.8) >= 0 {
+                        probe = probe + 0.3
+                    }
+                    myaw = myaw + probe
+                } else {
+                    // Chasing: keep the simple stuck-veer fallback (no raycast, so it never swerves off an enemy).
+                    if wallstuck {
+                        let mut vsign = 1.0
+                        if sin(w.etime * 0.8 + (ei2 as f64) * 2.3) < 0.0 { vsign = 0.0 - 1.0 }
+                        myaw = myaw + 1.3 * vsign
+                    }
                 }
-                f32_store(bin, 2, myaw)                            // yaw: toward goal (veered when stuck)
+                f32_store(bin, 2, myaw)                            // yaw: toward goal (steered around walls when seeking)
                 f32_store(bin, 0, adv)                            // forward: advance / hold / retreat
                 f32_store(bin, 1, juke)                           // strafe: lateral juke
             }
