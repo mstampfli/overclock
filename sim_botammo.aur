@@ -1,0 +1,32 @@
+// Bot dry-ammo emergency (simulate-to-verify): a bot with ZERO rifle ammo (mag+res = 0), full health,
+// no enemy, placed ~49m from the nearest AMMO spot (idx 9 at 20,0) - FARTHER than the normal 35m
+// fight-economy divert cap. A bone-dry bot can't fight, so getting ammo must outrank everything and it
+// crosses the whole map for it, arriving so pickups_tick refills its reserve. Pre-fix (35m cap + ammo
+// ranked below health) it never diverted and just milled around dry.
+fn main() {
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 80.0, 0.5, 80.0, 0)
+    net_host(45134)
+    let mut w = world::new_world()
+    w.round.bots = 1
+    w.actors[0].hdl = phys3d_add_character(0.0, 0.9, 45.0, 0.6, 0.3)
+    w.actors[0].hp = 100.0
+    w.actors[0].mag[0] = 0
+    w.actors[0].res[0] = 0   // bone dry: cannot fire the rifle at all
+    let mut closest = 100000.0
+    let mut t = 0
+    while t < 520 {
+        server::bots_tick(w, 0.016)
+        phys3d_step(0.016)
+        server::pickups_tick(w, 0.016)
+        let dx = phys3d_x(w.actors[0].hdl) - 20.0
+        let dz = phys3d_z(w.actors[0].hdl) - 0.0
+        let d = sqrt(dx * dx + dz * dz)
+        if d < closest { closest = d }
+        t = t + 1
+    }
+    let rearmed = (w.actors[0].res[0] > 0) as i64
+    let reached = (closest < 1.6) as i64
+    println("closest approach to ammo spot = " + str((closest * 100.0) as i64) + "/100 m, final reserve=" + str(w.actors[0].res[0]))
+    println("RESULT dry-bot-fetches-ammo=" + str((rearmed == 1 and reached == 1) as i64) + " (expect 1)")
+}

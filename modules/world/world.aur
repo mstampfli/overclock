@@ -43,7 +43,8 @@ struct Brain {
     pop: f64,        // hit-flinch scale pop (draw)
     gcd: f64,        // grapple cooldown (a bot grapple-leaps to close big gaps, like a player)
     getrifle: f64,   // 1 = heading for ammo, so equip the rifle to top it up (not the launcher)
-    face: f64        // yaw the body should face (set toward its aim target; for the model draw)
+    face: f64,       // yaw the body should face (set toward its aim target; for the model draw)
+    stuckt: f64      // seconds making no progress toward the goal -> wall-stuck (drives veer-around)
 }
 
 // Authoritative FFA round state: reach the kill target before the timer runs out.
@@ -140,7 +141,7 @@ struct World {
 fn new_world() -> World {
     World {
         actors: [ Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
-        brains: [ Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 } ; 9 ],
+        brains: [ Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0, stuckt: 0.0 } ; 9 ],
         round: Round { kills: 0, deaths: 0, timer: 120.0, over: 0, over_t: 0.0, won: 0, target: 15, len: 120.0, bots: 5 },
         last_hit: [0 - 1; 9], death_done: [0; 9], kr_oc: [0.0; 9], kr_mark: [0.0; 9], akills: [0; 9], adeaths: [0; 9],
         pkcd: [0.0; 11],

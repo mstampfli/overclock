@@ -898,13 +898,22 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             // ground spots (pky < 2) are sought so a bot never strands itself under an unreachable tower.
             let mut seeking = 0
             let mut want_type = 0.0 - 1.0
-            if w.actors[ei2].hp < 55.0 {
-                want_type = 0.0
+            // OUT of rifle ammo is an emergency: a dry bot can't fight at all, so fetching ammo
+            // outranks even health/shield, and it will cross the whole map for it (no fight-economy
+            // distance cap). With ammo in hand it falls back to the normal needy-pickup priorities.
+            let totalrifle = w.actors[ei2].mag[0] + w.actors[ei2].res[0]
+            let dry = totalrifle <= 0
+            if dry {
+                want_type = 2.0
             } else {
-                if (w.actors[ei2].mag[0] + w.actors[ei2].res[0]) < 12 {
-                    want_type = 2.0
+                if w.actors[ei2].hp < 55.0 {
+                    want_type = 0.0
                 } else {
-                    if w.actors[ei2].cells < 1 and w.actors[ei2].sh < w.actors[ei2].shmax { want_type = 1.0 }
+                    if totalrifle < 12 {
+                        want_type = 2.0
+                    } else {
+                        if w.actors[ei2].cells < 1 and w.actors[ei2].sh < w.actors[ei2].shmax { want_type = 1.0 }
+                    }
                 }
             }
             if want_type >= 0.0 and channeling == 0 {
@@ -920,8 +929,11 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                     }
                     pk = pk + 1
                 }
-                // only divert for a pickup within reach (35m) - never abandon a fight to sprint the map
-                if bestpk >= 0 and bestpd < 35.0 {
+                // Normally only divert for a nearby pickup (don't abandon a fight to sprint the map),
+                // but a DRY bot has no fight worth protecting - let it chase ammo anywhere on the map.
+                let mut reach = 35.0
+                if dry { reach = 250.0 }
+                if bestpk >= 0 and bestpd < reach {
                     tmx = w.pkx[bestpk]
                     tmy = w.pky[bestpk]
                     tmz = w.pkz[bestpk]
@@ -950,6 +962,10 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             // feed it as input below; the sim does the launch + coyote/buffer like a player.
             let moved = sqrt((bx0 - w.brains[ei2].px0) * (bx0 - w.brains[ei2].px0) + (bz0 - w.brains[ei2].pz0) * (bz0 - w.brains[ei2].pz0))
             let stuck = moved < 0.05 and tdist > 2.0
+            // Accumulate stuck TIME: one slow frame (just spawned / just turned) is normal; only a
+            // sustained lack of progress means we're genuinely wedged against a wall worth veering around.
+            if stuck { w.brains[ei2].stuckt = w.brains[ei2].stuckt + dt } else { w.brains[ei2].stuckt = 0.0 }
+            let wallstuck = w.brains[ei2].stuckt > 0.4
             w.brains[ei2].jcd = w.brains[ei2].jcd - dt
             let mut want_jump = 0
             if grnd and w.brains[ei2].jcd <= 0.0 and channeling == 0 and passive == 0 {
@@ -1002,7 +1018,22 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             let mut zz = 0
             while zz < 24 { f32_store(bin, zz, 0.0); zz = zz + 1 }
             if channeling == 0 and passive == 0 {
-                f32_store(bin, 2, atan2(tmx - bx0, tmz - bz0))   // yaw: face the movement goal
+                // Movement yaw faces the goal - but if we're STUCK (no progress, still far from it,
+                // i.e. grinding into a wall), veer it ~75deg so forward points ALONG the wall and
+                // collide-and-slide carries us around the corner instead of into it. The veer sign
+                // sweeps over ~8s so a bot wedged in a corner eventually tries the other way. Aim and
+                // body facing (brains.face) are separate, so shooting is unaffected.
+                // sim_step's ground forward is (sin yaw, -cos yaw), so the yaw that points AT the goal
+                // is atan2(dx, -dz) - NOT atan2(dx, dz), which silently flips the Z component and sent
+                // bots veering the wrong way in Z (fine only when the goal shared the bot's Z, which is
+                // why same-row tests never caught it). This is the move heading; aim/face are separate.
+                let mut myaw = atan2(tmx - bx0, bz0 - tmz)
+                if wallstuck {
+                    let mut vsign = 1.0
+                    if sin(w.etime * 0.8 + (ei2 as f64) * 2.3) < 0.0 { vsign = 0.0 - 1.0 }
+                    myaw = myaw + 1.3 * vsign
+                }
+                f32_store(bin, 2, myaw)                            // yaw: toward goal (veered when stuck)
                 f32_store(bin, 0, adv)                            // forward: advance / hold / retreat
                 f32_store(bin, 1, juke)                           // strafe: lateral juke
             }

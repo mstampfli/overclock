@@ -120,7 +120,7 @@ fn new_client_state() -> ClientState {
         exmesh: [0; 8],
         pkcd: [0.0; 11],
         actors: [ world::Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
-        brains: [ world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0 } ; 9 ],
+        brains: [ world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0, stuckt: 0.0 } ; 9 ],
         bind_code: [0.0; 16], sens: 0.0, vol: 0, disp_mode: 0, disp_applied: 0, lobby_focus: 0,
         username: "", uname_len: 0, uname_codes: [0; 16],
         ch_size: 0, ch_gap: 0, ch_thick: 0, ch_dot: 0, ch_r: 0, ch_g: 0, ch_b: 0, active_preset: 0,
