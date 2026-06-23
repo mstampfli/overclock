@@ -26,6 +26,9 @@ struct ClientState {
 
     // Fixed-pickup respawn cooldowns (client mirror).
     pkcd: [f64; 11],
+    // Render-smoothed crate positions: the visual eases toward the physics position so reconcile
+    // nudges never show as a jump (the physics/collision stays exact; only the draw is interpolated).
+    crpx: [f64; 12], crpy: [f64; 12], crpz: [f64; 12],
 
     // The shared actor + bot-brain arrays (player + bots + remotes).
     actors: [world::Actor; 9], brains: [world::Brain; 9],
@@ -127,6 +130,7 @@ fn new_client_state() -> ClientState {
         gcx: [0.0; 30], gcy: [0.0; 30], gcz: [0.0; 30], ghx: [0.0; 30], ghy: [0.0; 30], ghz: [0.0; 30], gmesh: [0; 30],
         exmesh: [0; 8],
         pkcd: [0.0; 11],
+        crpx: [0.0; 12], crpy: [0.0; 12], crpz: [0.0; 12],
         actors: [ world::Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
         brains: [ world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0, stuckt: 0.0 } ; 9 ],
         bind_code: [0.0; 16], sens: 0.0, vol: 0, disp_mode: 0, disp_applied: 0, lobby_focus: 0,
@@ -2183,10 +2187,26 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         let mut cd2 = 0
         while cd2 < env.crate_n {
             let chh2 = env.crates[cd2] as i64
-            if cs.net_mode == 2 and net_object_count() >= env.crate_n {
-                r3d_draw_quat(env.crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), net_object_qx(cd2), net_object_qy(cd2), net_object_qz(cd2), net_object_qw(cd2), 1.0)
+            let bpx = phys3d_x(chh2)
+            let bpy = phys3d_y(chh2)
+            let bpz = phys3d_z(chh2)
+            // RENDER SMOOTHING: ease the DRAWN position toward the physics position. The physics body
+            // (and your collision with it) stays exact; only the visual is low-passed, so a reconcile
+            // nudge can never show as a jump. Snap on a big jump (spawn/teleport) so it doesn't slide in.
+            let bdd = sqrt((bpx - cs.crpx[cd2]) * (bpx - cs.crpx[cd2]) + (bpy - cs.crpy[cd2]) * (bpy - cs.crpy[cd2]) + (bpz - cs.crpz[cd2]) * (bpz - cs.crpz[cd2]))
+            if bdd > 2.5 {
+                cs.crpx[cd2] = bpx; cs.crpy[cd2] = bpy; cs.crpz[cd2] = bpz
             } else {
-                r3d_draw(env.crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), 0.0, 0.0, 0.0, 1.0)
+                cs.crpx[cd2] = cs.crpx[cd2] + (bpx - cs.crpx[cd2]) * 0.45
+                cs.crpy[cd2] = cs.crpy[cd2] + (bpy - cs.crpy[cd2]) * 0.45
+                cs.crpz[cd2] = cs.crpz[cd2] + (bpz - cs.crpz[cd2]) * 0.45
+            }
+            if cs.net_mode == 2 and net_object_count() >= env.crate_n {
+                // Rotation from the LOCAL physics quat (which the reconcile nlerps toward the host's),
+                // NOT the raw broadcast - that raw quat snapped at the 60Hz send rate and was the jitter.
+                r3d_draw_quat(env.crate_vis, cs.crpx[cd2], cs.crpy[cd2], cs.crpz[cd2], phys3d_rot_qx(chh2), phys3d_rot_qy(chh2), phys3d_rot_qz(chh2), phys3d_rot_qw(chh2), 1.0)
+            } else {
+                r3d_draw(env.crate_vis, cs.crpx[cd2], cs.crpy[cd2], cs.crpz[cd2], 0.0, 0.0, 0.0, 1.0)
             }
             cd2 = cd2 + 1
         }
