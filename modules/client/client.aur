@@ -108,7 +108,9 @@ struct ClientState {
     preview_model: i64, tune_mode: i64, tune_clip: i64, tune_weapon: i64, tune_play: i64, tune_tp: i64, tune_np: i64, tune_mp: i64,
     // Live-tunable SLIDE pose (dialed in the inspector with C=pick param, I/K=adjust; same values drive
     // the real in-game slide): thigh fwd, shin/knee, hip recline, body drop. tune_sel = selected param.
-    sl_thigh: f64, sl_shin: f64, sl_hip: f64, sl_drop: f64, tune_sel: i64, tune_cp: i64
+    sl_thigh: f64, sl_shin: f64, sl_hip: f64, sl_drop: f64, tune_sel: i64, tune_cp: i64,
+    // LEFT leg gets full XYZ (the rig's L/R bones don't mirror by a single sign), so it can match 1:1.
+    sl_lthx: f64, sl_lthy: f64, sl_lthz: f64, sl_lshx: f64, sl_lshy: f64, sl_lshz: f64
 }
 
 fn new_client_state() -> ClientState {
@@ -162,7 +164,8 @@ fn new_client_state() -> ClientState {
         dropx: [0.0; 6], dropy: [0.0; 6], dropz: [0.0; 6], droptype: [0.0; 6], droplife: [0.0; 6], dropcur: 0,
         screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1,
         preview_model: 0, tune_mode: 0, tune_clip: 9, tune_weapon: 0, tune_play: 0 - 1, tune_tp: 0, tune_np: 0, tune_mp: 0,
-        sl_thigh: 0.0 - 1.02, sl_shin: 0.03, sl_hip: 0.0 - 0.46, sl_drop: 0.0 - 0.56, tune_sel: 0, tune_cp: 0
+        sl_thigh: 0.0 - 1.02, sl_shin: 0.03, sl_hip: 0.0 - 0.46, sl_drop: 0.0 - 0.56, tune_sel: 0, tune_cp: 0,
+        sl_lthx: 0.0 - 1.02, sl_lthy: 0.0, sl_lthz: 0.0, sl_lshx: 0.03, sl_lshy: 0.0, sl_lshz: 0.0
     }
 }
 
@@ -875,22 +878,29 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 let ccx = phys3d_x(cch)
                 let ccy = phys3d_y(cch)
                 let ccz = phys3d_z(cch)
-                let tcx = net_object_x(gci)
-                let tcy = net_object_y(gci)
-                let tcz = net_object_z(gci)
-                // The client runs the SAME crate physics as the host - shared impulse fns for shots +
-                // blasts, deterministic gravity - so normally our box ALREADY matches and we leave it
-                // completely alone (no per-frame correction). We only step in when it has genuinely
-                // diverged: a force we couldn't see (a bot or another player's bullet on the box), lag,
-                // or packet loss. Then track the host's velocity so it keeps pace + lerp the error out;
-                // a big gap is a hard snap. This is the "correction only on rare cases" the design wants.
+                let vlx = net_object_vx(gci)
+                let vly = net_object_vy(gci)
+                let vlz = net_object_vz(gci)
+                // LAG COMPENSATION: the host's snapshot was sent ~a couple ticks ago, but our predicted
+                // box is real-time NOW. So extrapolate the host's position FORWARD along its broadcast
+                // velocity by that send delay and compare against THAT - i.e. compare our box to where the
+                // host's box IS now, not where it WAS. Without this, every moving box (pushed by you or
+                // flung by a blast) sat a fixed lag behind the host and got rubber-banded every frame.
+                let lc = 0.045
+                let tcx = net_object_x(gci) + vlx * lc
+                let tcy = net_object_y(gci) + vly * lc
+                let tcz = net_object_z(gci) + vlz * lc
+                // The client runs the SAME crate physics as the host (shared impulse fns + deterministic
+                // gravity, stepped once per tick), so normally our box ALREADY matches the lag-comp'd host
+                // position and we leave it alone. Correct only on genuine divergence (a force we couldn't
+                // predict, packet loss): track the host's velocity + lerp the error out; a big gap snaps.
                 let dvg = sqrt((tcx - ccx) * (tcx - ccx) + (tcy - ccy) * (tcy - ccy) + (tcz - ccz) * (tcz - ccz))
                 if dvg > 2.5 {
                     phys3d_set_pos(cch, tcx, tcy, tcz)
-                    phys3d_set_vel(cch, net_object_vx(gci), net_object_vy(gci), net_object_vz(gci))
-                } else { if dvg > 0.3 {
-                        phys3d_set_vel(cch, net_object_vx(gci), net_object_vy(gci), net_object_vz(gci))
-                        phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.3, ccy + (tcy - ccy) * 0.3, ccz + (tcz - ccz) * 0.3)
+                    phys3d_set_vel(cch, vlx, vly, vlz)
+                } else { if dvg > 0.4 {
+                        phys3d_set_vel(cch, vlx, vly, vlz)
+                        phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.2, ccy + (tcy - ccy) * 0.2, ccz + (tcz - ccz) * 0.2)
                 } }
                 phys3d_set_rot(cch, net_object_qx(gci), net_object_qy(gci), net_object_qz(gci), net_object_qw(gci))
                 phys3d_set_angvel(cch, 0.0, 0.0, 0.0)   // orientation is host-driven (quat above); no local spin
@@ -2279,10 +2289,10 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             // go out FLAT (not a bent sitting pose). Bones: hips 1, thigh.L 45 thigh.R 49,
                             // shin.L 46 shin.R 50. Legs held still (idle base below).
                             r3d_pose_bone(cs.actor_models[ai], 1, cs.sl_hip, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 45, 0.0 - cs.sl_thigh, 0.0, 0.0)   // left leg mirrors the right
-                            r3d_pose_bone(cs.actor_models[ai], 49, cs.sl_thigh, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 46, 0.0 - cs.sl_shin, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 50, cs.sl_shin, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 49, cs.sl_thigh, 0.0, 0.0)         // RIGHT thigh (the good one)
+                            r3d_pose_bone(cs.actor_models[ai], 50, cs.sl_shin, 0.0, 0.0)          // RIGHT shin
+                            r3d_pose_bone(cs.actor_models[ai], 45, cs.sl_lthx, cs.sl_lthy, cs.sl_lthz)   // LEFT thigh (full XYZ to match)
+                            r3d_pose_bone(cs.actor_models[ai], 46, cs.sl_lshx, cs.sl_lshy, cs.sl_lshz)   // LEFT shin
                         } else {
                             r3d_clear_pose(cs.actor_models[ai])
                         }
@@ -3054,7 +3064,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             // SLIDE-pose tuner: C picks a param (thigh/shin/hip/drop), I/K nudge it. The dummy shows the
             // live slide pose, and the same cs.sl_* values drive the real in-game slide - so dial it here.
             let cdn = key_down(42)
-            if cdn > 0 and cs.tune_cp == 0 { cs.tune_sel = cs.tune_sel + 1; if cs.tune_sel > 3 { cs.tune_sel = 0 } }
+            if cdn > 0 and cs.tune_cp == 0 { cs.tune_sel = cs.tune_sel + 1; if cs.tune_sel > 9 { cs.tune_sel = 0 } }
             cs.tune_cp = cdn
             let mut tstep = 0.0
             if key_down(48) > 0 { tstep = 0.015 }
@@ -3063,11 +3073,17 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             if cs.tune_sel == 1 { cs.sl_shin = cs.sl_shin + tstep }
             if cs.tune_sel == 2 { cs.sl_hip = cs.sl_hip + tstep }
             if cs.tune_sel == 3 { cs.sl_drop = cs.sl_drop + tstep }
+            if cs.tune_sel == 4 { cs.sl_lthx = cs.sl_lthx + tstep }
+            if cs.tune_sel == 5 { cs.sl_lthy = cs.sl_lthy + tstep }
+            if cs.tune_sel == 6 { cs.sl_lthz = cs.sl_lthz + tstep }
+            if cs.tune_sel == 7 { cs.sl_lshx = cs.sl_lshx + tstep }
+            if cs.tune_sel == 8 { cs.sl_lshy = cs.sl_lshy + tstep }
+            if cs.tune_sel == 9 { cs.sl_lshz = cs.sl_lshz + tstep }
             r3d_pose_bone(cs.preview_model, 1, cs.sl_hip, 0.0, 0.0)
-            r3d_pose_bone(cs.preview_model, 45, 0.0 - cs.sl_thigh, 0.0, 0.0)   // left leg mirrors the right
-            r3d_pose_bone(cs.preview_model, 49, cs.sl_thigh, 0.0, 0.0)
-            r3d_pose_bone(cs.preview_model, 46, 0.0 - cs.sl_shin, 0.0, 0.0)
-            r3d_pose_bone(cs.preview_model, 50, cs.sl_shin, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 49, cs.sl_thigh, 0.0, 0.0)         // RIGHT thigh (the good one)
+            r3d_pose_bone(cs.preview_model, 50, cs.sl_shin, 0.0, 0.0)          // RIGHT shin
+            r3d_pose_bone(cs.preview_model, 45, cs.sl_lthx, cs.sl_lthy, cs.sl_lthz)   // LEFT thigh - tune to match
+            r3d_pose_bone(cs.preview_model, 46, cs.sl_lshx, cs.sl_lshy, cs.sl_lshz)   // LEFT shin
             if cs.tune_play != cs.tune_clip { r3d_anim_play(cs.preview_model, cs.tune_clip, 1, 1.0, 0.1); cs.tune_play = cs.tune_clip }
             r3d_anim_update(cs.preview_model, dt)
             r3d_draw(cs.preview_model, pvx, py + env.actor_yoff + cs.sl_drop, pvz, pvyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale)
@@ -3085,11 +3101,13 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             draw_text(20, 100, "CLIP INSPECTOR (T exit, bots passive) - N=clip  M=weapon", 16, col_gold)
             draw_text(20, 124, "clip", 16, col_white); draw_int(120, 124, cs.tune_clip, 16, col_white); draw_text(170, 124, "of", 16, col_white); draw_int(210, 124, clipn, 16, col_white)
             draw_text(20, 148, "weapon (0 rifle / 1 launcher / 2 katana)", 16, col_white); draw_int(360, 148, cs.tune_weapon, 16, col_white)
-            draw_text(20, 176, "SLIDE TUNE  C=pick  I/K=adjust   sel(0thigh 1shin 2hip 3drop) =", 16, col_gold); draw_int(660, 176, cs.tune_sel, 16, col_gold)
-            draw_text(20, 200, "thigh", 16, col_white); draw_int(100, 200, (cs.sl_thigh * 100.0) as i64, 16, col_white)
-            draw_text(170, 200, "shin", 16, col_white); draw_int(240, 200, (cs.sl_shin * 100.0) as i64, 16, col_white)
-            draw_text(310, 200, "hip", 16, col_white); draw_int(370, 200, (cs.sl_hip * 100.0) as i64, 16, col_white)
-            draw_text(440, 200, "drop", 16, col_white); draw_int(520, 200, (cs.sl_drop * 100.0) as i64, 16, col_white)
+            draw_text(20, 176, "SLIDE TUNE  C=pick  I/K=adjust   sel 0Rth 1Rsh 2hip 3drop 4Lth.x 5Lth.y 6Lth.z 7Lsh.x 8Lsh.y 9Lsh.z =", 16, col_gold); draw_int(900, 176, cs.tune_sel, 16, col_gold)
+            draw_text(20, 200, "Rth", 16, col_white); draw_int(70, 200, (cs.sl_thigh * 100.0) as i64, 16, col_white)
+            draw_text(140, 200, "Rsh", 16, col_white); draw_int(200, 200, (cs.sl_shin * 100.0) as i64, 16, col_white)
+            draw_text(270, 200, "hip", 16, col_white); draw_int(320, 200, (cs.sl_hip * 100.0) as i64, 16, col_white)
+            draw_text(390, 200, "drop", 16, col_white); draw_int(460, 200, (cs.sl_drop * 100.0) as i64, 16, col_white)
+            draw_text(20, 224, "Lth", 16, col_white); draw_int(70, 224, (cs.sl_lthx * 100.0) as i64, 16, col_white); draw_int(150, 224, (cs.sl_lthy * 100.0) as i64, 16, col_white); draw_int(230, 224, (cs.sl_lthz * 100.0) as i64, 16, col_white)
+            draw_text(330, 224, "Lsh", 16, col_white); draw_int(380, 224, (cs.sl_lshx * 100.0) as i64, 16, col_white); draw_int(460, 224, (cs.sl_lshy * 100.0) as i64, 16, col_white); draw_int(540, 224, (cs.sl_lshz * 100.0) as i64, 16, col_white)
         }
         if cs.screen != env.s_game { break }
     }
