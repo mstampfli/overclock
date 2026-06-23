@@ -462,8 +462,13 @@ fn run_menu(cs: ClientState, env: ClientEnv) {
                                     cs.g_joined = 0
                                     cs.net_mode = 2    // we are now just a client; main runs the cs.net_mode==2 path
                                 }
+                                // This closure is STORED by the netcode and called every sim tick for the
+                                // whole match - long after run_menu returns. It must capture NOTHING that
+                                // lives on run_menu's stack (capturing env.cfg here dangled once the menu
+                                // returned -> use-after-free, segfault on game entry). cfg is immutable and
+                                // always == default_cfg(), so recompute it inside the closure: zero capture.
                                 net_sim(|state, input| {
-                                        sim::sim_step(state, input, env.cfg)
+                                        sim::sim_step(state, input, sim::default_cfg())
                                         0
                                     }, 21, 20)
                                 net_spawn_at(0.0, 0.9, 45.0)
