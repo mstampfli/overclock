@@ -1,0 +1,87 @@
+name: release
+
+# Build OVERCLOCK for Linux, macOS, and Windows on GitHub-hosted runners and publish all three to
+# the GitHub release for the pushed tag. Push a tag like `v0.2.0` to trigger it.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # needed to create/update the release and upload assets
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: linux,   bin: overclock,     aurorac: aurorac }
+          - { os: macos-latest,   name: macos,   bin: overclock,     aurorac: aurorac }
+          - { os: windows-latest, name: windows, bin: overclock.exe, aurorac: aurorac.exe }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout overclock
+        uses: actions/checkout@v4
+        with:
+          path: overclock
+
+      # The Aurora compiler/runtime lives in a separate (public) repo. aurorac bakes this workspace
+      # path at compile time and links aurora-exe out of it, so we build aurorac here and run it from
+      # the overclock checkout below.
+      - name: Checkout aurora (toolchain)
+        uses: actions/checkout@v4
+        with:
+          repository: mstampfli/aurora
+          ref: main
+          path: aurora
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: aurora
+
+      # winit/wgpu/rodio need X11+Wayland+GL+ALSA dev libraries to LINK on Linux.
+      - name: Linux system libraries
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libudev-dev pkg-config \
+            libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+
+      - name: Build the Aurora toolchain (aurorac)
+        working-directory: aurora
+        run: cargo build --release -p aurorac
+
+      # aurorac runs from the overclock dir (reads playground.aur + modules/ there) and links via the
+      # aurora workspace it was compiled against. Produces a native binary for this runner's OS.
+      - name: Build overclock
+        working-directory: overclock
+        shell: bash
+        run: ../aurora/target/release/${{ matrix.aurorac }} build playground.aur -o ${{ matrix.bin }}
+
+      # Bundle the binary with the runtime assets it loads (models + the fallback font). tar.gz works
+      # on every modern OS (Windows 10+ ships tar).
+      - name: Package
+        working-directory: overclock
+        shell: bash
+        run: |
+          pkg="overclock-${{ matrix.name }}"
+          mkdir -p "$pkg"
+          cp "${{ matrix.bin }}" "$pkg/"
+          cp -r models fonts "$pkg/"
+          tar -czf "$pkg.tar.gz" "$pkg"
+          ls -la "$pkg.tar.gz"
+
+      - name: Publish to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: overclock/overclock-${{ matrix.name }}.tar.gz
+          fail_on_unmatched_files: true
+          generate_release_notes: true
