@@ -904,7 +904,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         // in lockstep on their own. The reconcile below therefore does NOTHING in the common case; it
         // only corrects the rare divergence the client couldn't predict (a bot/remote bullet on a box,
         // lag, loss). Orientation is still taken from the host (cheap, and it isn't the lag).
-        if cs.net_mode == 2 and net_object_count() >= env.crate_n {
+        if net_object_count() >= env.crate_n {
             let mut gci = 0
             while gci < env.crate_n {
                 let cch = env.crates[gci] as i64
@@ -1040,17 +1040,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             }
             net_kills_clear()
         }
-        // Players REPLACE bots: active bots = opponent budget (cs.bot_count) minus connected
-        // remotes, so a joining player frees a bot slot and a leaving player gets a bot back.
-        let mut num_remotes = net_player_count() - 1
-        if num_remotes < 0 { num_remotes = 0 }
-        let mut active_bots = cs.bot_count - num_remotes
-        if active_bots < 0 { active_bots = 0 }
-        if active_bots > env.bot_n { active_bots = env.bot_n }
-        // GUEST: bots don't exist as bots here - they arrive as ordinary remote players from
-        // the host. So we run/own NO local bots (active_bots = 0) and never park them; the
-        // host is the only place the AI brain lives.
-        if cs.net_mode == 2 { active_bots = 0 }
+        // Server-authoritative: bots live entirely on the integrated server and arrive as ordinary
+        // remote players. The client runs/owns NO local bots, so the local actor sim is just our player.
+        let mut active_bots = 0
         // Bounced by a full lobby: drop back to the menu with a clear message.
         if net_rejected() > 0 {
             cs.lobby_full = true
@@ -1346,7 +1338,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             // behind on the SAME arc, a sub-metre phase gap that should NOT be fought, or the throw
             // stops feeling instant). Only a genuine large divergence - the host bounced our nade off a
             // box that moved, say - is reconciled, and smoothly (lerp), never a hard pop.
-            if cs.net_mode == 2 and cs.nade_live {
+            if cs.nade_live {
                 let fxn = net_fx_count()
                 let mut fxi = 0
                 let mut sgx = 0.0
@@ -1722,7 +1714,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         if cs.actors[ci].sh > cs.actors[ci].shmax { cs.actors[ci].sh = cs.actors[ci].shmax }
                         // GUEST: signal the host to spend a cell + add shield (it owns the result;
                         // the local change above is just prediction it reconciles).
-                        if ci == env.pl_i and cs.net_mode == 2 { cs.g_heal_ctr = cs.g_heal_ctr + 1.0 }
+                        if ci == env.pl_i { cs.g_heal_ctr = cs.g_heal_ctr + 1.0 }
                     }
                 } else {
                     cs.actors[ci].heal = 0.0
@@ -1771,7 +1763,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             // player->bot, bot->player, bot->bot, and (host) anyone->client.
                             let mut vk = 0
                             while vk < env.nactors {
-                                if vk != ci and hb == (cs.actors[vk].hdl as i64) and cs.actors[vk].hp > 0.0 and (mine == 0 or cs.net_mode != 1) {
+                                if vk != ci and hb == (cs.actors[vk].hdl as i64) and cs.actors[vk].hp > 0.0 {
                                     let hrel = hY - phys3d_y(cs.actors[vk].hdl as i64)
                                     let mut dmg = env.gun_dmg
                                     let mut headshot = 0
@@ -1852,7 +1844,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         if mine == 1 { lg = 55 }
                         play_sound_handle_at(env.snd_launcher, 125, ox, oy, oz)
                         // GUEST: send the rocket LAUNCH INTENT so the host applies authoritative damage.
-                        if mine == 1 and cs.net_mode == 2 { net_projectile_intent(0, ox, oy, oz, ax, ay, az) }
+                        if mine == 1 { net_projectile_intent(0, ox, oy, oz, ax, ay, az) }
                     }
                     let mut fw = env.fire_w[wp]
                     if mine == 1 and cs.oc_active { fw = fw * 0.55 }
@@ -1871,13 +1863,13 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         let fdz = apz - env.pkz[fp]
                         if sqrt(fdx * fdx + fdz * fdz) < 1.4 {
                             if env.pktype[fp] < 0.5 {
-                                if cs.actors[ci].hp < env.php_max { cs.actors[ci].hp = env.php_max; cs.pkcd[fp] = env.pk_respawn; if mine == 1 and cs.net_mode != 2 { play_sound(7, 80, 0) } }
+                                if cs.actors[ci].hp < env.php_max { cs.actors[ci].hp = env.php_max; cs.pkcd[fp] = env.pk_respawn; }
                             } else { if env.pktype[fp] < 1.5 {
-                                    if cs.actors[ci].cells < env.max_cells { cs.actors[ci].cells = cs.actors[ci].cells + 1; cs.pkcd[fp] = env.pk_respawn; if mine == 1 and cs.net_mode != 2 { play_sound(14, 90, 0) } }
+                                    if cs.actors[ci].cells < env.max_cells { cs.actors[ci].cells = cs.actors[ci].cells + 1; cs.pkcd[fp] = env.pk_respawn; }
                                 } else {
                                     // Ammo: refill the EQUIPPED weapon's reserve. On a guest this is PREDICTION;
                                     // we count it (cs.g_ammo_applied) so the server-confirm reconcile cs.won't double it.
-                                    if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.pkcd[fp] = env.pk_respawn; if mine == 1 { play_sound(10, 80, 0); if cs.net_mode == 2 { cs.g_ammo_applied = cs.g_ammo_applied + 1 } } }
+                                    if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.pkcd[fp] = env.pk_respawn; if mine == 1 { play_sound(10, 80, 0); cs.g_ammo_applied = cs.g_ammo_applied + 1 } }
                             } }
                         }
                     }
@@ -1890,9 +1882,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         let gdz = apz - cs.dropz[gp]
                         if sqrt(gdx * gdx + gdz * gdz) < 1.4 {
                             if cs.droptype[gp] < 0.5 {
-                                if cs.actors[ci].hp < env.php_max { cs.actors[ci].hp = env.php_max; cs.droplife[gp] = 0.0; if mine == 1 and cs.net_mode != 2 { play_sound(7, 80, 0) } }
+                                if cs.actors[ci].hp < env.php_max { cs.actors[ci].hp = env.php_max; cs.droplife[gp] = 0.0; }
                             } else { if cs.droptype[gp] < 1.5 {
-                                    if cs.actors[ci].cells < env.max_cells { cs.actors[ci].cells = cs.actors[ci].cells + 1; cs.droplife[gp] = 0.0; if mine == 1 and cs.net_mode != 2 { play_sound(14, 90, 0) } }
+                                    if cs.actors[ci].cells < env.max_cells { cs.actors[ci].cells = cs.actors[ci].cells + 1; cs.droplife[gp] = 0.0; }
                                 } else {
                                     if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
                             } }
@@ -1916,7 +1908,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         while dv < env.nactors {
             // The player + ACTIVE bots, and on the HOST also connected clients (it owns their hp,
             // so it runs their death too -> drops + kill event; the client respawns itself).
-            let dv_live = dv == env.pl_i or dv < active_bots or (cs.net_mode == 1 and dv > env.pl_i and cs.apid[dv] != 9999)
+            let dv_live = dv == env.pl_i
             if cs.actors[dv].hp <= 0.0 and cs.death_done[dv] == 0 and dv_live {
                 cs.death_done[dv] = 1
                 cs.actors[dv].hp = 0.0
@@ -2147,7 +2139,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         while wki < env.nactors {
             if wki != env.pl_i {
                 let mut okk = cs.akills[wki]
-                if cs.net_started and (cs.net_mode != 1 or wki >= env.bot_n) { okk = net_player_meta(cs.apid[wki], 6) as i64 }
+                if cs.net_started { okk = net_player_meta(cs.apid[wki], 6) as i64 }
                 if okk > max_ok { max_ok = okk }
             }
             wki = wki + 1
@@ -2187,8 +2179,6 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 // guest only OUR push is predicted; other players' crate effects reconcile in.
                 let mut cinteract = 0
                 if cai == env.pl_i { cinteract = 1 }
-                if cai < env.bot_n and cs.net_mode != 2 { cinteract = 1 }
-                if cai > env.pl_i and cs.net_mode == 1 and cs.apid[cai] != 9999 { cinteract = 1 }
                 if cinteract == 1 and cs.actors[cai].hp > 0.0 {
                     let apx = phys3d_x(cs.actors[cai].hdl as i64)
                     let apz = phys3d_z(cs.actors[cai].hdl as i64)
@@ -2250,7 +2240,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 cs.crpy[cd2] = cs.crpy[cd2] + (bpy - cs.crpy[cd2]) * 0.45
                 cs.crpz[cd2] = cs.crpz[cd2] + (bpz - cs.crpz[cd2]) * 0.45
             }
-            if cs.net_mode == 2 and net_object_count() >= env.crate_n {
+            if net_object_count() >= env.crate_n {
                 // Rotation from the LOCAL physics quat (which the reconcile nlerps toward the host's),
                 // NOT the raw broadcast - that raw quat snapped at the 60Hz send rate and was the jitter.
                 r3d_draw_quat(env.crate_vis, cs.crpx[cd2], cs.crpy[cd2], cs.crpz[cd2], phys3d_rot_qx(chh2), phys3d_rot_qy(chh2), phys3d_rot_qz(chh2), phys3d_rot_qw(chh2), 1.0)
@@ -3007,7 +2997,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let mut sbd = [0; 9]
             let mut sbi = 0
             while sbi < env.nactors {
-                if cs.net_started and (cs.net_mode != 1 or sbi >= env.bot_n) {
+                if cs.net_started {
                     // Player + networked cs.actors: read the replicated, host-authoritative score.
                     let mut spid = cs.apid[sbi]
                     if sbi == env.pl_i { spid = net_my_id() }
