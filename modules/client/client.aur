@@ -162,7 +162,7 @@ fn new_client_state() -> ClientState {
         dropx: [0.0; 6], dropy: [0.0; 6], dropz: [0.0; 6], droptype: [0.0; 6], droplife: [0.0; 6], dropcur: 0,
         screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1,
         preview_model: 0, tune_mode: 0, tune_clip: 9, tune_weapon: 0, tune_play: 0 - 1, tune_tp: 0, tune_np: 0, tune_mp: 0,
-        sl_thigh: 0.0 - 1.2, sl_shin: 0.0, sl_hip: 0.0 - 0.6, sl_drop: 0.0 - 0.55, tune_sel: 0, tune_cp: 0
+        sl_thigh: 0.0 - 1.02, sl_shin: 0.03, sl_hip: 0.0 - 0.46, sl_drop: 0.0 - 0.56, tune_sel: 0, tune_cp: 0
     }
 }
 
@@ -2278,9 +2278,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             // shin.L 46 shin.R 50. Legs held still (idle base below).
                             r3d_pose_bone(cs.actor_models[ai], 1, cs.sl_hip, 0.0, 0.0)
                             r3d_pose_bone(cs.actor_models[ai], 45, cs.sl_thigh, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 49, cs.sl_thigh, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 49, 0.0 - cs.sl_thigh, 0.0, 0.0)   // right leg mirrors the left
                             r3d_pose_bone(cs.actor_models[ai], 46, cs.sl_shin, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 50, cs.sl_shin, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 50, 0.0 - cs.sl_shin, 0.0, 0.0)
                         } else {
                             r3d_clear_pose(cs.actor_models[ai])
                         }
@@ -3063,9 +3063,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             if cs.tune_sel == 3 { cs.sl_drop = cs.sl_drop + tstep }
             r3d_pose_bone(cs.preview_model, 1, cs.sl_hip, 0.0, 0.0)
             r3d_pose_bone(cs.preview_model, 45, cs.sl_thigh, 0.0, 0.0)
-            r3d_pose_bone(cs.preview_model, 49, cs.sl_thigh, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 49, 0.0 - cs.sl_thigh, 0.0, 0.0)   // right leg mirrors the left
             r3d_pose_bone(cs.preview_model, 46, cs.sl_shin, 0.0, 0.0)
-            r3d_pose_bone(cs.preview_model, 50, cs.sl_shin, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 50, 0.0 - cs.sl_shin, 0.0, 0.0)
             if cs.tune_play != cs.tune_clip { r3d_anim_play(cs.preview_model, cs.tune_clip, 1, 1.0, 0.1); cs.tune_play = cs.tune_clip }
             r3d_anim_update(cs.preview_model, dt)
             r3d_draw(cs.preview_model, pvx, py + env.actor_yoff + cs.sl_drop, pvz, pvyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale)
