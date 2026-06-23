@@ -162,14 +162,134 @@ fn new_client_state() -> ClientState {
 // after the preamble (handles/geometry need the window open + models loaded), then passed
 // alongside cs. The mutable game state is cs; the immutable config/handles are env.
 struct ClientEnv {
-    // Screen-mode ids.
-    s_title: i64, s_settings: i64, s_pause: i64, s_game: i64, s_quit: i64, s_lobby: i64, s_crosshair: i64,
-    // Counts + the sim config blob + the loopback server port.
-    act_n: i64, bot_n: i64, max_remote: i64, net_port: i64, geo_n: i64, ext_n: i64,
-    cfg: [f64; 21],
-    // Backdrop geometry: ground plane + the extra ramp meshes (pos + rot).
+    act_back: i64,
+    act_dash: i64,
+    act_fire: i64,
+    act_frag: i64,
+    act_fwd: i64,
+    act_grapple: i64,
+    act_heal: i64,
+    act_jump: i64,
+    act_left: i64,
+    act_melee: i64,
+    actor_scale: f64,
+    actor_yaw_off: f64,
+    actor_yoff: f64,
+    act_overclock: i64,
+    act_reload: i64,
+    act_right: i64,
+    act_slide: i64,
+    act_wep1: i64,
+    act_wep2: i64,
+    ammo_vis: i64,
+    anim_aim: i64,
+    anim_idle: i64,
+    anim_jump: i64,
+    anim_run: i64,
+    anim_shoot: i64,
+    body_vis: i64,
+    bot_kb: f64,
+    bot_n: i64,
+    cell_shield: f64,
+    crate_n: i64,
+    crates: [f64; 12],
+    crate_vis: i64,
+    drop_n: i64,
+    enemy_glow_body: i64,
+    enemy_glow_head: i64,
+    enemy_head: i64,
+    enemy_hp_max: f64,
+    enemy_respawn: f64,
+    enemy_vis: i64,
+    enemy_vis_sh: i64,
+    esx: [f64; 5],
+    esz: [f64; 5],
+    exrx: [f64; 8],
+    exrz: [f64; 8],
+    ext_n: i64,
+    exx: [f64; 8],
+    exy: [f64; 8],
+    exz: [f64; 8],
+    fire2_vis: i64,
+    fire_vis: i64,
+    fire_w: [f64; 2],
+    flash_vis: i64,
+    geo_n: i64,
     ground_vis: i64,
-    exx: [f64; 8], exy: [f64; 8], exz: [f64; 8], exrx: [f64; 8], exrz: [f64; 8]
+    gun_dmg: f64,
+    gun_pitch: f64,
+    gun_roll: f64,
+    gun_yaw: f64,
+    hand_joint: i64,
+    head_vis: i64,
+    heal_channel: f64,
+    heal_vis: i64,
+    kat_pitch: f64,
+    kat_roll: f64,
+    kat_scale: f64,
+    kat_scale_tp: f64,
+    kat_swing_clip: i64,
+    kat_yaw: f64,
+    lnch_scale: f64,
+    lnch_scale_tp: f64,
+    mag_size_w: [i64; 2],
+    max_cells: i64,
+    max_remote: i64,
+    melee_cooldown: f64,
+    melee_dmg: f64,
+    melee_range: f64,
+    nactors: i64,
+    nade_cooldown: f64,
+    nade_dmg: f64,
+    nade_fuse: f64,
+    nade_intensity: f64,
+    nade_kb_radius: f64,
+    nade_radius: f64,
+    nade_throw: f64,
+    nade_vis: i64,
+    php_max: f64,
+    pk_n: i64,
+    pk_respawn: f64,
+    pktype: [f64; 11],
+    pkx: [f64; 11],
+    pkz: [f64; 11],
+    player_kb: f64,
+    pl_i: i64,
+    proj_life: f64,
+    proj_n: i64,
+    proj_speed: f64,
+    proj_vis: i64,
+    psh_max: f64,
+    regen_delay: f64,
+    reload_w: [f64; 2],
+    res_max: [i64; 2],
+    res_refill: [i64; 2],
+    rifle_scale: f64,
+    rifle_scale_tp: f64,
+    rocket_intensity: f64,
+    s_game: i64,
+    shieldcube_vis: i64,
+    shield_vis: i64,
+    s_lobby: i64,
+    smoke_vis: i64,
+    spark: i64,
+    spawn_r: f64,
+    sp_n: i64,
+    spx: [f64; 6],
+    spz: [f64; 6],
+    s_quit: i64,
+    s_title: i64,
+    tracer_n: i64,
+    upper_mask_root: i64,
+    vm_katana: i64,
+    vm_launcher: i64,
+    vm_rifle: i64,
+    act_n: i64,
+    cfg: [f64; 21],
+    net_port: i64,
+    s_crosshair: i64,
+    s_pause: i64,
+    s_settings: i64
 }
 
 // ---------- MENU (title / settings / pause / lobby / crosshair) ----------
@@ -572,5 +692,2458 @@ fn run_menu(cs: ClientState, env: ClientEnv) {
         // Leave the menu loop only once a non-menu cs.screen is chosen: PLAY/RESUME ->
         // game, QUIT/window-close -> quit. title/cs.settings/pause keep looping here.
         if cs.screen == env.s_game or cs.screen == env.s_quit { break }
+    }
+}
+
+// ---------- GAME ----------
+// The entire in-match frame loop: round reset, then per-frame input -> authoritative sim
+// reconcile -> camera -> world/HUD render -> local combat prediction -> the unified death
+// sweep -> pause overlay. One cohesive pipeline (its per-frame locals stay internal). All
+// mutable state is cs; env holds the read-only assets/config it draws + simulates from.
+fn run_game(cs: ClientState, env: ClientEnv) {
+    // PLAY arms a fresh round: reset score/health/ammo/overclock, clear the
+    // transient pools (projectiles/tracers/sparks/drops), and respawn the player
+    // and every bot at their anchors. RESUME (from pause) leaves cs.do_reset false.
+    if cs.do_reset {
+        cs.kills = 0
+        cs.deaths = 0
+        let mut zk = 0
+        while zk < 9 { cs.akills[zk] = 0; cs.adeaths[zk] = 0; zk = zk + 1 }
+        cs.round_timer = cs.round_len
+        cs.round_over = false
+        cs.over_t = 0.0
+        cs.won = false
+        cs.actors[5].hp = env.php_max
+        cs.actors[5].sh = 0.0   // first spawn is SHIELDLESS too (matches respawn + the guest); loot cells
+        cs.dead = false
+        cs.prev_dead = false
+        cs.respawn_cd = 0.0
+        cs.pinvuln = 0.0   // no spawn protection - killable the instant you spawn
+        cs.dmg_timer = env.regen_delay
+        cs.hurt_flash = 0.0
+        cs.actors[5].cells = 0
+        cs.actors[5].heal = 0.0
+        cs.respawn_req = 1.0
+        cs.actors[5].wpn = 0
+        cs.prev_weapon = 0
+        cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1
+        cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2
+        cs.actors[5].rl = 0.0
+        cs.oc_meter = 0.0
+        cs.oc_active = false
+        cs.oc_timer = 0.0
+        cs.oc_gain_t = 3.0
+        cs.grapple_on = false
+        cs.g_cd = 0.0
+        cs.g_time = 0.0
+        cs.nade_live = false
+        cs.nfuse = 0.0
+        cs.nade_cd = 0.0
+        cs.explode = false
+        cs.boom_t = 0.0
+        cs.blast_ix = 0.0; cs.blast_iy = 0.0; cs.blast_iz = 0.0
+        let mut rp = 0
+        while rp < env.proj_n { cs.prjlife[rp] = 0.0; rp = rp + 1 }
+        rp = 0
+        while rp < env.tracer_n { cs.trlife[rp] = 0.0; rp = rp + 1 }
+        rp = 0
+        while rp < 28 { cs.plife[rp] = 0.0; rp = rp + 1 }
+        rp = 0
+        while rp < env.drop_n { cs.droplife[rp] = 0.0; rp = rp + 1 }
+        rp = 0
+        while rp < 6 { cs.kf_time[rp] = 0.0; rp = rp + 1 }   // clear the kill feed on a fresh game
+        cs.kf_cur = 0
+        rp = 0
+        while rp < 9 { cs.death_done[rp] = 0; cs.last_hit[rp] = 0 - 1; rp = rp + 1 }   // re-arm death sweep
+        let mut rb = 0
+        while rb < env.bot_n {
+            cs.actors[rb].hp = env.enemy_hp_max
+            if rb >= cs.bot_count { cs.actors[rb].hp = 0.0; cs.brains[rb].resp = 1000000.0 }   // inactive bot
+            cs.actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
+            cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]
+            cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2
+            cs.actors[rb].rl = 0.0
+            cs.actors[rb].wpn = 0
+            cs.actors[rb].cells = 0
+            cs.actors[rb].heal = 0.0
+            cs.brains[rb].resp = 0.0
+            cs.brains[rb].kx = 0.0; cs.brains[rb].ky = 0.0; cs.brains[rb].kz = 0.0
+            cs.brains[rb].vy = 0.0
+            cs.brains[rb].pop = 0.0
+            cs.brains[rb].jcd = 0.0
+            phys3d_set_pos(cs.actors[rb].hdl as i64, env.esx[rb], 0.9, env.esz[rb])
+            rb = rb + 1
+        }
+        cs.do_reset = false
+    }
+    grab_mouse(1)               // capture the cursor for play
+    cs.esc_prev = 1                // ignore an Escape still held from the menu
+    let mut paused = false      // pause overlay open?
+    let mut was_paused = false  // edge-detect for blur/grab/suppress transitions
+    let mut pmprev = 0          // overlay click edge-detect
+
+    loop {
+        if r3d_present() == 0 { cs.screen = env.s_quit; break }
+        r3d_begin()
+// Real frame time (clamped) so movement is frame-rate independent.
+let mut dt = frame_dt()
+
+// Size the HUD framebuffer to the live window (crisp 1:1; re-creates it
+// when the window is resized). The crosshair/HUD are laid out from cs.fbw/cs.fbh.
+let sw = surface_w()
+let sh = surface_h()
+if sw > 0 and (sw != cs.fbw or sh != cs.fbh) {
+    framebuffer(sw, sh)
+    cs.fbw = sw
+    cs.fbh = sh
+}
+let cx = cs.fbw / 2
+let cy = cs.fbh / 2
+
+// ----- Pause overlay (Escape). PRACTICE freezes the whole sim (dt -> 0) and
+// suppresses player input; ONLINE stays live (the match keeps running so you
+// don't desync) - only the blurred backdrop + overlay menu show. The blur,
+// mouse-release and input-suppress are flipped once on each transition.
+let pesc = key_down(20)
+if pesc > 0 and cs.esc_prev == 0 { if paused { paused = false } else { paused = true } }
+cs.esc_prev = pesc
+if paused and was_paused == false { grab_mouse(0); input_suppress(1); r3d_blur(8.0) }
+if paused == false and was_paused { grab_mouse(1); input_suppress(0); r3d_blur(0.0) }
+was_paused = paused
+// Safe divisor for the per-frame run-speed calc: a tiny floor so a frozen (dt=0)
+// or ultra-short frame can't divide by zero. When frozen the actor hasn't moved,
+// so the numerator is ~0 and the speed reads 0 (idle pose) regardless.
+let mut safedt = dt
+if safedt < 0.0001 { safedt = 0.0001 }
+
+// Mouse look (skipped while paused so the released cursor doesn't swing the view).
+if paused == false {
+    cs.yaw = cs.yaw + mouse_dx() * cs.sens
+    cs.pitch = cs.pitch - mouse_dy() * cs.sens
+    if cs.pitch > 1.4 { cs.pitch = 1.4 }
+    if cs.pitch < 0.0 - 1.4 { cs.pitch = 0.0 - 1.4 }
+}
+
+// Gather rebindable input into this tick's blob and run the sim. While DEAD,
+// movement is frozen (zeroed) until respawn.
+let mut fwd = input_axis(env.act_back, env.act_fwd)
+let mut strafe = input_axis(env.act_left, env.act_right)
+let mut jump = input_down(env.act_jump)
+let mut slide = input_down(env.act_slide)
+let mut dash = input_down(env.act_dash)
+if cs.dead {
+    fwd = 0.0
+    strafe = 0.0
+    jump = 0
+    slide = 0
+    dash = 0
+}
+// Applying a shield cell is a committed action: no sliding or dashing while you
+// do it (1-frame lag on `cs.actors[5].heal` is fine).
+if cs.actors[5].heal > 0.0 {
+    slide = 0
+    dash = 0
+}
+// Movement speed multiplier (slot 9): overclock speeds you up, shield-apply
+// slows you to a vulnerable walk.
+let mut oc_mult = 1.0
+if cs.oc_active { oc_mult = 1.35 }
+// Overclock perk: unlimited reserve mags (keep the reserve topped up each frame).
+if cs.oc_active { cs.actors[5].res[0] = env.res_max[0]; cs.actors[5].res[1] = env.res_max[1] }
+if cs.actors[5].heal > 0.0 { oc_mult = 0.5 }
+// Grapple anchor + active flag (set last frame after aiming; 1-frame lag fine).
+let mut g_flag = 0.0
+if cs.grapple_on { g_flag = 1.0 }
+// LEAST-CONTESTED SPAWN: score each candidate by living enemies within env.spawn_r (fewer is
+// better), tiebroken by the farthest nearest-enemy. Recomputed each frame and carried in
+// the input (17/18/19) so sim_step teleports here on a combat death OR a kill-plane fall,
+// and the host's re-sim of a guest uses the SAME point (no reconcile snap).
+let mut best_si = 0
+let mut best_cnt = 100000.0
+let mut best_near = 0.0
+let mut spi = 0
+while spi < env.sp_n {
+    let mut scnt = 0.0
+    let mut snear = 100000.0
+    let mut sci = 0
+    while sci < env.nactors {
+        if sci != env.pl_i and cs.actors[sci].hp > 0.0 {
+            let sdx = phys3d_x(cs.actors[sci].hdl as i64) - env.spx[spi]
+            let sdz = phys3d_z(cs.actors[sci].hdl as i64) - env.spz[spi]
+            let sdd = sqrt(sdx * sdx + sdz * sdz)
+            if sdd < env.spawn_r { scnt = scnt + 1.0 }
+            if sdd < snear { snear = sdd }
+        }
+        sci = sci + 1
+    }
+    if scnt < best_cnt or (scnt == best_cnt and snear > best_near) {
+        best_cnt = scnt; best_near = snear; best_si = spi
+    }
+    spi = spi + 1
+}
+let spawn_x = env.spx[best_si]
+let spawn_z = env.spz[best_si]
+let blob = [fwd, strafe, cs.yaw, jump as f64, slide as f64, dash as f64, dt, cs.pitch, cs.respawn_req, oc_mult, cs.gx, cs.gy, cs.gz, g_flag, cs.blast_ix, cs.blast_iy, cs.blast_iz, spawn_x, 1.1, spawn_z]
+// Broadcast our combat state to everyone via the metadata channel (separate from the
+// sim state, so it can't disturb movement/reconciliation). Remotes read it below.
+net_set_meta(0, cs.actors[5].hp)
+net_set_meta(1, cs.actors[5].sh)
+let mut oc_m = 0.0
+if cs.oc_active { oc_m = 1.0 }
+net_set_meta(2, oc_m)
+// Survivability SIGNALS to the host (intent, not result): my respawn + heal counters. The
+// host owns the result - it resets my hp on a respawn and spends a cell on a heal.
+net_set_meta(3, cs.g_resp_ctr)
+net_set_meta(5, cs.g_heal_ctr)
+// Scoreboard: my cs.kills/cs.deaths (slots 6/7). On the host this is authoritative; on a guest
+// the host overrides it (it owns my score), so this is just a harmless default.
+net_set_meta(6, cs.akills[env.pl_i])
+net_set_meta(7, cs.adeaths[env.pl_i])
+// Melee swing flag (slot 8): so OTHERS see my third-person katana swing (clip 41).
+let mut sw_m = 0.0
+if cs.melee_cd > env.melee_cooldown - 0.35 { sw_m = 1.0 }
+net_set_meta(8, sw_m)
+net_set_meta(17, cs.g_melee_ctr as f64)   // host applies authoritative katana damage on each ++ (server melee)
+// Shield-up flag (slot 16): 1 while mid shield-apply channel, so OTHERS see me holding the
+// blue cube up (third-person) instead of the rifle. My own first-person cube is local.
+let mut shield_m = 0.0
+if cs.actors[5].heal > 0.0 { shield_m = 1.0 }
+net_set_meta(16, shield_m)
+// Grapple anchor (12/13/14) + rope timer (15) so OTHERS draw my grapple rope.
+net_set_meta(12, cs.actors[5].gax)
+net_set_meta(13, cs.actors[5].gay)
+net_set_meta(14, cs.actors[5].gaz)
+net_set_meta(15, cs.actors[5].gat)
+if cs.uname_len > 0 { net_set_name(cs.username) }
+net_send_input(blob)
+net_update(dt)
+// CRATES: client-side PREDICTION with the SAME physics the host runs. The host and each client
+// are separate physics worlds, but they execute identical code - shared crate_shot_impulse /
+// crate_blast_impulse (arena), the same deterministic gravity, the same dt sequence - so given
+// the same events (shots + booms are already replicated) the boxes evolve identically and stay
+// in lockstep on their own. The reconcile below therefore does NOTHING in the common case; it
+// only corrects the rare divergence the client couldn't predict (a bot/remote bullet on a box,
+// lag, loss). Orientation is still taken from the host (cheap, and it isn't the lag).
+if cs.net_mode == 2 and net_object_count() >= env.crate_n {
+    let mut gci = 0
+    while gci < env.crate_n {
+        let cch = env.crates[gci] as i64
+        let ccx = phys3d_x(cch)
+        let ccy = phys3d_y(cch)
+        let ccz = phys3d_z(cch)
+        let tcx = net_object_x(gci)
+        let tcy = net_object_y(gci)
+        let tcz = net_object_z(gci)
+        // The client runs the SAME crate physics as the host - shared impulse fns for shots +
+        // blasts, deterministic gravity - so normally our box ALREADY matches and we leave it
+        // completely alone (no per-frame correction). We only step in when it has genuinely
+        // diverged: a force we couldn't see (a bot or another player's bullet on the box), lag,
+        // or packet loss. Then track the host's velocity so it keeps pace + lerp the error out;
+        // a big gap is a hard snap. This is the "correction only on rare cases" the design wants.
+        let dvg = sqrt((tcx - ccx) * (tcx - ccx) + (tcy - ccy) * (tcy - ccy) + (tcz - ccz) * (tcz - ccz))
+        if dvg > 2.5 {
+            phys3d_set_pos(cch, tcx, tcy, tcz)
+            phys3d_set_vel(cch, net_object_vx(gci), net_object_vy(gci), net_object_vz(gci))
+        } else { if dvg > 0.3 {
+            phys3d_set_vel(cch, net_object_vx(gci), net_object_vy(gci), net_object_vz(gci))
+            phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.3, ccy + (tcy - ccy) * 0.3, ccz + (tcz - ccz) * 0.3)
+        } }
+        phys3d_set_rot(cch, net_object_qx(gci), net_object_qy(gci), net_object_qz(gci), net_object_qw(gci))
+        phys3d_set_angvel(cch, 0.0, 0.0, 0.0)   // orientation is host-driven (quat above); no local spin
+        gci = gci + 1
+    }
+}
+// GUEST: RECONCILE my own survivability to the host's authoritative value - the host
+// owns my hp/shield/cells (it applies all damage + heals + pickups), I only display it.
+// This is what makes a guest's own death host-driven, and stops hp self-report cheating.
+if cs.net_mode == 2 {
+    let amy = net_my_id()
+    let newhp = net_player_meta(amy, 0)
+    // DIES-TWICE fix: right after respawning, the host's replicated hp can still be the
+    // STALE pre-respawn 0 until our respawn signal (cs.g_resp_ctr) round-trips and the host
+    // resets it; applying that 0 re-cs.kills us instantly. So while AWAITING the respawn ack,
+    // ignore hp - but ONLY until the host's hp comes back > 0 (the ack), NOT a fixed window
+    // (a fixed window made us ignore real damage for seconds -> "survives extra hits").
+    // Clear the wait when the host ACKS our respawn (echoed counter meta 9 caught up to
+    // ours) - robust against reordered/old snapshots that briefly show hp>0. A timeout
+    // backstop guarantees we never get stuck ignoring hp if an ack is somehow lost.
+    if cs.g_joined == 0 {
+        // JOIN HANDSHAKE: I have NOT spawned until the host has initialised my character
+        // (replicated hp > 0). Until then, ignore the placeholder 0 hp - applying it would
+        // instantly "kill" me the moment I join (the regression). Stay full + shieldless +
+        // alive in the joining state; flip to spawned on the first real hp.
+        if newhp > 0.0 { cs.g_joined = 1; cs.g_hp_prev = newhp; cs.dead = false; cs.respawn_cd = 0.0 }
+        cs.actors[env.pl_i].hp = env.php_max
+        cs.actors[env.pl_i].sh = 0.0
+    } else {
+        if cs.g_resp_wait == 1 {
+            cs.g_resp_wait_t = cs.g_resp_wait_t - dt
+            if net_player_meta(amy, 9) >= cs.g_resp_ctr - 0.5 or cs.g_resp_wait_t <= 0.0 { cs.g_resp_wait = 0 }
+        }
+        if cs.g_resp_wait == 0 {
+            if newhp < cs.g_hp_prev - 0.5 and cs.dead == false { cs.hurt_flash = 0.6; cs.shake = 0.05; cs.g_hurt = 1 }   // took damage; resolve direction below
+            // SERVER-DRIVEN pickup sounds: the host owns collection, so play the sound when my
+            // replicated hp/cells (or local ammo refill) goes UP. Reliable, vs the old local-
+            // prediction sound that raced the host's collect + usually lost (= "no sound").
+            if newhp > cs.g_hp_prev + 0.5 and cs.g_hp_prev > 0.5 and cs.dead == false and cs.prev_dead == false { play_sound(7, 80, 0) }   // health pad
+            cs.g_hp_prev = newhp
+            cs.actors[env.pl_i].hp = newhp
+        }
+        cs.actors[env.pl_i].sh = net_player_meta(amy, 1)
+        let cells_now = net_player_meta(amy, 4) as i64
+        if cells_now > cs.g_pk_cells and cs.dead == false and cs.prev_dead == false { play_sound(14, 90, 0) }   // shield cell
+        cs.g_pk_cells = cells_now
+        cs.actors[env.pl_i].cells = cells_now
+        // SERVER-CONFIRMED ammo pickups: the host owns collection and ++ meta 18. We PREDICT a
+        // pickup locally (refill + sound in the pickup loop), and reconcile to the host's count
+        // here - if it collected one we didn't predict (its count ran ahead), top up the equipped
+        // reserve + play the sound so a pickup is never silently missed. This is why ammo was
+        // silent on a guest: the reserve is client-side, so the host had to confirm it explicitly.
+        let ammo_srv = net_player_meta(amy, 18) as i64
+        if ammo_srv > cs.g_ammo_applied and cs.dead == false and cs.prev_dead == false {
+            let cwp2 = cs.actors[env.pl_i].wpn
+            cs.actors[env.pl_i].res[cwp2] = cs.actors[env.pl_i].res[cwp2] + env.res_refill[cwp2] * (ammo_srv - cs.g_ammo_applied)
+            if cs.actors[env.pl_i].res[cwp2] > env.res_max[cwp2] { cs.actors[env.pl_i].res[cwp2] = env.res_max[cwp2] }
+            cs.g_ammo_applied = ammo_srv
+            play_sound(10, 80, 0)
+        }
+    }
+}
+// GUEST: consume the host's authoritative KILL events. This only DISPLAYS them (kill
+// feed + the killer's red marker/sound/score) - the kill itself was decided host-side,
+// never simulated here. It deliberately does NOT touch the predicted per-hit hitmarker.
+if cs.net_mode == 2 {
+    let nkv = net_kill_count()
+    let mut kvi = 0
+    while kvi < nkv {
+        let kpid = net_kill_killer(kvi)
+        let vpid = net_kill_victim(kvi)
+        cs.kf_killer_pid[cs.kf_cur] = kpid; cs.kf_victim_pid[cs.kf_cur] = vpid; cs.kf_time[cs.kf_cur] = 4.5
+        cs.kf_cur = cs.kf_cur + 1; if cs.kf_cur >= 6 { cs.kf_cur = 0 }
+        if kpid == net_my_id() {
+            cs.killmark = 0.35
+            if cs.round_over == false { cs.kills = cs.kills + 1 }
+            play_sound(12, 110, 0)
+            play_sound(7, 110, 0)
+        }
+        kvi = kvi + 1
+    }
+    net_kills_clear()
+}
+// Players REPLACE bots: active bots = opponent budget (cs.bot_count) minus connected
+// remotes, so a joining player frees a bot slot and a leaving player gets a bot back.
+let mut num_remotes = net_player_count() - 1
+if num_remotes < 0 { num_remotes = 0 }
+let mut active_bots = cs.bot_count - num_remotes
+if active_bots < 0 { active_bots = 0 }
+if active_bots > env.bot_n { active_bots = env.bot_n }
+// GUEST: bots don't exist as bots here - they arrive as ordinary remote players from
+// the host. So we run/own NO local bots (active_bots = 0) and never park them; the
+// host is the only place the AI brain lives.
+if cs.net_mode == 2 { active_bots = 0 }
+// Bounced by a full lobby: drop back to the menu with a clear message.
+if net_rejected() > 0 {
+    cs.lobby_full = true
+    cs.net_started = false
+    cs.screen = env.s_lobby
+    cs.lobby_focus = 0
+}
+cs.respawn_req = 0.0    // one-shot: consumed by the send above
+cs.blast_ix = 0.0       // one-shot blast impulse: consumed by the send above
+cs.blast_iy = 0.0
+cs.blast_iz = 0.0
+
+// Camera from the locally-predicted state (capsule centre -> eye). The
+// eye dips smoothly while sliding (lerp the cs.crouch offset, no teleport).
+let px = net_local_x()
+let py = net_local_y()
+let pz = net_local_z()
+let mut crouch_target = 0.0
+if net_local_state(12) > 0.5 { crouch_target = 0.45 }
+cs.crouch = cs.crouch + (crouch_target - cs.crouch) * 0.2
+
+// Camera cs.dip: a damped spring that compresses on a jump LAUNCH (the leg
+// push) and on LANDING (the absorb), then bounces back to neutral. It fires
+// on EVERY jump, moving or standing - that's what makes a jump read as a
+// weighty human motion rather than an instant teleport up.
+let vy_now = net_local_state(5)
+let air_now = net_local_state(7) < 0.5
+// Anticipation: while the sim holds the standing-jump windup, load DOWN
+// (the cs.crouch before the jump). cs.dip>0 lowers the eye.
+if net_local_state(22) > 0.0 { cs.dipv = cs.dipv + 9.0 * dt }
+// Launch: left the ground this frame with upward speed -> flick the view UP
+// (legs extend / takeoff pop). cs.dipv negative raises the eye.
+if cs.prev_air == false and air_now and vy_now > 1.0 { cs.dipv = cs.dipv - 1.5 }
+// Landing: hit the ground -> absorb DOWN scaled by the fall speed (read LAST
+// frame's vy, since the sim zeroes vy the instant it lands) + light cs.shake.
+if cs.prev_air and air_now == false {
+    let impact = 0.0 - cs.prev_vy
+    if impact > 2.0 {
+        let mut k = impact * 0.18
+        if k > 3.2 { k = 3.2 }
+        cs.dipv = cs.dipv + k
+        let mut shk = impact * 0.008
+        if shk > 0.085 { shk = 0.085 }
+        if shk > cs.shake { cs.shake = shk }
+    }
+}
+cs.prev_vy = vy_now
+cs.prev_air = air_now
+// Integrate the spring (stiffness + damping, lightly underdamped for a small
+// settle bounce). Clamp the step so a frame hitch can't blow it up.
+let mut sdt = dt
+if sdt > 0.033 { sdt = 0.033 }
+cs.dipv = cs.dipv - cs.dip * 55.0 * sdt - cs.dipv * 12.0 * sdt
+cs.dip = cs.dip + cs.dipv * sdt
+// Decay the landing cs.shake (quick damped wobble).
+cs.shake = cs.shake - cs.shake * 14.0 * dt
+if cs.shake < 0.0 { cs.shake = 0.0 }
+
+let eye = py + 0.7 - cs.crouch - cs.dip
+
+// Camera juice (visual only - aim/shoot use the same eff_pitch so the
+// crosshair stays true). Bank hard toward the wall while wallrunning, tilt
+// a little when strafing, and cs.lean forward/back a touch with run input.
+// Only bank when the SIM is actually wallrunning (slot 23). On the floor
+// next to a wall this is always false, so the camera just does the small
+// strafe tilt and never snaps - no more glitch.
+let wallrunning = net_local_state(23) > 0.5
+let mut roll_target = strafe * 0.05
+if wallrunning {
+    let side = net_local_state(14) * cos(cs.yaw) + net_local_state(15) * sin(cs.yaw)
+    roll_target = side * 0.28
+}
+cs.roll = cs.roll + (roll_target - cs.roll) * 0.15
+cs.lean = cs.lean + ((fwd * 0.03) - cs.lean) * 0.12
+// Recline the view back a touch while sliding (cs.lean back into the slide).
+let mut stilt_t = 0.0
+if net_local_state(12) > 0.5 { stilt_t = 0.04 }
+cs.slidetilt = cs.slidetilt + (stilt_t - cs.slidetilt) * 0.12
+let eff_pitch = cs.pitch + cs.lean + cs.slidetilt
+
+// Dash wind: detect the dash off the INPUT edge while airborne (the sim's own dash
+// condition), independent of the cooldown - the cooldown is now 0, so the old
+// "cooldown jumped up" detection no longer fires.
+let dash_in_now = input_down(env.act_dash)
+if dash_in_now > 0 and cs.prev_dcd < 0.5 and net_local_state(7) < 0.5 { cs.dashwind = 1.0 }
+cs.prev_dcd = dash_in_now as f64
+cs.dashwind = cs.dashwind - dt * 2.5
+if cs.dashwind < 0.0 { cs.dashwind = 0.0 }
+
+let cp = cos(eff_pitch)
+let fx = cp * sin(cs.yaw)
+let fy = sin(eff_pitch)
+let fz = 0.0 - cp * cos(cs.yaw)
+net_set_meta(19, eff_pitch)   // share our look cs.pitch so the host's katana arc matches ours exactly (full 3D)
+r3d_camera_roll(cs.roll)
+// Landing cs.shake: jitter the camera POSITION (eye + target by the same offset,
+// so the view shakes but the aim direction is unchanged). Damped wobble.
+let sjx = sin(cs.etime * 130.0) * cs.shake
+let sjy = sin(cs.etime * 170.0) * cs.shake
+let sjz = cos(cs.etime * 150.0) * cs.shake
+r3d_camera(px + sjx, eye + sjy, pz + sjz, px + fx + sjx, eye + fy + sjy, pz + fz + sjz, 95.0)
+// 3D audio: ears at the eye, facing the look dir -> positional sounds (shots,
+// explosions) pan + attenuate by direction and distance.
+audio_listener(px, eye, pz, fx, fy, fz)
+
+// Weapon select (1 = rifle, 2 = launcher). Per-cs.actors[5].wpn ammo lives in arrays, so a
+// swap just changes the index; it cancels a reload and adds a brief swap delay.
+if input_down(env.act_wep1) > 0 { cs.actors[5].wpn = 0 }
+if input_down(env.act_wep2) > 0 { cs.actors[5].wpn = 1 }
+if cs.actors[5].wpn != cs.prev_weapon {
+    cs.actors[5].rl = 0.0
+    cs.actors[5].fcd = 0.25
+    cs.prev_weapon = cs.actors[5].wpn
+}
+
+// --- Melee (V): a katana-reach lunge. Long reach + a wide swing ARC (a short needle
+// ray would never connect on a fast target) + heavy damage (125: full green bar + half
+// a shield). Edge-triggered with a cooldown; the slash cleaves every foe in the arc.
+cs.melee_cd = cs.melee_cd - dt
+if cs.melee_cd < 0.0 { cs.melee_cd = 0.0 }
+let mkey = input_down(env.act_melee)
+if mkey > 0 and cs.melee_prev == 0 and cs.melee_cd <= 0.0 and cs.dead == false {
+    cs.melee_cd = env.melee_cooldown
+    cs.g_melee_ctr = cs.g_melee_ctr + 1   // tell the host to apply an authoritative swing (meta 17)
+    play_noise(60, 16)   // swing swoosh
+    // Arc/cone sweep - a katana SLASH, not a needle. Hit EVERY actor within reach and
+    // inside the ~120-deg swing arc, with a line-of-sight check so walls block it.
+    // HOST: the slash is authoritative, so it also cleaves remote clients (slots past env.pl_i),
+    // not just bots - a guest in katana range actually takes the hit (synced via their meta).
+    let mut mcap = env.nactors   // PREDICT the slash on EVERY foe (bots AND remote players), so the
+                             // hitmarker shows on humans too - the host applies the real damage
+    let mut mvk = 0
+    while mvk < mcap {
+        if mvk != env.pl_i and cs.actors[mvk].hp > 0.0 {
+            let mbx = phys3d_x(cs.actors[mvk].hdl as i64)
+            let mby = phys3d_y(cs.actors[mvk].hdl as i64) + 0.5
+            let mbz = phys3d_z(cs.actors[mvk].hdl as i64)
+            let mdx = mbx - px
+            let mdy = mby - eye
+            let mdz = mbz - pz
+            let mdd = sqrt(mdx * mdx + mdy * mdy + mdz * mdz)
+            let mut in_arc = 0
+            if mdd > 0.001 and mdd < env.melee_range {
+                if (mdx * fx + mdy * fy + mdz * fz) / mdd > 0.5 {
+                    let mlos = phys3d_raycast_ex(cs.actors[5].hdl as i64, px, eye, pz, mdx / mdd, mdy / mdd, mdz / mdd, mdd + 0.4)
+                    if mlos < 0 or mlos == (cs.actors[mvk].hdl as i64) { in_arc = 1 }
+                }
+            }
+            if in_arc == 1 {
+                // Katana BYPASSES shield - straight to green health, so you can kill
+                // someone who still has their shield up (high-risk close-combat reward).
+                cs.actors[mvk].hp = cs.actors[mvk].hp - env.melee_dmg
+                cs.brains[mvk].pop = 0.2
+                cs.hitmark = 0.2
+                cs.shake = 0.4
+                play_sound(0 - 18, 105, 0)   // heavy slash thud
+                let mhx = phys3d_x(cs.actors[mvk].hdl as i64)
+                let mhy = phys3d_y(cs.actors[mvk].hdl as i64) + 0.5
+                let mhz = phys3d_z(cs.actors[mvk].hdl as i64)
+                let mut msp = 0
+                while msp < 8 {
+                    cs.ppx[cs.pcur] = mhx; cs.ppy[cs.pcur] = mhy; cs.ppz[cs.pcur] = mhz
+                    let mang = (msp as f64) * 0.9 + cs.etime * 5.0
+                    cs.pvx[cs.pcur] = cos(mang) * 4.0 + fx * 3.0
+                    cs.pvy[cs.pcur] = 2.5 + sin(mang) * 2.0
+                    cs.pvz[cs.pcur] = sin(mang) * 4.0 + fz * 3.0
+                    cs.plife[cs.pcur] = 0.3
+                    cs.pcur = cs.pcur + 1
+                    if cs.pcur >= 28 { cs.pcur = 0 }
+                    msp = msp + 1
+                }
+                // Katana shove: knock the target back along the swing (decays via the
+                // shared knockback channel bots already use for blasts/grapple-leaps).
+                cs.brains[mvk].kx = fx * 14.0
+                cs.brains[mvk].ky = 6.0
+                cs.brains[mvk].kz = fz * 14.0
+                // Record the killer + the player-kill reward context; the unified
+                // per-frame death sweep runs ALL the death consequences once.
+                cs.last_hit[mvk] = env.pl_i
+                cs.kr_oc[mvk] = 22.0
+                cs.kr_mark[mvk] = 0.4
+            }
+        }
+        mvk = mvk + 1
+    }
+}
+cs.melee_prev = mkey
+
+
+// --- Grappling hook (E): aim + fire to anchor onto a surface, then get
+// yanked toward it (the PULL is in the sim). Disengages on release / reaching
+// the anchor / a max time; cooldown after use.
+cs.g_cd = cs.g_cd - dt
+if cs.g_cd < 0.0 { cs.g_cd = 0.0 }
+if net_local_state(7) > 0.5 { cs.g_cd = 0.0 }   // grounded -> grapple is ready again
+let gkey = input_down(env.act_grapple)
+if cs.grapple_on {
+    cs.g_time = cs.g_time + dt
+    // Publish the live rope so it's drawn (the same per-actor system bots use).
+    cs.actors[5].gax = cs.gx; cs.actors[5].gay = cs.gy; cs.actors[5].gaz = cs.gz; cs.actors[5].gat = 0.1
+    let gddx = cs.gx - px
+    let gddy = cs.gy - (py + 0.7)
+    let gddz = cs.gz - pz
+    let gdd = sqrt(gddx * gddx + gddy * gddy + gddz * gddz)
+    // Release on: key up / reached the anchor / timeout / OR the sim says we just hit
+    // a ceiling (slot 30) - so reeling into the roof drops you instead of pinning you.
+    if gkey < 1 or gdd < 2.2 or cs.g_time > 2.5 or net_local_state(30) > 0.5 {
+        cs.grapple_on = false
+        cs.g_cd = 0.6
+    }
+} else {
+    if gkey > 0 and cs.g_prev < 1 and cs.g_cd <= 0.0 and cs.dead == false and cs.actors[5].heal <= 0.0 {
+        let gox = px + fx * 0.4
+        let goy = eye + fy * 0.4
+        let goz = pz + fz * 0.4
+        let gbody = phys3d_raycast_full(gox, goy, goz, fx, fy, fz, 50.0)
+        if gbody >= 0 {
+            cs.gx = phys3d_hit_x()
+            cs.gy = phys3d_hit_y()
+            cs.gz = phys3d_hit_z()
+            cs.grapple_on = true
+            cs.g_time = 0.0
+            cs.g_lx = px; cs.g_ly = py; cs.g_lz = pz
+            play_sound(0 - 6, 55, 0)   // grapple-fire thunk
+        }
+    }
+}
+cs.g_prev = gkey
+// (Rope is drawn by the unified per-actor grapple-rope pass below, for everyone.)
+
+// --- Frag grenade (G): a cooldown tactical. Throw an arcing projectile that
+// inherits your momentum, bounces off geometry (excluding yourself), and
+// detonates on a fuse, dealing radial damage with distance falloff. One in
+// flight at a time; cools down after the throw.
+cs.nade_cd = cs.nade_cd - dt
+if cs.nade_cd < 0.0 { cs.nade_cd = 0.0 }
+let gpc = (net_local_state(21) as i64) - 1
+let nkey = input_down(env.act_frag)
+if nkey > 0 and cs.nade_prev == 0 and cs.nade_live == false and cs.nade_cd <= 0.0 and cs.dead == false {
+    cs.grx = px + fx * 0.5
+    cs.gry = eye + fy * 0.5
+    cs.grz = pz + fz * 0.5
+    // Launch along the look dir + a little up, PLUS our own velocity so a fast
+    // throw flies further (rewards movement).
+    cs.grvx = fx * env.nade_throw + net_local_state(4)
+    cs.grvy = fy * env.nade_throw + 3.0 + net_local_state(5) * 0.4
+    cs.grvz = fz * env.nade_throw + net_local_state(6)
+    cs.nfuse = env.nade_fuse
+    cs.nade_live = true
+    cs.nade_cd = env.nade_cooldown
+    cs.nade_acc = 0.0
+    cs.nade_grace = env.nade_fuse + 0.7   // this throw's server grenade is ours until ~fuse+RTT - hide its fx copy
+    play_sound(0 - 14, 90, 0)   // soft throw pop
+    // GUEST: send the LAUNCH INTENT (origin + throw velocity). The host re-simulates the
+    // arc itself to decide where it detonates - we never tell it the result. We still fly
+    // + detonate our own copy locally as prediction.
+    if cs.net_mode == 2 { net_projectile_intent(1, cs.grx, cs.gry, cs.grz, cs.grvx, cs.grvy, cs.grvz) }
+}
+cs.nade_prev = nkey
+
+// Count down the "this server grenade is mine" suppression window (live flight + ~RTT tail).
+if cs.nade_grace > 0.0 { cs.nade_grace = cs.nade_grace - dt }
+
+if cs.nade_live {
+    // FIXED-TIMESTEP arc: advance in the EXACT 0.016 steps the host's grenade_tick uses,
+    // accumulating real frame time, so the predicted trajectory is the same deterministic sim
+    // as the server's (identical gravity/bounce/advance) - no fps-dependent drift between them.
+    cs.nade_acc = cs.nade_acc + dt
+    while cs.nade_acc >= 0.016 and cs.nade_live {
+        cs.nade_acc = cs.nade_acc - 0.016
+        // SHARED arc step (sim::grenade_step) - byte-for-byte the host's grenade_tick code.
+        let g = [cs.grx, cs.gry, cs.grz, cs.grvx, cs.grvy, cs.grvz, cs.nfuse]
+        let det = sim::grenade_step(g, gpc)
+        cs.grx = g[0]
+        cs.gry = g[1]
+        cs.grz = g[2]
+        cs.grvx = g[3]
+        cs.grvy = g[4]
+        cs.grvz = g[5]
+        cs.nfuse = g[6]
+        if det == 1 {
+            cs.nade_live = false
+            cs.explode = true
+            cs.ex_x = cs.grx
+            cs.ex_y = cs.gry
+            cs.ex_z = cs.grz
+            cs.ex_int = env.nade_intensity
+            cs.ex_src = 0.0
+        }
+    }
+    // LAG-GRACE CORRECTION: trust the prediction within a tolerance band (the host runs ~RTT
+    // behind on the SAME arc, a sub-metre phase gap that should NOT be fought, or the throw
+    // stops feeling instant). Only a genuine large divergence - the host bounced our nade off a
+    // box that moved, say - is reconciled, and smoothly (lerp), never a hard pop.
+    if cs.net_mode == 2 and cs.nade_live {
+        let fxn = net_fx_count()
+        let mut fxi = 0
+        let mut sgx = 0.0
+        let mut sgy = 0.0
+        let mut sgz = 0.0
+        let mut found = 0
+        while fxi < fxn {
+            if net_fx_kind(fxi) >= 3.5 { sgx = net_fx_x(fxi); sgy = net_fx_y(fxi); sgz = net_fx_z(fxi); found = 1 }
+            fxi = fxi + 1
+        }
+        if found == 1 {
+            let egx = sgx - cs.grx
+            let egy = sgy - cs.gry
+            let egz = sgz - cs.grz
+            let gap = sqrt(egx * egx + egy * egy + egz * egz)
+            if gap > 4.0 { cs.grx = cs.grx + egx * 0.25; cs.gry = cs.gry + egy * 0.25; cs.grz = cs.grz + egz * 0.25 }
+        }
+    }
+    // Tumble it as it flies so it reads as a thrown object.
+    if cs.nade_live { r3d_draw(env.nade_vis, cs.grx, cs.gry, cs.grz, cs.etime * 7.0, cs.etime * 5.0, 0.0, 1.0) }
+}
+
+// --- Launcher projectiles: travel-time ROCKETS (player OR bot fired). Sweep the
+// bolt's step with a raycast; on ANY hit request an explosion at the impact point
+// (the unified handler does damage/knockback/FX, crediting only player blasts).
+// Spawned 0.6m ahead of the shooter, so no exclude is needed. ---
+let mut prj = 0
+while prj < env.proj_n {
+    if cs.prjlife[prj] > 0.0 {
+        cs.prjlife[prj] = cs.prjlife[prj] - dt
+        let psp = sqrt(cs.prjvx[prj] * cs.prjvx[prj] + cs.prjvy[prj] * cs.prjvy[prj] + cs.prjvz[prj] * cs.prjvz[prj])
+        if psp > 0.001 {
+            let pdx = cs.prjvx[prj] / psp
+            let pdy = cs.prjvy[prj] / psp
+            let pdz = cs.prjvz[prj] / psp
+            let phit = phys3d_raycast_full(cs.prjx[prj], cs.prjy[prj], cs.prjz[prj], pdx, pdy, pdz, psp * dt + 0.12)
+            if phit >= 0 {
+                // Rocket: cs.explode ON IMPACT (no fuse) at the hit point - the
+                // unified handler does the radial damage/knockback/FX.
+                cs.explode = true
+                cs.ex_x = phys3d_hit_x()
+                cs.ex_y = phys3d_hit_y()
+                cs.ex_z = phys3d_hit_z()
+                cs.ex_int = env.rocket_intensity
+                cs.ex_src = cs.prjsrc[prj]
+                cs.prjlife[prj] = 0.0
+            } else {
+                cs.prjx[prj] = cs.prjx[prj] + cs.prjvx[prj] * dt
+                cs.prjy[prj] = cs.prjy[prj] + cs.prjvy[prj] * dt
+                cs.prjz[prj] = cs.prjz[prj] + cs.prjvz[prj] * dt
+            }
+        }
+        if cs.prjlife[prj] > 0.0 {
+            r3d_draw(env.proj_vis, cs.prjx[prj], cs.prjy[prj], cs.prjz[prj], 0.0, 0.0, 0.0, 1.0)
+        }
+    }
+    prj = prj + 1
+}
+
+// --- Unified explosion: a nade fuse OR a rocket impact set `cs.explode` + a point
+// + an intensity (gi). One handler does radial damage, knockback (env.crates / bots /
+// you), self-damage, and FX - everything scaled by the intensity. ---
+if cs.explode {
+    cs.explode = false
+    let gi = cs.ex_int
+    let rad = env.nade_radius * gi    // damage radius
+    let krad = env.nade_kb_radius * gi  // knockback reach
+    // (Host authority for a guest's blast is driven by the LAUNCH intent sent at fire/
+    // throw time - NOT by reporting this predicted result. The radial damage below is
+    // pure local PREDICTION on a guest, corrected by the host's replicated bot hp.)
+    cs.boom_t = 0.6
+    cs.boom_int = gi
+    cs.boomx = cs.ex_x
+    cs.boomy = cs.ex_y
+    cs.boomz = cs.ex_z
+    // Announce this detonation so EVERY machine renders + hears it (remotes too). The
+    // host broadcasts its own blasts (source = my id); each receiver skips its own
+    // (it predicted it locally). On a guest this is a no-op (only the host broadcasts).
+    // Radial damage with linear falloff; a kill runs the usual bookkeeping.
+    // HOST: explosives are authoritative - they damage remote clients too (slots past env.pl_i),
+    // not just bots, so a guest caught in the host's blast actually takes the hit (synced via
+    // their meta). Practice/guest: bots only (a guest's blast is pure local prediction; the
+    // host re-simulates the guest's launch and applies the real damage). env.pl_i is skipped here
+    // because the player's own self-damage is handled separately below.
+    let mut ecap = env.bot_n
+    let mut ej = 0
+    while ej < ecap {
+        if ej != env.pl_i and cs.actors[ej].hp > 0.0 {
+            let ghh = cs.actors[ej].hdl as i64
+            let bdx = phys3d_x(ghh) - cs.ex_x
+            let bdy = (phys3d_y(ghh) + 0.5) - cs.ex_y
+            let bdz = phys3d_z(ghh) - cs.ex_z
+            let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
+            if bdd < rad {
+                let mut edmg = env.nade_dmg * gi * (1.0 - 0.30 * bdd / rad)
+                if cs.actors[ej].sh > 0.0 {
+                    if cs.actors[ej].sh >= edmg { cs.actors[ej].sh = cs.actors[ej].sh - edmg; edmg = 0.0 }
+                    else { edmg = edmg - cs.actors[ej].sh; cs.actors[ej].sh = 0.0 }
+                }
+                cs.actors[ej].hp = cs.actors[ej].hp - edmg
+                cs.brains[ej].pop = 0.15
+                // Record the killer for the unified death sweep. cs.ex_src<0.5 = the
+                // player's blast (credits score/OC/kill-feed - explosive cs.kills now
+                // count, which they didn't before); a bot's rocket has no tracked
+                // owner, so the kill is uncredited (-1) but the death still counts.
+                if cs.ex_src < 0.5 {
+                    cs.last_hit[ej] = env.pl_i
+                    cs.kr_oc[ej] = 16.0
+                    cs.kr_mark[ej] = 0.35
+                } else {
+                    cs.last_hit[ej] = 0 - 1
+                }
+            }
+            if bdd < krad and bdd > 0.01 {
+                let kf = env.bot_kb * gi * (1.0 - bdd / krad)
+                cs.brains[ej].kx = cs.brains[ej].kx + bdx / bdd * kf
+                cs.brains[ej].ky = cs.brains[ej].ky + kf * 0.7 + 12.0
+                cs.brains[ej].kz = cs.brains[ej].kz + bdz / bdd * kf
+            }
+        }
+        ej = ej + 1
+    }
+    // Fling loose env.crates - SHARED impulse (the same fn + strength the host runs), so our
+    // predicted fling of every box exactly matches the host's and they stay in sync.
+    let mut ck = 0
+    while ck < env.crate_n {
+        sim::crate_blast_impulse(env.crates[ck] as i64, cs.ex_x, cs.ex_y, cs.ex_z, gi)
+        ck = ck + 1
+    }
+    // Player distance -> self-damage, knockback, and cs.shake.
+    let pbx = px - cs.ex_x
+    let pby = py - cs.ex_y
+    let pbz = pz - cs.ex_z
+    let pbd = sqrt(pbx * pbx + pby * pby + pbz * pbz)
+    if pbd < rad and cs.pinvuln <= 0.0 and cs.dead == false {
+        let mut sd = env.nade_dmg * gi * (1.0 - 0.30 * pbd / rad) * 0.5
+        if cs.actors[5].sh > 0.0 {
+            if cs.actors[5].sh >= sd { cs.actors[5].sh = cs.actors[5].sh - sd; sd = 0.0 }
+            else { sd = sd - cs.actors[5].sh; cs.actors[5].sh = 0.0 }
+        }
+        cs.actors[5].hp = cs.actors[5].hp - sd
+        cs.dmg_timer = 0.0
+        cs.hurt_flash = 0.6
+        // Killer attribution for the unified death sweep: a bot's rocket
+        // (cs.ex_src>=0.5) is an uncredited death; your own rocket is a suicide.
+        if cs.ex_src < 0.5 { cs.last_hit[env.pl_i] = env.pl_i } else { cs.last_hit[env.pl_i] = 0 - 1 }
+    }
+    if pbd < krad and pbd > 0.01 and cs.dead == false {
+        let pf = env.player_kb * gi * (1.0 - pbd / krad)
+        cs.blast_ix = pbx / pbd * pf
+        cs.blast_iz = pbz / pbd * pf
+        cs.blast_iy = 5.0 + pf * 0.5
+    }
+    // Spark/debris burst (count + speed scale with intensity).
+    let mut bp = 0
+    while bp < 16 {
+        cs.ppx[cs.pcur] = cs.ex_x
+        cs.ppy[cs.pcur] = cs.ex_y
+        cs.ppz[cs.pcur] = cs.ex_z
+        let bang = (bp as f64) * 0.92
+        cs.pvx[cs.pcur] = cos(bang) * 8.5 * gi
+        cs.pvy[cs.pcur] = 4.0 * gi + sin(bang * 1.7) * 3.5
+        cs.pvz[cs.pcur] = sin(bang) * 8.5 * gi
+        cs.plife[cs.pcur] = 0.5
+        cs.pcur = cs.pcur + 1
+        if cs.pcur >= 28 { cs.pcur = 0 }
+        bp = bp + 1
+    }
+    play_sound_at(0 - 30, 150, 90, cs.ex_x, cs.ex_y, cs.ex_z)   // loud foreground boom (3D)
+    play_sound_at(0 - 16, 70, 70, cs.ex_x, cs.ex_y, cs.ex_z)    // positional crack layer (was non-3D noise)
+    let shrad = 14.0 * gi
+    if pbd < shrad {
+        let bnear = 1.0 - pbd / shrad
+        let bshake = bnear * bnear * 1.4 * gi   // MUCH stronger up close
+        if cs.shake < bshake { cs.shake = bshake }
+    }
+    // A DIRECT or VERY-near explosive (only explosives - bullets don't do this) lands a
+    // ~4x jolt right at the epicentre; falls off fast so a mid-range blast is unchanged.
+    let vnrad = 4.0 * gi
+    if pbd < vnrad {
+        let vn = 1.0 - pbd / vnrad
+        let vshake = vn * vn * 5.6 * gi   // ~4x the old direct-blast cs.shake (1.4)
+        if cs.shake < vshake { cs.shake = vshake }
+    }
+}
+
+// --- Enemy bots: HUNT the player (chase + jump + wall-climb) and shoot. ---
+cs.etime = cs.etime + dt
+cs.actors[5].hdl = (net_local_state(21) as i64) - 1
+// Player horizontal speed - bots aim WORSE at a fast-moving target (move well to
+// get shot less; stand still and you are easy to hit).
+let pvx_s = net_local_state(4)
+let pvz_s = net_local_state(6)
+let pspd = sqrt(pvx_s * pvx_s + pvz_s * pvz_s)
+// ===== UNIFIED COMBAT: ONE fire path for EVERY actor - the bots AND the player.
+// Each actor's INTENT is computed here (the player from input + crosshair; a bot
+// from its AI target-pick + aim spread), then the EXACT SAME reload + ammo + shot
+// mechanics run for all of them. The only difference is `mine` (the local player
+// gets kill credit / hit feedback / overclock). Remote players are server-
+// authoritative, so they are not simulated here (loop stops at env.pl_i).
+let mut ci = 0
+while ci < env.bot_n + 1 {
+    // On a guest only the LOCAL player runs combat; bots are resolved host-side and
+    // arrive over the wire. In tune mode, bots also don't fire (only the player) so the
+    // dummies stay harmless.
+    if cs.actors[ci].hp > 0.0 and ci == env.pl_i {
+        // Reload tick (pull reserve -> mag) - identical for everyone.
+        if cs.actors[ci].rl > 0.0 {
+            cs.actors[ci].rl = cs.actors[ci].rl - dt
+            if cs.actors[ci].rl <= 0.0 {
+                cs.actors[ci].rl = 0.0
+                let rw = cs.actors[ci].rlw
+                let mut tkr = env.mag_size_w[rw] - cs.actors[ci].mag[rw]
+                if tkr > cs.actors[ci].res[rw] { tkr = cs.actors[ci].res[rw] }
+                cs.actors[ci].mag[rw] = cs.actors[ci].mag[rw] + tkr
+                cs.actors[ci].res[rw] = cs.actors[ci].res[rw] - tkr
+            }
+        }
+        // Auto-reload when the equipped weapon is empty but has reserve - so picking
+        // up ammo while dry refills you without needing a manual reload.
+        let awp = cs.actors[ci].wpn
+        if cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[awp] <= 0 and cs.actors[ci].res[awp] > 0 {
+            let mut acrl = env.reload_w[awp]
+            if ci == env.pl_i and cs.oc_active { acrl = env.reload_w[awp] * 0.4 }
+            cs.actors[ci].rl = acrl
+            cs.actors[ci].rlw = awp
+        }
+        cs.actors[ci].fcd = cs.actors[ci].fcd - dt
+        if cs.actors[ci].fcd < 0.0 { cs.actors[ci].fcd = 0.0 }
+        // ---- INTENT: where this actor wants to shoot this frame ----
+        let mut want = 0
+        let mut ax = 0.0
+        let mut ay = 0.0
+        let mut az = 0.0
+        let mut sox = 0.0   // shooter eye position
+        let mut soy = 0.0
+        let mut soz = 0.0
+        let mut mine = 0
+        let mut nearest = 100000.0   // distance to this actor's nearest enemy (bots)
+        if ci == env.pl_i {
+            mine = 1
+            sox = px; soy = eye; soz = pz
+            ax = fx; ay = fy; az = fz
+            let mut crl = env.reload_w[cs.actors[ci].wpn]
+            if cs.oc_active { crl = env.reload_w[cs.actors[ci].wpn] * 0.4 }
+            if input_down(env.act_reload) > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[cs.actors[ci].wpn] < env.mag_size_w[cs.actors[ci].wpn] and cs.actors[ci].res[cs.actors[ci].wpn] > 0 and cs.dead == false { cs.actors[ci].rl = crl; cs.actors[ci].rlw = cs.actors[ci].wpn }
+            if input_down(env.act_fire) > 0 and cs.dead == false { want = 1 }
+        } else {
+            // Bot: nearest enemy + weapon + aim (with spread). Fire is blocked while
+            // channelling a shield (the heal gate in the shot below).
+            let bsx = phys3d_x(cs.actors[ci].hdl as i64)
+            let bsy = phys3d_y(cs.actors[ci].hdl as i64)
+            let bsz = phys3d_z(cs.actors[ci].hdl as i64)
+            sox = bsx; soy = bsy + 0.5; soz = bsz
+            let mut tgx = 0.0
+            let mut tgy = 0.0
+            let mut tgz = 0.0
+            let mut tgi = 0 - 2
+            let mut bestd = 200.0
+            if cs.dead == false {
+                let dp = sqrt((px - bsx) * (px - bsx) + (pz - bsz) * (pz - bsz))
+                if dp < bestd { bestd = dp; tgx = px; tgy = py + 0.3; tgz = pz; tgi = env.pl_i }
+            }
+            let mut tk = 0
+            while tk < env.bot_n {
+                if tk != ci and cs.actors[tk].hp > 0.0 {
+                    let ek = cs.actors[tk].hdl as i64
+                    let exb = phys3d_x(ek) - bsx
+                    let ezb = phys3d_z(ek) - bsz
+                    let dd2 = sqrt(exb * exb + ezb * ezb)
+                    if dd2 < bestd { bestd = dd2; tgx = phys3d_x(ek); tgy = phys3d_y(ek) + 0.5; tgz = phys3d_z(ek); tgi = tk }
+                }
+                tk = tk + 1
+            }
+            // ...and connected CLIENTS (slots 6..8): bots hunt remote humans too (host owns
+            // their hp, so a bot's hit is applied authoritatively like any other).
+            let mut tkc = env.bot_n + 1
+            while tkc < env.nactors {
+                if cs.actors[tkc].hp > 0.0 and cs.apid[tkc] != 9999 {
+                    let ekc = cs.actors[tkc].hdl as i64
+                    let exc = phys3d_x(ekc) - bsx
+                    let ezc = phys3d_z(ekc) - bsz
+                    let ddc = sqrt(exc * exc + ezc * ezc)
+                    if ddc < bestd { bestd = ddc; tgx = phys3d_x(ekc); tgy = phys3d_y(ekc) + 0.5; tgz = phys3d_z(ekc); tgi = tkc }
+                }
+                tkc = tkc + 1
+            }
+            nearest = bestd
+            // Face the body toward whatever it's aiming at (so the model + its shoot
+            // animation point at the actual target, not hardcoded at the player).
+            if tgi > (0 - 2) { cs.brains[ci].face = atan2(tgx - bsx, tgz - bsz) }
+            // Launcher at range whenever it has a rocket (you can rocket from afar even
+            // with rifle ammo). OR when the rifle is fully dry but the launcher has ammo
+            // (only option) - that case only FIRES at range (gated below) + backs off.
+            // BUT if this bot is heading for ammo (cs.brains.getrifle), it equips the RIFLE
+            // so the box it grabs tops up the rifle, not the launcher (breaks the loop).
+            let mut bw = 0
+            if bestd > 22.0 and cs.actors[ci].mag[1] > 0 and sin(cs.etime * 1.3 + (ci as f64) * 2.3) > 0.6 { bw = 1 }
+            if cs.actors[ci].mag[0] + cs.actors[ci].res[0] <= 0 and cs.actors[ci].mag[1] + cs.actors[ci].res[1] > 0 { bw = 1 }
+            // Heading for ammo? Equip the weapon it's topping up so the box goes there:
+            // getrifle 1 = rifle, 2 = launcher.
+            if cs.brains[ci].getrifle > 1.5 { bw = 1 } else { if cs.brains[ci].getrifle > 0.5 { bw = 0 } }
+            cs.actors[ci].wpn = bw
+            if tgi > (0 - 2) {
+                let ddx = tgx - sox
+                let ddy = tgy - soy
+                let ddz = tgz - soz
+                let dl = sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
+                if dl > 0.1 {
+                    let bnx = ddx / dl
+                    let bny = ddy / dl
+                    let bnz = ddz / dl
+                    if bw == 1 {
+                        ax = bnx; ay = bny; az = bnz
+                    } else {
+                        // spread = aim skill + distance + the TARGET's speed
+                        let mut spr = cs.brains[ci].aim + bestd * 0.004
+                        if tgi == env.pl_i { spr = spr + pspd * 0.02 }
+                        let mut snx = bnx + sin(cs.etime * 57.0 + (ci as f64) * 11.0) * spr
+                        let mut sny = bny + sin(cs.etime * 43.0 + (ci as f64) * 5.0) * spr * 0.7
+                        let mut snz = bnz + sin(cs.etime * 67.0 + (ci as f64) * 9.0) * spr
+                        let snl = sqrt(snx * snx + sny * sny + snz * snz)
+                        if snl > 0.001 { snx = snx / snl; sny = sny / snl; snz = snz / snl }
+                        ax = snx; ay = sny; az = snz
+                    }
+                    want = 1
+                    if cs.actors[ci].mag[bw] <= 0 {
+                        // Start a reload ONLY if one isn't already running. The old code
+                        // re-armed rl to the full reload time every frame the mag was
+                        // empty, so the timer never hit 0 - the mag never refilled and the
+                        // bot chased with an empty gun forever (the real "not reloading" bug).
+                        if cs.actors[ci].rl <= 0.0 and cs.actors[ci].res[bw] > 0 { cs.actors[ci].rl = env.reload_w[bw]; cs.actors[ci].rlw = bw }
+                        want = 0
+                    }
+                    // Never fire the launcher point-blank (the rocket would catch the
+                    // bot in its own blast) - hold it until there's distance.
+                    if bw == 1 and bestd < 11.0 { want = 0 }
+                }
+            }
+        }
+        // ---- SHIELD CHANNEL (folded in, one path): you can only shield when
+        // DISENGAGED, and you can't fire while doing it. Player holds Q; a bot does it
+        // when its nearest enemy is far (>14). A closer threat cancels it (no cell spent).
+        let mut heal_want = false
+        if ci == env.pl_i {
+            if input_down(env.act_heal) > 0 and cs.dead == false { heal_want = true }
+        } else {
+            // Only shield when genuinely idle-safe: disengaged AND not mid ammo-errand
+            // (getrifle) AND not hurt enough to want a health pad. A dry or low bot must
+            // go rearm/heal instead of freezing to channel (which made it hop in place
+            // and never shoot) - that was the "hopping with no ammo, not shooting" bug.
+            if nearest > 14.0 and cs.brains[ci].getrifle < 0.5 and cs.actors[ci].hp >= 45.0 { heal_want = true }
+        }
+        if heal_want and cs.actors[ci].cells > 0 and cs.actors[ci].sh < cs.actors[ci].shmax {
+            cs.actors[ci].heal = cs.actors[ci].heal + dt
+            if cs.actors[ci].heal >= env.heal_channel {
+                cs.actors[ci].heal = 0.0
+                cs.actors[ci].cells = cs.actors[ci].cells - 1
+                cs.actors[ci].sh = cs.actors[ci].sh + env.cell_shield
+                if cs.actors[ci].sh > cs.actors[ci].shmax { cs.actors[ci].sh = cs.actors[ci].shmax }
+                // GUEST: signal the host to spend a cell + add shield (it owns the result;
+                // the local change above is just prediction it reconciles).
+                if ci == env.pl_i and cs.net_mode == 2 { cs.g_heal_ctr = cs.g_heal_ctr + 1.0 }
+            }
+        } else {
+            cs.actors[ci].heal = 0.0
+        }
+        // ---- THE SHOT (identical mechanics for everyone) ----
+        let wp = cs.actors[ci].wpn
+        if want > 0 and cs.actors[ci].mag[wp] > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].heal <= 0.0 and cs.actors[ci].fcd <= 0.0 {
+            cs.actors[ci].mag[wp] = cs.actors[ci].mag[wp] - 1
+            if cs.actors[ci].mag[wp] <= 0 and cs.actors[ci].res[wp] > 0 { cs.actors[ci].rl = env.reload_w[wp]; cs.actors[ci].rlw = wp }
+            if ci != env.pl_i { cs.ashoot[ci] = 0.6 }   // hold the shoot overlay across brief fire gaps
+            let ox = sox + ax * 0.6
+            let oy = soy + ay * 0.6
+            let oz = soz + az * 0.6
+            if wp == 0 {
+                let mut sg = 6
+                if mine == 1 { sg = 8 }
+                play_sound_at(2, 26, sg, ox, oy, oz)
+                // Tell the host about my shot so IT validates the hit (lag-comp) and
+                // applies authoritative damage. My local raycast below is prediction
+                // (tracer + hitmarker); the host owns the real hp. Host's own net_fire
+                // is a harmless local raycast (its combat already applied the damage).
+                if mine == 1 and cs.net_started { net_fire(ox, oy, oz, ax, ay, az, wp) }
+                let hb = phys3d_raycast_ex(cs.actors[ci].hdl as i64, ox, oy, oz, ax, ay, az, 120.0)
+                let mut tex = ox + ax * 120.0
+                let mut tey = oy + ay * 120.0
+                let mut tez = oz + az * 120.0
+                if hb >= 0 {
+                    let hX = phys3d_hit_x()
+                    let hY = phys3d_hit_y()
+                    let hZ = phys3d_hit_z()
+                    tex = hX; tey = hY; tez = hZ
+                    if mine == 1 { cs.hxp = hX; cs.hyp = hY; cs.hzp = hZ; cs.hit_t = 0.05 }
+                    let mut sp = 0
+                    while sp < 5 {
+                        cs.ppx[cs.pcur] = hX; cs.ppy[cs.pcur] = hY; cs.ppz[cs.pcur] = hZ
+                        let ang = (cs.pcur as f64) * 1.7 + cs.etime * 9.0
+                        cs.pvx[cs.pcur] = (0.0 - ax) * 2.0 + cos(ang) * 3.0
+                        cs.pvy[cs.pcur] = 2.8 + sin(ang) * 1.8
+                        cs.pvz[cs.pcur] = (0.0 - az) * 2.0 + sin(ang * 1.3) * 3.0
+                        cs.plife[cs.pcur] = 0.35
+                        cs.pcur = cs.pcur + 1
+                        if cs.pcur >= 28 { cs.pcur = 0 }
+                        sp = sp + 1
+                    }
+                    // Damage whichever ACTOR we hit (shield then health) - one routine for
+                    // player->bot, bot->player, bot->bot, and (host) anyone->client.
+                    let mut vk = 0
+                    while vk < env.nactors {
+                        if vk != ci and hb == (cs.actors[vk].hdl as i64) and cs.actors[vk].hp > 0.0 and (mine == 0 or cs.net_mode != 1) {
+                            let mut dmg = env.gun_dmg
+                            // Hit location (height of the impact vs the capsule centre):
+                            // head = 2x, low legs = 0.65x, torso = 1x.
+                            let hrel = hY - phys3d_y(cs.actors[vk].hdl as i64)
+                            let mut headshot = 0
+                            if hrel > 0.5 { dmg = dmg * 2.0; headshot = 1 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+                            if headshot == 1 and mine == 1 { play_sound(12, 90, 0) }   // headshot ding
+                            if cs.actors[vk].sh > 0.0 {
+                                if cs.actors[vk].sh >= dmg { cs.actors[vk].sh = cs.actors[vk].sh - dmg; dmg = 0.0 }
+                                else { dmg = dmg - cs.actors[vk].sh; cs.actors[vk].sh = 0.0 }
+                            }
+                            cs.actors[vk].hp = cs.actors[vk].hp - dmg
+                            if vk < env.bot_n { cs.brains[vk].pop = 0.1 }
+                            if mine == 1 { cs.hitmark = 0.18; play_noise(45, 14) }
+                            if vk == env.pl_i and cs.pinvuln <= 0.0 and cs.dead == false {
+                                cs.dmg_timer = 0.0; cs.hurt_flash = 0.6; cs.shake = 0.085
+                                play_sound(0 - 18, 70, 0)
+                                let rcx = sox - px
+                                let rcz = soz - pz
+                                let fwd_c = rcx * sin(cs.yaw) + rcz * (0.0 - cos(cs.yaw))
+                                let rgt_c = rcx * cos(cs.yaw) + rcz * sin(cs.yaw)
+                                cs.dmg_dir = atan2(rgt_c, fwd_c)
+                            }
+                            // Killer + player-kill reward context for the unified
+                            // death sweep (records on every hit, so the LAST damager
+                            // is the killer). The airborne OC bonus is captured here.
+                            cs.last_hit[vk] = ci
+                            if mine == 1 {
+                                cs.kr_mark[vk] = 0.35
+                                let mut ocg = 13.0
+                                if net_local_state(7) < 0.5 { ocg = 20.0 }
+                                cs.kr_oc[vk] = ocg
+                            }
+                        }
+                        vk = vk + 1
+                    }
+                    let mut sck = 0
+                    while sck < env.crate_n {
+                        // SHARED impulse (same fn the host runs) from the shooter's actor x/z, so our
+                        // predicted shove of the box is identical to the host's - they stay in sync.
+                        if hb == (env.crates[sck] as i64) { sim::crate_shot_impulse(env.crates[sck] as i64, phys3d_x(cs.actors[ci].hdl as i64), phys3d_z(cs.actors[ci].hdl as i64)) }
+                        sck = sck + 1
+                    }
+                } else {
+                    if mine == 1 { cs.hxp = ox + ax * 120.0; cs.hyp = oy + ay * 120.0; cs.hzp = oz + az * 120.0; cs.hit_t = 0.05 }
+                }
+                // One tracer system for everyone. The local player's tracer starts
+                // at the EYE (like the original single player tracer) so it reads the
+                // same; bots/remotes start at their body muzzle.
+                if mine == 1 {
+                    cs.trx1[cs.trcur] = px + fx * 0.4; cs.try1[cs.trcur] = eye - 0.08; cs.trz1[cs.trcur] = pz + fz * 0.4
+                } else {
+                    cs.trx1[cs.trcur] = ox; cs.try1[cs.trcur] = oy; cs.trz1[cs.trcur] = oz
+                }
+                cs.trx2[cs.trcur] = tex; cs.try2[cs.trcur] = tey; cs.trz2[cs.trcur] = tez
+                cs.trlife[cs.trcur] = 0.06
+                cs.trcur = cs.trcur + 1
+                if cs.trcur >= env.tracer_n { cs.trcur = 0 }
+            } else {
+                // PREDICT the rocket locally on EVERY machine (instant travel-time feel, just like
+                // before the refactor). A guest ALSO tells the host (intent), which flies its own
+                // authoritative travel-time rocket with the same sim::rocket_step; we suppress the
+                // host's fx copy of OUR rocket below so we see one - our prediction - not two.
+                cs.prjx[cs.prjcur] = ox; cs.prjy[cs.prjcur] = oy; cs.prjz[cs.prjcur] = oz
+                cs.prjvx[cs.prjcur] = ax * env.proj_speed; cs.prjvy[cs.prjcur] = ay * env.proj_speed; cs.prjvz[cs.prjcur] = az * env.proj_speed
+                cs.prjlife[cs.prjcur] = env.proj_life
+                let mut psrc = 1.0
+                if mine == 1 { psrc = 0.0 }
+                cs.prjsrc[cs.prjcur] = psrc
+                cs.prjcur = cs.prjcur + 1
+                if cs.prjcur >= env.proj_n { cs.prjcur = 0 }
+                let mut lg = 45
+                if mine == 1 { lg = 55 }
+                play_sound_at(0 - 8, 70, lg, ox, oy, oz)
+                // GUEST: send the rocket LAUNCH INTENT so the host applies authoritative damage.
+                if mine == 1 and cs.net_mode == 2 { net_projectile_intent(0, ox, oy, oz, ax, ay, az) }
+            }
+            cs.actors[ci].fcd = env.fire_w[wp]
+            if mine == 1 and cs.oc_active { cs.actors[ci].fcd = cs.actors[ci].fcd * 0.55 }
+        }
+        // ---- PICKUPS (folded in, one path): every actor collects fixed spots AND
+        // enemy drops it walks over - health pad -> full heal, shield cell -> inventory,
+        // ammo -> refill the equipped weapon's reserve. Bots scavenge just like you.
+        let apx = phys3d_x(cs.actors[ci].hdl as i64)
+        let apz = phys3d_z(cs.actors[ci].hdl as i64)
+        let cwp = cs.actors[ci].wpn
+        let mut fp = 0
+        while fp < env.pk_n {
+            if cs.pkcd[fp] <= 0.0 {
+                let fdx = apx - env.pkx[fp]
+                let fdz = apz - env.pkz[fp]
+                if sqrt(fdx * fdx + fdz * fdz) < 1.4 {
+                    if env.pktype[fp] < 0.5 {
+                        if cs.actors[ci].hp < env.php_max { cs.actors[ci].hp = env.php_max; cs.pkcd[fp] = env.pk_respawn; if mine == 1 and cs.net_mode != 2 { play_sound(7, 80, 0) } }
+                    } else { if env.pktype[fp] < 1.5 {
+                        if cs.actors[ci].cells < env.max_cells { cs.actors[ci].cells = cs.actors[ci].cells + 1; cs.pkcd[fp] = env.pk_respawn; if mine == 1 and cs.net_mode != 2 { play_sound(14, 90, 0) } }
+                    } else {
+                        // Ammo: refill the EQUIPPED weapon's reserve. On a guest this is PREDICTION;
+                        // we count it (cs.g_ammo_applied) so the server-confirm reconcile cs.won't double it.
+                        if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.pkcd[fp] = env.pk_respawn; if mine == 1 { play_sound(10, 80, 0); if cs.net_mode == 2 { cs.g_ammo_applied = cs.g_ammo_applied + 1 } } }
+                    } }
+                }
+            }
+            fp = fp + 1
+        }
+        let mut gp = 0
+        while gp < env.drop_n {
+            if cs.droplife[gp] > 0.0 {
+                let gdx = apx - cs.dropx[gp]
+                let gdz = apz - cs.dropz[gp]
+                if sqrt(gdx * gdx + gdz * gdz) < 1.4 {
+                    if cs.droptype[gp] < 0.5 {
+                        if cs.actors[ci].hp < env.php_max { cs.actors[ci].hp = env.php_max; cs.droplife[gp] = 0.0; if mine == 1 and cs.net_mode != 2 { play_sound(7, 80, 0) } }
+                    } else { if cs.droptype[gp] < 1.5 {
+                        if cs.actors[ci].cells < env.max_cells { cs.actors[ci].cells = cs.actors[ci].cells + 1; cs.droplife[gp] = 0.0; if mine == 1 and cs.net_mode != 2 { play_sound(14, 90, 0) } }
+                    } else {
+                        if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
+                    } }
+                }
+            }
+            gp = gp + 1
+        }
+    }
+    ci = ci + 1
+}
+
+// ===== UNIFIED DEATH SWEEP =====
+// One place that runs every local actor's death consequences EXACTLY ONCE, no
+// matter which weapon (hitscan / melee / explosive) dropped them. Each damage path
+// only records cs.last_hit[victim] (+ the player-kill reward context); this sweep does
+// the drops, clears un-popped shield cells, sets the respawn/cs.dead state, counts the
+// death, and credits the killer (scoreboard + kill feed, plus kill marker / round
+// kill / Overclock / sound when the killer is the local player). cs.death_done gates it
+// to once per life; respawn clears it. Remotes are excluded (net-authoritative).
+let mut dv = 0
+while dv < env.nactors {
+    // The player + ACTIVE bots, and on the HOST also connected clients (it owns their hp,
+    // so it runs their death too -> drops + kill event; the client respawns itself).
+    let dv_live = dv == env.pl_i or dv < active_bots or (cs.net_mode == 1 and dv > env.pl_i and cs.apid[dv] != 9999)
+    if cs.actors[dv].hp <= 0.0 and cs.death_done[dv] == 0 and dv_live {
+        cs.death_done[dv] = 1
+        cs.actors[dv].hp = 0.0
+        cs.actors[dv].sh = 0.0   // shield ALWAYS clears on death (incl. an overclock overshield),
+                              // so it can never carry into the next life / round for anyone
+        cs.adeaths[dv] = cs.adeaths[dv] + 1
+        let kk = cs.last_hit[dv]
+        let dbx = phys3d_x(cs.actors[dv].hdl as i64)
+        let dbz = phys3d_z(cs.actors[dv].hdl as i64)
+        cs.actors[dv].cells = 0
+        if dv == env.pl_i {
+            cs.dead = true; cs.respawn_cd = 3.0; cs.deaths = cs.deaths + 1; play_sound(0 - 26, 260, 0)
+        } else {
+            cs.brains[dv].resp = env.enemy_respawn   // (dummy for client slots; they respawn themselves)
+        }
+        // The kill FEED + credit + the killer's marker/sound are shown locally on the host/
+        // practice. A guest shows them ONLY from the host's net kill events (above), never
+        // from its own sweep, so nothing is double-counted or simulated guest-side.
+        if kk >= 0 and kk != dv and cs.net_mode != 2 {
+            if cs.round_over == false { cs.akills[kk] = cs.akills[kk] + 1 }
+            cs.kf_killer[cs.kf_cur] = kk; cs.kf_victim[cs.kf_cur] = dv; cs.kf_killer_pid[cs.kf_cur] = 0 - 1; cs.kf_victim_pid[cs.kf_cur] = 0 - 1; cs.kf_time[cs.kf_cur] = 4.5; cs.kf_cur = cs.kf_cur + 1; if cs.kf_cur >= 6 { cs.kf_cur = 0 }
+            if kk == env.pl_i {
+                cs.killmark = cs.kr_mark[dv]
+                if cs.round_over == false { cs.kills = cs.kills + 1 }
+                if cs.oc_active { cs.oc_timer = cs.oc_timer + 2.5 } else {
+                    cs.oc_meter = cs.oc_meter + cs.kr_oc[dv]
+                    if cs.oc_meter > 100.0 { cs.oc_meter = 100.0 }
+                    cs.oc_gain_t = 0.0
+                }
+                play_sound(12, 110, 0)
+                play_sound(7, 110, 0)
+            }
+        }
+    }
+    dv = dv + 1
+}
+
+// NO passive regen: health/shield come only from pickups. Health pads + drops
+// heal instantly; SHIELD comes from cells you carry and APPLY (Apex-style).
+cs.dmg_timer = cs.dmg_timer + dt
+
+// Tick fixed-spot respawn timers + enemy-drop lifetimes. Collection (and the shield
+// channel) is done in the one unified combat loop above - the same path for everyone.
+let mut pk = 0
+while pk < env.pk_n {
+    if cs.pkcd[pk] > 0.0 { cs.pkcd[pk] = cs.pkcd[pk] - dt; if cs.pkcd[pk] < 0.0 { cs.pkcd[pk] = 0.0 } }
+    pk = pk + 1
+}
+let mut dr = 0
+while dr < env.drop_n {
+    if cs.droplife[dr] > 0.0 { cs.droplife[dr] = cs.droplife[dr] - dt }
+    dr = dr + 1
+}
+
+cs.pinvuln = cs.pinvuln - dt
+if cs.pinvuln < 0.0 { cs.pinvuln = 0.0 }
+cs.hurt_flash = cs.hurt_flash - dt
+if cs.hurt_flash < 0.0 { cs.hurt_flash = 0.0 }
+
+// Death respawn cooldown: restore + teleport to spawn when it elapses.
+if cs.dead {
+    // Player death drops are handled by the unified death sweep above (a shield if
+    // you had a cell); the cooldown below restores + respawns you when it elapses.
+    // Death wipes Overclock - the bar AND the active state. No banking a meter
+    // through cs.deaths; you start every life fresh.
+    cs.oc_meter = 0.0
+    cs.oc_active = false
+    cs.oc_timer = 0.0
+    cs.respawn_cd = cs.respawn_cd - dt
+    if cs.respawn_cd <= 0.0 {
+        cs.dead = false
+        cs.death_done[env.pl_i] = 0; cs.last_hit[env.pl_i] = 0 - 1   // re-arm the death sweep
+        cs.actors[5].hp = env.php_max
+        cs.actors[5].sh = 0.0   // respawn SHIELDLESS - shields are scarce; find/loot cells
+        cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1; cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2   // ammo back to start
+        cs.actors[5].rl = 0.0
+        cs.pinvuln = 0.0   // no spawn protection after respawn (server owns hp; cs.pinvuln only desynced prediction)
+        cs.respawn_req = 1.0
+        // GUEST: signal the host that I respawned (it owns my hp -> resets it to full).
+        if cs.net_mode == 2 { cs.g_resp_ctr = cs.g_resp_ctr + 1.0; cs.g_hp_prev = env.php_max; cs.g_resp_wait = 1; cs.g_resp_wait_t = 1.5 }
+    }
+}
+cs.prev_dead = cs.dead
+// --- OVERCLOCK meter + state (the signature mechanic) ---
+// Style trickle fills the meter while doing movement (no fill while active).
+let mut oc_gained = false
+if cs.oc_active == false {
+    if net_local_state(23) > 0.5 { cs.oc_meter = cs.oc_meter + 9.0 * dt; oc_gained = true }
+    if net_local_state(12) > 0.5 { cs.oc_meter = cs.oc_meter + 7.0 * dt; oc_gained = true }
+    if net_local_state(7) < 0.5 { cs.oc_meter = cs.oc_meter + 4.0 * dt; oc_gained = true }
+}
+if cs.oc_meter > 100.0 { cs.oc_meter = 100.0 }
+if oc_gained { cs.oc_gain_t = 0.0 } else { cs.oc_gain_t = cs.oc_gain_t + dt }
+// Decay slowly when idle (not gaining for a bit) and not overclocked.
+if cs.oc_active == false and cs.oc_gain_t > 2.5 {
+    cs.oc_meter = cs.oc_meter - 5.0 * dt
+    if cs.oc_meter < 0.0 { cs.oc_meter = 0.0 }
+}
+// Trigger on the key when full; runs ~10s (cs.kills extend it, no cap).
+if input_down(env.act_overclock) > 0 and cs.oc_meter >= 100.0 and cs.oc_active == false {
+    cs.oc_active = true
+    cs.oc_timer = 10.0
+    cs.oc_meter = 0.0
+    // GDD perks: reset the tactical cooldowns (grapple + frag) so you enter the
+    // window loaded, and grant a small overshield on top of your shield.
+    cs.g_cd = 0.0
+    cs.nade_cd = 0.0
+    cs.actors[5].sh = env.psh_max + 25.0
+    play_sound(7, 90, 0)
+    play_sound(14, 150, 0)
+    play_sound(21, 220, 0)
+}
+if cs.oc_active {
+    cs.oc_timer = cs.oc_timer - dt
+    if cs.oc_timer <= 0.0 {
+        cs.oc_active = false
+        cs.oc_timer = 0.0
+    }
+}
+
+// Damage overlay -> GPU shader: low-health red vignette (below ~60% health) +
+// a directional red hit glow + a pulsing GOLD overclock tint.
+// SMOOTH RECONCILE: ease the vignette's health toward the reconciled value (~0.18s) so a
+// guest's stepped hp snapshots fade the red in cleanly instead of popping. On a fresh
+// respawn snap straight to full so the vignette clears instantly (no lingering red).
+let mut vlrp = dt * 9.0
+if vlrp > 1.0 { vlrp = 1.0 }
+if cs.actors[5].hp > cs.vig_hp { vlrp = dt * 5.0 }   // heal: ease back a touch slower
+if cs.actors[5].hp >= env.php_max - 0.01 { vlrp = 1.0 }
+cs.vig_hp = cs.vig_hp + (cs.actors[5].hp - cs.vig_hp) * vlrp
+let mut vig = (0.6 - cs.vig_hp / env.php_max) / 0.6
+if vig < 0.0 { vig = 0.0 }
+if vig > 1.0 { vig = 1.0 }
+vig = vig * 0.4
+let mut hitg = cs.hurt_flash * 1.0
+if hitg > 0.65 { hitg = 0.65 }
+let mut oc_glow = 0.0
+if cs.oc_active { oc_glow = 1.0 }   // steady subtle world-dim (shader scales it)
+r3d_damage(vig, hitg, sin(cs.dmg_dir), 0.0 - cos(cs.dmg_dir), oc_glow)
+
+// FFA round: count down the timer; end on reaching the kill target (win) or
+// the timer expiring (lose). After a short over-cs.screen, reset for a new round.
+// FFA round. HOST + practice run it authoritatively and replicate the clock + over-state
+// on the host's id-0 meta (10 = timer, 11 = over); a GUEST mirrors those so the match
+// clock / end / reset are identical everywhere instead of each machine drifting its own.
+if cs.net_mode == 2 {
+    let g_over = net_player_meta(0, 11) > 0.5
+    cs.round_timer = net_player_meta(0, 10)
+    // Host RESET edge (over -> playing): clear local round display + respawn (hp reset
+    // flows through the normal respawn handshake).
+    if cs.round_over and g_over == false {
+        cs.oc_meter = 0.0; cs.oc_active = false; cs.oc_timer = 0.0
+        cs.respawn_req = 1.0; cs.g_resp_ctr = cs.g_resp_ctr + 1.0; cs.g_resp_wait = 1; cs.g_resp_wait_t = 1.5
+    }
+    cs.round_over = g_over
+} else {
+    if cs.round_over == false {
+        cs.round_timer = cs.round_timer - dt
+        // End when ANY player reaches the kill target (max cs.kills across host+clients+bots).
+        let mut topk = cs.kills
+        let mut tki = 0
+        while tki < env.nactors { if tki != env.pl_i and cs.akills[tki] > topk { topk = cs.akills[tki] } tki = tki + 1 }
+        if topk >= cs.kill_target {
+            cs.round_over = true
+            cs.over_t = 5.0
+        }
+        if cs.round_timer <= 0.0 {
+            cs.round_timer = 0.0
+            cs.round_over = true
+            cs.over_t = 5.0
+        }
+    } else {
+    cs.over_t = cs.over_t - dt
+    if cs.over_t <= 0.0 {
+        cs.kills = 0
+        cs.deaths = 0
+        let mut zk2 = 0
+        while zk2 < 9 { cs.akills[zk2] = 0; cs.adeaths[zk2] = 0; zk2 = zk2 + 1 }
+        cs.round_timer = cs.round_len
+        cs.round_over = false
+        cs.won = false
+        // Full reset between rounds: player + every bot back to full hp / shield / ammo /
+        // cells, overclock cleared, leftover drops cleared.
+        cs.actors[5].hp = env.php_max
+        cs.actors[5].sh = 0.0   // shieldless on round reset too (matches spawn/respawn; loot cells)
+        cs.actors[5].cells = 0
+        cs.actors[5].heal = 0.0
+        cs.actors[5].wpn = 0
+        cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1
+        cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2
+        cs.actors[5].rl = 0.0
+        cs.dead = false
+        cs.respawn_req = 1.0
+        cs.oc_meter = 0.0
+        cs.oc_active = false
+        cs.oc_timer = 0.0
+        let mut rdr = 0
+        while rdr < env.drop_n { cs.droplife[rdr] = 0.0; rdr = rdr + 1 }
+        rdr = 0
+        while rdr < 9 { cs.death_done[rdr] = 0; cs.last_hit[rdr] = 0 - 1; rdr = rdr + 1 }   // re-arm death sweep
+        let mut rb = 0
+        while rb < env.bot_n {
+            cs.actors[rb].hp = env.enemy_hp_max
+            if rb >= cs.bot_count { cs.actors[rb].hp = 0.0; cs.brains[rb].resp = 1000000.0 }
+            cs.actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
+            cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]
+            cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2
+            cs.actors[rb].rl = 0.0
+            cs.actors[rb].wpn = 0
+            cs.actors[rb].cells = 0
+            cs.actors[rb].heal = 0.0
+            cs.actors[rb].fcd = 0.0
+            if rb < cs.bot_count { cs.brains[rb].resp = 0.0 }
+            phys3d_set_pos(cs.actors[rb].hdl as i64, env.esx[rb], 0.9, env.esz[rb])
+            rb = rb + 1
+        }
+    }
+}
+}
+// HOST: replicate the authoritative round clock + over-state to guests (id-0 meta 10/11).
+// WIN/LOSS (every machine, from the synced scoreboard): you win the round if you hold the
+// most cs.kills. My cs.kills + each rival's come from the same source the scoreboard reads, so
+// every machine shows the same result (replaces the old local cs.kills>=target win flag).
+let mut my_k = cs.kills
+if cs.net_started { my_k = net_player_meta(net_my_id(), 6) as i64 }
+let mut max_ok = 0
+let mut wki = 0
+while wki < env.nactors {
+    if wki != env.pl_i {
+        let mut okk = cs.akills[wki]
+        if cs.net_started and (cs.net_mode != 1 or wki >= env.bot_n) { okk = net_player_meta(cs.apid[wki], 6) as i64 }
+        if okk > max_ok { max_ok = okk }
+    }
+    wki = wki + 1
+}
+cs.won = my_k >= max_ok
+
+// World: ground plane + the arena boxes (each at its collider position) + dome.
+r3d_draw(env.ground_vis, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+let mut gd = 0
+while gd < env.geo_n {
+    r3d_draw(cs.gmesh[gd], cs.gcx[gd], cs.gcy[gd], cs.gcz[gd], 0.0, 0.0, 0.0, 1.0)
+    gd = gd + 1
+}
+// Ramps + perches. r3d_draw takes (cs.yaw=Y, cs.pitch=X, cs.roll=Z), so the X-tilt goes
+// in the PITCH slot and the Z-tilt in ROLL to match the collider's axis-angle.
+let mut exd = 0
+while exd < env.ext_n {
+    r3d_draw(cs.exmesh[exd], env.exx[exd], env.exy[exd], env.exz[exd], 0.0, env.exrx[exd], env.exrz[exd], 1.0)
+    exd = exd + 1
+}
+// Crate <-> actor knockback: a FLYING crate (e.g. blast-flung) shoves anyone it
+// hits (you get knocked around a bit), and an actor walking into a crate pushes it.
+let mut cki = 0
+while cki < env.crate_n {
+    let chh3 = env.crates[cki] as i64
+    let ccx = phys3d_x(chh3)
+    let ccy = phys3d_y(chh3)
+    let ccz = phys3d_z(chh3)
+    let cvx = phys3d_vel_x(chh3)
+    let cvz = phys3d_vel_z(chh3)
+    let cspd = sqrt(cvx * cvx + cvz * cvz)
+    let mut cai = 0
+    while cai < env.nactors {
+        // Who shoves env.crates: the local player always; host/practice bots; and on the HOST,
+        // connected CLIENTS (their bodies sit at the guests' net positions) - so a guest
+        // sliding into a box now moves the AUTHORITATIVE box, matching its prediction. On a
+        // guest only OUR push is predicted; other players' crate effects reconcile in.
+        let mut cinteract = 0
+        if cai == env.pl_i { cinteract = 1 }
+        if cai < env.bot_n and cs.net_mode != 2 { cinteract = 1 }
+        if cai > env.pl_i and cs.net_mode == 1 and cs.apid[cai] != 9999 { cinteract = 1 }
+        if cinteract == 1 and cs.actors[cai].hp > 0.0 {
+            let apx = phys3d_x(cs.actors[cai].hdl as i64)
+            let apz = phys3d_z(cs.actors[cai].hdl as i64)
+            let ddx = apx - ccx
+            let ddz = apz - ccz
+            let dd = sqrt(ddx * ddx + ddz * ddz)
+            if dd < 1.5 and dd > 0.01 {
+                // Flying crate -> knock the actor a LITTLE, but ONLY if the crate is
+                // heading TOWARD them (dot of crate velocity with crate->actor > 0).
+                // A box you just shoved moves AWAY, so it cs.won't knock you back.
+                // The whole crate interaction is local movers only (bots + you):
+                // remotes are net-authoritative and env.crates aren't replicated yet.
+                let toward = cvx * ddx + cvz * ddz
+                if cspd > 3.5 and toward > 0.0 and cai <= env.pl_i {
+                    let mut kf = cspd * 0.2
+                    if kf > 4.0 { kf = 4.0 }
+                    if cai == env.pl_i {
+                        if cs.dead == false {
+                            cs.blast_ix = cs.blast_ix + cvx / cspd * kf
+                            cs.blast_iz = cs.blast_iz + cvz / cspd * kf
+                            cs.blast_iy = cs.blast_iy + 1.2
+                        }
+                    } else {
+                        cs.brains[cai].kx = cs.brains[cai].kx + cvx / cspd * kf
+                        cs.brains[cai].kz = cs.brains[cai].kz + cvz / cspd * kf
+                        cs.brains[cai].ky = cs.brains[cai].ky + 1.0
+                    }
+                }
+                // Actor -> shove the crate away (a SMALL nudge, scaled lightly by the
+                // player's speed so a fast slide moves it just a little further).
+                let mut psp = 0.0
+                if cai == env.pl_i { psp = sqrt(net_local_state(4) * net_local_state(4) + net_local_state(6) * net_local_state(6)) }
+                else { if cai > env.pl_i { psp = sqrt(net_player_state(cs.apid[cai], 4) * net_player_state(cs.apid[cai], 4) + net_player_state(cs.apid[cai], 6) * net_player_state(cs.apid[cai], 6)) } }
+                let pushf = psp * 0.07 + 0.6
+                phys3d_apply_impulse(chh3, 0.0 - ddx / dd * pushf, 0.35, 0.0 - ddz / dd * pushf)
+            }
+        }
+        cai = cai + 1
+    }
+    cki = cki + 1
+}
+// Loose env.crates at their live (blast-flung) physics positions. For host==guest (cs.net_mode 2)
+// draw at the local (reconciled) position but with the HOST's live orientation from the object
+// channel, so a blasted crate visibly TUMBLES instead of sliding forever axis-aligned.
+let mut cd2 = 0
+while cd2 < env.crate_n {
+    let chh2 = env.crates[cd2] as i64
+    if cs.net_mode == 2 and net_object_count() >= env.crate_n {
+        r3d_draw_quat(env.crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), net_object_qx(cd2), net_object_qy(cd2), net_object_qz(cd2), net_object_qw(cd2), 1.0)
+    } else {
+        r3d_draw(env.crate_vis, phys3d_x(chh2), phys3d_y(chh2), phys3d_z(chh2), 0.0, 0.0, 0.0, 1.0)
+    }
+    cd2 = cd2 + 1
+}
+// GUEST: render the host's authoritative transient visuals - loot drops (kind 0-2) and
+// OTHERS' in-flight rockets (3) / grenades (4). Our own predicted rocket is still drawn by
+// the local projectile loop, so we see incoming explosives in time to dodge them.
+if cs.net_mode == 2 {
+    let fxn = net_fx_count()
+    let mut fxi = 0
+    while fxi < fxn {
+        let fxx = net_fx_x(fxi)
+        let fxy = net_fx_y(fxi)
+        let fxz = net_fx_z(fxi)
+        let fxk = net_fx_kind(fxi)
+        let bobf = sin(cs.etime * 3.0 + (fxi as f64)) * 0.1
+        // Suppress the host's copy of a rocket WE are already predicting (kind 3 within ~4m of one
+        // of our own live predicted rockets), like the grenade's cs.nade_grace - so the firer sees one
+        // rocket (its prediction), not two slightly-offset ones.
+        let mut own_rkt = 0
+        if fxk > 2.5 and fxk < 3.5 {
+            let mut pr = 0
+            while pr < env.proj_n {
+                if cs.prjlife[pr] > 0.0 and cs.prjsrc[pr] < 0.5 {
+                    let rdx = cs.prjx[pr] - fxx
+                    let rdy = cs.prjy[pr] - fxy
+                    let rdz = cs.prjz[pr] - fxz
+                    if rdx * rdx + rdy * rdy + rdz * rdz < 16.0 { own_rkt = 1 }
+                }
+                pr = pr + 1
+            }
+        }
+        // The grenade (kind 4) is suppressed while cs.nade_grace>0 - that's OUR OWN throw, which we
+        // already render from the local prediction; without this the thrower sees two offset nades.
+        if fxk < 0.5 { r3d_draw(env.heal_vis, fxx, fxy + bobf, fxz, 0.0, cs.etime * 3.0, 0.0, 0.7) } else { if fxk < 1.5 { r3d_draw(env.shield_vis, fxx, fxy + bobf, fxz, 0.0, cs.etime * 3.0, 0.0, 0.7) } else { if fxk < 2.5 { r3d_draw(env.ammo_vis, fxx, fxy + bobf, fxz, 0.0, cs.etime * 3.0, 0.0, 0.7) } else { if fxk < 3.5 { if own_rkt == 0 { r3d_draw(env.proj_vis, fxx, fxy, fxz, 0.0, 0.0, 0.0, 1.0) } } else { if cs.nade_grace <= 0.0 { r3d_draw(env.nade_vis, fxx, fxy, fxz, cs.etime * 7.0, cs.etime * 5.0, 0.0, 1.0) } } } } }
+        fxi = fxi + 1
+    }
+}
+
+// Live enemy bots at their physics positions (cs.dead ones are hidden). Host/practice
+// only - on a guest these same bots are drawn by the unified remote loop below.
+let mut ed = 0
+while ed < env.bot_n and cs.net_mode != 2 {
+    if cs.actors[ed].hp > 0.0 {
+        let h = cs.actors[ed].hdl as i64
+        let bx = phys3d_x(h)
+        let by = phys3d_y(h)
+        let bz = phys3d_z(h)
+        let psc = 1.0 + cs.brains[ed].pop   // brief scale pop when hit (flinch)
+        if cs.actor_models[ed] >= 0 {
+            let svx = bx - cs.aprevx[ed]
+            let svz = bz - cs.aprevz[ed]
+            let mut inst = sqrt(svx * svx + svz * svz) / safedt
+            if inst > 40.0 { inst = 0.0 }   // ignore respawn teleports
+            cs.aspd[ed] = cs.aspd[ed] + (inst - cs.aspd[ed]) * 0.12   // low-pass smooth
+            let spd = cs.aspd[ed]
+            cs.ashoot[ed] = cs.ashoot[ed] - dt
+            if cs.ashoot[ed] < 0.0 { cs.ashoot[ed] = 0.0 }
+            let knock = sqrt(cs.brains[ed].kx * cs.brains[ed].kx + cs.brains[ed].ky * cs.brains[ed].ky + cs.brains[ed].kz * cs.brains[ed].kz)
+            // Airborne LATCH: set on a real takeoff/leap/hard fall, hold ~0.45s through the
+            // apex, clear only when actually grounded - so jump never strobes around vy = 0.
+            if cs.brains[ed].vy > 3.0 or knock > 4.0 or cs.brains[ed].vy < (0.0 - 5.0) { cs.ajump[ed] = 0.45 }
+            if phys3d_grounded(h) == 1 and cs.brains[ed].vy < 1.0 { cs.ajump[ed] = 0.0 }
+            cs.ajump[ed] = cs.ajump[ed] - dt
+            if cs.ajump[ed] < 0.0 { cs.ajump[ed] = 0.0 }
+            // Desired BASE clip. Bias toward RUN: any sustained motion -> run instantly;
+            // idle ONLY after the bot has been slow for 0.35s straight (a real stop, not a
+            // juke/strafe cs.dip). Jump latch wins. Small dwell as a final anti-strobe guard.
+            let mut desired = cs.astate[ed]
+            if desired == env.anim_jump { desired = env.anim_idle }
+            if spd > 1.4 { desired = env.anim_run; cs.aidle_t[ed] = 0.0 } else { cs.aidle_t[ed] = cs.aidle_t[ed] + dt; if cs.aidle_t[ed] > 0.35 { desired = env.anim_idle } }
+            if cs.ajump[ed] > 0.0 { desired = env.anim_jump }
+            cs.astate_t[ed] = cs.astate_t[ed] + dt
+            let mut allow = 0
+            if cs.astate[ed] < 0 { allow = 1 }
+            if cs.astate_t[ed] > 0.15 { allow = 1 }
+            if desired == env.anim_jump { allow = 1 }
+            if cs.astate[ed] == env.anim_jump and cs.ajump[ed] <= 0.0 { allow = 1 }
+            if allow == 1 and cs.astate[ed] != desired { r3d_anim_play(cs.actor_models[ed], desired, 1, 1.0, 0.14); cs.astate[ed] = desired; cs.astate_t[ed] = 0.0 }
+            // UPPER-BODY overlay = the shoot pose on the torso/arms while the legs keep
+            // running or jumping (Aurora's animation-layering feature). So a bot can now
+            // run-and-gun or shoot midair, not freeze to one full-body clip.
+            // ALWAYS hold a weapon pose on the upper body (Pistol_Idle); swap to the shoot
+            // pose while firing. cs.ushoot stores the clip currently overlaid (0 = unset).
+            let mut uwant = env.anim_aim
+            if cs.ashoot[ed] > 0.0 { uwant = env.anim_shoot }
+            if cs.ushoot[ed] != uwant { r3d_anim_play_upper(cs.actor_models[ed], uwant, 1, 1.0, 0.12, env.upper_mask_root); cs.ushoot[ed] = uwant }
+            r3d_anim_update(cs.actor_models[ed], dt)
+            // Face the aim target, SMOOTHLY: low-pass the cs.yaw the short way around, snap
+            // only on a big (>115 deg) reorient. No raw-delta jitter, no target/move toggle.
+            // Draw at the plain scale - NO hit "pop" (a throbbing humanoid reads as flicker).
+            let tyaw = cs.brains[ed].face + env.actor_yaw_off
+            let dyaw = atan2(sin(tyaw - cs.ayaw[ed]), cos(tyaw - cs.ayaw[ed]))
+            if dyaw > 2.0 or dyaw < (0.0 - 2.0) { cs.ayaw[ed] = tyaw } else { cs.ayaw[ed] = cs.ayaw[ed] + dyaw * 0.2 }
+            // Tint the actual model: orange while I'm overclocked (enemies pop against the
+            // dimmed world), blue while shielded, otherwise untinted.
+            if cs.oc_active { r3d_draw_tint(cs.actor_models[ed], bx, by + env.actor_yoff, bz, cs.ayaw[ed], 0.0, 0.0, env.actor_scale, clienthud::ptint(1000 + ed, 0, 1.5), clienthud::ptint(1000 + ed, 1, 1.5), clienthud::ptint(1000 + ed, 2, 1.5)) } else { if cs.actors[ed].sh > 0.0 { r3d_draw_shield(cs.actor_models[ed], bx, by + env.actor_yoff, bz, cs.ayaw[ed], 0.0, 0.0, env.actor_scale, 1.0, cs.etime) } else { r3d_draw_tint(cs.actor_models[ed], bx, by + env.actor_yoff, bz, cs.ayaw[ed], 0.0, 0.0, env.actor_scale, clienthud::ptint(1000 + ed, 0, 1.0), clienthud::ptint(1000 + ed, 1, 1.0), clienthud::ptint(1000 + ed, 2, 1.0)) } }
+            // Third-person weapon ATTACHED to the right-hand bone (joint 29): it rides
+            // the hand, so reload/aim/run hand motion comes from the animation itself.
+            let mut twm = env.vm_rifle
+            let mut twsc = env.rifle_scale_tp
+            if cs.actors[ed].wpn == 1 { twm = env.vm_launcher; twsc = env.lnch_scale_tp }
+            r3d_draw_on_joint(twm, cs.actor_models[ed], env.hand_joint, bx, by + env.actor_yoff, bz, cs.ayaw[ed], 0.0, 0.0, env.actor_scale, cs.hand_ox, cs.hand_oy, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, twsc)
+            cs.aprevx[ed] = bx
+            cs.aprevz[ed] = bz
+        } else {
+            // Fallback: the original box body + head (glow while overclocked, cyan if shielded).
+            if cs.oc_active {
+                r3d_draw(env.enemy_glow_body, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                r3d_draw(env.enemy_glow_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
+            } else {
+                if cs.actors[ed].sh > 0.0 {
+                    r3d_draw(env.enemy_vis_sh, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                } else {
+                    r3d_draw(env.enemy_vis, bx, by, bz, 0.0, 0.0, 0.0, psc)
+                }
+                r3d_draw(env.enemy_head, bx, by + 0.85, bz, 0.0, 0.0, 0.0, psc)
+            }
+        }
+    }
+    ed = ed + 1
+}
+
+// Network-driven ACTORS: every other player on the wire (humans AND, on a guest, the
+// host's bots) is synced to its replicated position + drawn. Their COMBAT is host-
+// authoritative, so locally these are transform + body cs.actors, not simulated. A guest
+// renders EVERYONE this way (no bot concept): the pool is every actor slot except our
+// own. The host renders only human remotes here (it draws its own bots above).
+let myid = net_my_id()
+let pcount = net_player_count()
+let mut maxslots = env.max_remote
+if cs.net_mode == 2 { maxslots = env.bot_n + env.max_remote }   // guest: all 8 non-self slots
+// Park + deactivate all usable slots first; the live ones get re-activated below.
+let mut rs = 0
+while rs < maxslots {
+    let mut ai = env.bot_n + 1 + rs
+    if cs.net_mode == 2 { if rs < env.bot_n { ai = rs } else { ai = rs + 1 } }   // skip env.pl_i
+    if cs.net_mode == 2 { cs.actors[ai].hp = 0.0 }   // guest parks hp; HOST owns client hp (keep it)
+    cs.apid[ai] = 9999   // clear the slot->pid map; live remotes re-set it below
+    phys3d_set_pos(cs.actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0)
+    rs = rs + 1
+}
+let mut pi = 0
+let mut slot = 0
+while pi < pcount {
+    let pid = net_player_id_at(pi)
+    let rhp = net_player_meta(pid, 0)   // replicated hp
+    // Process EVERY other player (alive or cs.dead) so a respawning player keeps its actor
+    // slot + cs.apid mapping -> it stays on the scoreboard instead of vanishing. The r_alive
+    // check inside parks the body + skips rendering the cs.dead, so nothing is drawn for them.
+    if pid != myid and slot < maxslots {
+        let mut ai = env.bot_n + 1 + slot
+        if cs.net_mode == 2 { if slot < env.bot_n { ai = slot } else { ai = slot + 1 } }
+        cs.apid[ai] = pid   // map this remote's actor slot to its net id (for names)
+        let ex = net_player_x(pid)
+        let ey = net_player_y(pid)
+        let ez = net_player_z(pid)
+        // Replicate this remote's GRAPPLE (anchor 12/13/14 + rope timer 15) so the rope
+        // render below draws it - that's what makes other players' grapples visible.
+        cs.actors[ai].gax = net_player_meta(pid, 12)
+        cs.actors[ai].gay = net_player_meta(pid, 13)
+        cs.actors[ai].gaz = net_player_meta(pid, 14)
+        cs.actors[ai].gat = net_player_meta(pid, 15)
+        let mut eyaw = net_player_yaw(pid)
+        // HUMAN remotes broadcast their raw LOOK-cs.yaw. The renderer faces (sin cs.yaw, cos cs.yaw)
+        // (glam from_euler YXZ, model local forward +Z - confirmed by bots, drawn with
+        // face=atan2(dx,dz)). The player's look forward is (sin eyaw, -cos eyaw), so the
+        // correct draw-cs.yaw is PI - eyaw (makes sin/cos match the look dir). NOT eyaw+PI,
+        // which X-flips (looking east renders facing west). Bots (pid>=1000) already
+        // broadcast draw-space `face`, so leave them.
+        if pid < 1000 { eyaw = 3.14159 - eyaw }
+        // GUEST displays the host's replicated hp/shield. HOST OWNS this client's hp/
+        // shield (managed in the survivability block above), so it stays host-owned here.
+        if cs.net_mode == 2 { cs.actors[ai].hp = rhp; cs.actors[ai].sh = net_player_meta(pid, 1) }
+        // Cull the cs.dead from the render. The host keeps a cs.dead client's SLOT (cs.apid set
+        // above) so respawn still maps it; we just park its body and skip drawing.
+        let r_alive = cs.actors[ai].hp > 0.0
+        if r_alive == false { phys3d_set_pos(cs.actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0) }
+        if r_alive {
+        phys3d_set_pos(cs.actors[ai].hdl, ex, ey, ez)
+        if cs.actor_models[ai] >= 0 {
+            let rvx = ex - cs.aprevx[ai]
+            let rvz = ez - cs.aprevz[ai]
+            let mut rinst = sqrt(rvx * rvx + rvz * rvz) / safedt
+            if rinst > 40.0 { rinst = 0.0 }
+            cs.aspd[ai] = cs.aspd[ai] + (rinst - cs.aspd[ai]) * 0.12
+            let rspd = cs.aspd[ai]
+            let mut rdes = env.anim_idle
+            // Airborne LATCH (mirrors the bot anim): remote HUMANS broadcast their vy
+            // (slot 5) + grounded flag (slot 7) via sim_step, so show the jump/midair clip
+            // instead of forcing idle. Set on a real takeoff/hard fall, hold through the
+            // apex, clear only when actually grounded - so it never strobes around vy=0.
+            let rvy = net_player_state(pid, 5)
+            let rground = net_player_state(pid, 7)
+            if rvy > 3.0 or rvy < (0.0 - 5.0) { cs.ajump[ai] = 0.45 }
+            if rground > 0.5 and rvy < 1.0 { cs.ajump[ai] = 0.0 }
+            cs.ajump[ai] = cs.ajump[ai] - dt
+            if cs.ajump[ai] < 0.0 { cs.ajump[ai] = 0.0 }
+            if rspd > 1.4 { rdes = env.anim_run; cs.aidle_t[ai] = 0.0 } else { cs.aidle_t[ai] = cs.aidle_t[ai] + dt; if cs.aidle_t[ai] > 0.35 { rdes = env.anim_idle } }
+            if cs.ajump[ai] > 0.0 { rdes = env.anim_jump }
+            cs.astate_t[ai] = cs.astate_t[ai] + dt
+            let mut rallow = 0
+            if cs.astate[ai] < 0 { rallow = 1 }
+            if cs.astate_t[ai] > 0.15 { rallow = 1 }
+            if rdes == env.anim_jump { rallow = 1 }
+            if cs.astate[ai] == env.anim_jump and cs.ajump[ai] <= 0.0 { rallow = 1 }
+            if rallow == 1 and cs.astate[ai] != rdes { r3d_anim_play(cs.actor_models[ai], rdes, 1, 1.0, 0.15); cs.astate[ai] = rdes; cs.astate_t[ai] = 0.0 }
+            // Upper-body overlay: the katana SWING (clip 41) while this remote is meleeing
+            // (replicated meta 8), else the held weapon pose. Reuses the existing overlay.
+            let mut ruwant = env.anim_aim
+            if net_player_meta(pid, 8) > 0.5 { ruwant = env.kat_swing_clip }
+            if cs.ushoot[ai] != ruwant { let mut kspd = 1.0; if ruwant == env.kat_swing_clip { kspd = 1.7 }; r3d_anim_play_upper(cs.actor_models[ai], ruwant, 1, kspd, 0.1, env.upper_mask_root); cs.ushoot[ai] = ruwant }
+            r3d_anim_update(cs.actor_models[ai], dt)
+            // A remote that is ITSELF overclocked (its replicated meta 2) glows a bright pulsing
+            // GOLD so everyone can read who's powered up - independent of my own overclock. Checked
+            // first; otherwise the existing tint (orange pop while I'M overclocked, shield, or plain).
+            if net_player_meta(pid, 2) > 0.5 { let ocg = 1.9 + sin(cs.etime * 11.0) * 0.45; r3d_draw_tint(cs.actor_models[ai], ex, ey + env.actor_yoff, ez, eyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, ocg, ocg * 0.74, 0.28) } else { if cs.oc_active { r3d_draw_tint(cs.actor_models[ai], ex, ey + env.actor_yoff, ez, eyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, clienthud::ptint(cs.apid[ai], 0, 1.5), clienthud::ptint(cs.apid[ai], 1, 1.5), clienthud::ptint(cs.apid[ai], 2, 1.5)) } else { if cs.actors[ai].sh > 0.0 { r3d_draw_shield(cs.actor_models[ai], ex, ey + env.actor_yoff, ez, eyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, 1.0, cs.etime) } else { r3d_draw_tint(cs.actor_models[ai], ex, ey + env.actor_yoff, ez, eyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, clienthud::ptint(cs.apid[ai], 0, 1.0), clienthud::ptint(cs.apid[ai], 1, 1.0), clienthud::ptint(cs.apid[ai], 2, 1.0)) } } }
+            // Third-person weapon ATTACHED to the remote's right-hand bone (joint 29).
+            let ryr = eyaw + env.actor_yaw_off
+            // Draw the katana while swinging (its own offset/scale), the held blue cube while
+            // channeling a shield (meta 16), else the rifle.
+            if net_player_meta(pid, 8) > 0.5 {
+                r3d_draw_on_joint(env.vm_katana, cs.actor_models[ai], env.hand_joint, ex, ey + env.actor_yoff, ez, ryr, 0.0, 0.0, env.actor_scale, cs.kat_hand_ox, cs.kat_hand_oy, cs.kat_hand_oz, cs.kat_hand_oyaw, cs.kat_hand_opitch, cs.kat_hand_oroll, env.kat_scale_tp)
+            } else {
+                if net_player_meta(pid, 16) > 0.5 {
+                    r3d_draw_on_joint(env.shieldcube_vis, cs.actor_models[ai], env.hand_joint, ex, ey + env.actor_yoff, ez, ryr, 0.0, 0.0, env.actor_scale, cs.hand_ox, cs.hand_oy + 0.18, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, 1.6)
+                } else {
+                    r3d_draw_on_joint(env.vm_rifle, cs.actor_models[ai], env.hand_joint, ex, ey + env.actor_yoff, ez, ryr, 0.0, 0.0, env.actor_scale, cs.hand_ox, cs.hand_oy, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, env.rifle_scale_tp)
+                }
+            }
+            cs.aprevx[ai] = ex
+            cs.aprevz[ai] = ez
+        } else {
+            r3d_draw(env.body_vis, ex, ey, ez, eyaw, 0.0, 0.0, 1.0)
+            r3d_draw(env.head_vis, ex, ey + 0.85, ez, eyaw, 0.0, 0.0, 1.0)
+        }
+        }   // close: if r_alive
+        slot = slot + 1
+    }
+    pi = pi + 1
+}
+
+// ---- First-person weapon viewmodel: the equipped gun (or the katana mid-swing),
+// built from boxes and pinned to the camera. Master offset bor/bou/bof = right/down/fwd.
+if cs.dead == false {
+    let vex = px + sjx
+    let vey = eye + sjy
+    let vez = pz + sjz
+    let vrgt = sqrt(fx * fx + fz * fz)
+    let mut vrx = 1.0
+    let mut vrz = 0.0
+    if vrgt > 0.001 { vrx = (0.0 - fz) / vrgt; vrz = fx / vrgt }
+    let vux = 0.0 - vrz * fy
+    let vuy = vrgt
+    let vuz = vrx * fy
+    let byaw = atan2(fx, fz)
+    let bpitch = 0.0 - eff_pitch
+    let recoil = cs.actors[5].fcd * 0.5         // gun kicks back briefly after each shot
+    let bor = 0.16                            // right
+    let mut bou = 0.0 - 0.15                  // down
+    let mut bof = 0.40 - recoil               // forward
+    // Reload: cs.dip the gun down + back, then bring it up again (a bump over the reload time).
+    if cs.actors[5].rl > 0.0 {
+        let rfr = cs.actors[5].rl / env.reload_w[cs.actors[5].wpn]
+        let rdip = sin(rfr * 3.14159) * 0.34
+        bou = bou - rdip
+        bof = bof - rdip * 0.25
+    }
+    if cs.actors[5].heal > 0.0 {
+        // SHIELD-UP: hold the blue energy cube up in view while channeling a shield-apply.
+        // The weapon is stowed (you can't fire mid-channel); the cube charges - it grows +
+        // spins as the channel fills. This is the first-person half of the shield-up anim
+        // (the third-person half rides meta 16 so other players read the vulnerable channel).
+        let chp = cs.actors[5].heal / env.heal_channel               // 0 -> 1 channel progress
+        let bob = sin(cs.etime * 6.0) * 0.02
+        let cu = bou + 0.04 + bob                             // a bit DOWN (was up + centred)
+        let cf = bof + 0.20                                   // pushed FURTHER out in front
+        let cr = bor - 0.05
+        let scx = vex + vrx * cr + vux * cu + fx * cf
+        let scy = vey + vuy * cu + fy * cf
+        let scz = vez + vrz * cr + vuz * cu + fz * cf
+        r3d_draw(env.shieldcube_vis, scx, scy, scz, cs.etime * 1.6, cs.etime * 1.2, 0.0, 0.8 + chp * 0.3)
+    } else {
+        let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
+        if katana_on {
+            // A real diagonal slash: the blade sweeps upper-right -> lower-left AND tilts down
+            // through the arc (the mesh isn't rigged, so we animate its whole transform).
+            let sp = (cs.melee_cd - (env.melee_cooldown - 0.35)) / 0.35   // 1 -> 0 over the slash
+            let prog = 1.0 - sp
+            let swr = bor + 0.30 - prog * 0.46
+            let swu = bou + 0.26 - prog * 0.44
+            let swp = (0.5 - sp) * 1.6                             // blade pitches down through it
+            let swrl = (sp - 0.5) * 1.4                            // and rolls into the cut
+            let kx = vex + vrx * swr + vux * swu + fx * bof
+            let ky = vey + vuy * swu + fy * bof
+            let kz = vez + vrz * swr + vuz * swu + fz * bof
+            r3d_draw(env.vm_katana, kx, ky, kz, byaw + env.kat_yaw, bpitch + env.kat_pitch + swp, env.kat_roll + swrl, env.kat_scale)
+        } else {
+            let wx = vex + vrx * bor + vux * bou + fx * bof
+            let wy = vey + vuy * bou + fy * bof
+            let wz = vez + vrz * bor + vuz * bou + fz * bof
+            if cs.actors[5].wpn == 0 {
+                r3d_draw(env.vm_rifle, wx, wy, wz, byaw + env.gun_yaw, bpitch + env.gun_pitch, env.gun_roll, env.rifle_scale)
+            } else {
+                r3d_draw(env.vm_launcher, wx, wy, wz, byaw + env.gun_yaw, bpitch + env.gun_pitch, env.gun_roll, env.lnch_scale)
+            }
+        }
+    }
+}
+
+// Impact env.spark for a few frames after the player's shot (the tracer line itself is
+// now drawn by the unified tracer ring below, so it isn't drawn twice).
+if cs.hit_t > 0.0 {
+    r3d_draw_billboard(env.spark, cs.hxp, cs.hyp, cs.hzp, 0.3)
+    cs.hit_t = cs.hit_t - dt
+}
+// REMOTE shot effects: the host announces every shot (its own + bots + relayed client
+// shots) over the net, so every machine draws the tracer + plays the fire sound for shots
+// that AREN'T its own (own shots are predicted locally) and - on the host - aren't its
+// bots' (already drawn in the combat loop). This is what makes other players' fire
+// visible + audible. Drained (and, on the host, broadcast) by net_shots_clear below.
+let scn = net_shot_count()
+let mut sci = 0
+// Track the incoming shot whose ENDPOINT lands nearest me, so if I took damage this frame
+// (cs.g_hurt, set when my hp reconciled DOWN) I can aim the directional damage vignette at
+// whoever shot me - this is what gives a GUEST a directional hit indicator (the host/bots
+// damage a guest over the wire, so the local hit loop that normally sets cs.dmg_dir never runs).
+let mut hd_best = 7.0       // distance^2 threshold (~2.6m): the shot must actually reach me
+let mut hd_ox = 0.0
+let mut hd_oz = 0.0
+let mut hd_found = 0
+while sci < scn {
+    let ssh = net_shot_shooter(sci)
+    let mut show = 1
+    if ssh == net_my_id() { show = 0 }
+    if show == 1 {
+        let sx1 = net_shot_field(sci, 0)
+        let sy1 = net_shot_field(sci, 1)
+        let sz1 = net_shot_field(sci, 2)
+        let ex2 = net_shot_field(sci, 3)
+        let ey2 = net_shot_field(sci, 4)
+        let ez2 = net_shot_field(sci, 5)
+        cs.trx1[cs.trcur] = sx1; cs.try1[cs.trcur] = sy1; cs.trz1[cs.trcur] = sz1
+        cs.trx2[cs.trcur] = ex2; cs.try2[cs.trcur] = ey2; cs.trz2[cs.trcur] = ez2
+        cs.trlife[cs.trcur] = 0.06
+        cs.trcur = cs.trcur + 1
+        if cs.trcur >= env.tracer_n { cs.trcur = 0 }
+        play_sound_at(2, 26, 6, sx1, sy1, sz1)   // remote rifle crack at the muzzle
+        let edx = ex2 - px
+        let edy = ey2 - eye
+        let edz = ez2 - pz
+        let edd = edx * edx + edy * edy + edz * edz
+        if edd < hd_best { hd_best = edd; hd_ox = sx1; hd_oz = sz1; hd_found = 1 }
+    }
+    sci = sci + 1
+}
+// If I was hit this frame and an incoming shot reached me, point the damage vignette at its
+// origin (same cs.screen-angle convention as the local-hit indicator). Else leave cs.dmg_dir as-is
+// (e.g. explosion damage has no tracer - the red flash still plays, just not redirected).
+if cs.g_hurt == 1 and hd_found == 1 {
+    let rcx = hd_ox - px
+    let rcz = hd_oz - pz
+    let fwd_c = rcx * sin(cs.yaw) + rcz * (0.0 - cos(cs.yaw))
+    let rgt_c = rcx * cos(cs.yaw) + rcz * sin(cs.yaw)
+    cs.dmg_dir = atan2(rgt_c, fwd_c)
+}
+cs.g_hurt = 0
+net_shots_clear()
+// REMOTE explosions: the host announces every detonation (its own + each client's re-simmed
+// rocket/grenade) so EVERY machine renders the flash + sparks + boom sound for blasts it
+// did NOT cause (source != my id - my own blast was already predicted locally in the cs.explode
+// handler). This is what finally lets guests SEE + HEAR explosions, and lets the host see
+// guests' explosions. Visual/audio only; the damage is authoritative on the host.
+let nbm = net_boom_count()
+let mut bmi = 0
+while bmi < nbm {
+    if net_boom_source(bmi) != net_my_id() {
+        let rbx = net_boom_field(bmi, 0)
+        let rby = net_boom_field(bmi, 1)
+        let rbz = net_boom_field(bmi, 2)
+        let rbi = net_boom_field(bmi, 3)
+        cs.boom_t = 0.6
+        cs.boom_int = rbi
+        cs.boomx = rbx
+        cs.boomy = rby
+        cs.boomz = rbz
+        let mut rbp = 0
+        while rbp < 16 {
+            cs.ppx[cs.pcur] = rbx; cs.ppy[cs.pcur] = rby; cs.ppz[cs.pcur] = rbz
+            let rba = (rbp as f64) * 0.92
+            cs.pvx[cs.pcur] = cos(rba) * 8.5 * rbi
+            cs.pvy[cs.pcur] = 4.0 * rbi + sin(rba * 1.7) * 3.5
+            cs.pvz[cs.pcur] = sin(rba) * 8.5 * rbi
+            cs.plife[cs.pcur] = 0.5
+            cs.pcur = cs.pcur + 1
+            if cs.pcur >= 28 { cs.pcur = 0 }
+            rbp = rbp + 1
+        }
+        play_sound_at(0 - 30, 150, 90, rbx, rby, rbz)   // foreground boom (3D)
+        play_sound_at(0 - 16, 70, 70, rbx, rby, rbz)    // positional crack layer
+        let rpbx = px - rbx
+        let rpby = py - rby
+        let rpbz = pz - rbz
+        let rpbd = sqrt(rpbx * rpbx + rpby * rpby + rpbz * rpbz)
+        let rshrad = 14.0 * rbi
+        if rpbd < rshrad {
+            let rbn = 1.0 - rpbd / rshrad
+            let rbshake = rbn * rbn * 1.4 * rbi
+            if cs.shake < rbshake { cs.shake = rbshake }
+        }
+        // Fling nearby boxes from this REMOTE blast too - SHARED impulse, so another player's
+        // explosion shoves the boxes the same way on our cs.screen as on the host (once per boom).
+        let mut rck = 0
+        while rck < env.crate_n {
+            sim::crate_blast_impulse(env.crates[rck] as i64, rbx, rby, rbz, rbi)
+            rck = rck + 1
+        }
+    }
+    bmi = bmi + 1
+}
+net_booms_clear()   // host: broadcast this frame's booms then clear; client: clear the batch
+// Bullet tracers from bots (and anyone else) so you SEE incoming/passing shots.
+let mut tri = 0
+while tri < env.tracer_n {
+    if cs.trlife[tri] > 0.0 {
+        r3d_debug_line(cs.trx1[tri], cs.try1[tri], cs.trz1[tri], cs.trx2[tri], cs.try2[tri], cs.trz2[tri], 1.0, 0.8, 0.35)
+        cs.trlife[tri] = cs.trlife[tri] - dt
+    }
+    tri = tri + 1
+}
+// Grapple ropes - ONE pass for EVERY actor (you, the bots, remote players). A cyan
+// line from the grappler to its anchor. Your own starts at the hand (first-person);
+// everyone else's starts at their body.
+let mut gri = 0
+while gri < env.nactors {
+    if cs.actors[gri].gat > 0.0 {
+        let mut rox = px + fx * 0.4
+        let mut roy = eye - 0.12
+        let mut roz = pz + fz * 0.4
+        if gri != env.pl_i {
+            let grh = cs.actors[gri].hdl as i64
+            rox = phys3d_x(grh); roy = phys3d_y(grh) + 1.0; roz = phys3d_z(grh)
+        }
+        r3d_debug_line(rox, roy, roz, cs.actors[gri].gax, cs.actors[gri].gay, cs.actors[gri].gaz, 0.55, 0.9, 1.0)
+        cs.actors[gri].gat = cs.actors[gri].gat - dt
+    }
+    gri = gri + 1
+}
+
+// Impact env.spark particles: integrate (with a little gravity) and draw,
+// shrinking as they fade so the burst reads as a clean little pop.
+let mut pp = 0
+while pp < 28 {
+    if cs.plife[pp] > 0.0 {
+        cs.plife[pp] = cs.plife[pp] - dt
+        cs.ppx[pp] = cs.ppx[pp] + cs.pvx[pp] * dt
+        cs.ppy[pp] = cs.ppy[pp] + cs.pvy[pp] * dt
+        cs.ppz[pp] = cs.ppz[pp] + cs.pvz[pp] * dt
+        cs.pvy[pp] = cs.pvy[pp] - 9.0 * dt
+        let mut psz = cs.plife[pp] * 0.45
+        if psz > 0.16 { psz = 0.16 }
+        if psz > 0.0 {
+            r3d_draw_billboard(env.spark, cs.ppx[pp], cs.ppy[pp], cs.ppz[pp], psz)
+        }
+    }
+    pp = pp + 1
+}
+
+// Grenade explosion: a brief white flash, a lumpy cluster of orange fireball
+// puffs that bloom then dissipate, and dark smoke that rises and lingers - all
+// driven off cs.boom_t. Billboards have no alpha, so each element fades by easing
+// its size to zero on a sin "bell" (0 -> peak -> 0); the offset cluster of
+// puffs reads as an irregular cloud instead of one growing quad. Drawn here
+// (late, with the other billboards) for correct transparency.
+if cs.boom_t > 0.0 {
+    cs.boom_t = cs.boom_t - dt
+    let age = 0.6 - cs.boom_t
+    let bi = cs.boom_int   // intensity scales every billboard's size + spread
+    // White-hot flash: large and gone fast.
+    if age < 0.12 {
+        r3d_draw_billboard(env.flash_vis, cs.boomx, cs.boomy, cs.boomz, 3.6 * bi * (1.0 - age / 0.12))
+    }
+    // Core fireball: blooms then collapses.
+    if age < 0.32 {
+        r3d_draw_billboard(env.fire_vis, cs.boomx, cs.boomy, cs.boomz, 2.6 * bi * sin(age / 0.32 * 3.14159))
+    }
+    // Fireball puffs: fixed angles, pushed outward as they age, lumpy sizes.
+    let mut fp = 0
+    while fp < 7 {
+        let fa = (fp as f64) * 0.8976
+        let pr = 0.5 + ((fp % 3) as f64) * 0.35
+        let spread = pr * (0.5 + age * 2.2) * bi
+        let pufx = cs.boomx + cos(fa) * spread
+        let pufy = cs.boomy + (((fp % 2) as f64) - 0.3) * 0.5 + age * 0.6
+        let pufz = cs.boomz + sin(fa) * spread
+        let pl = 0.34 + ((fp % 2) as f64) * 0.08
+        if age < pl {
+            let psz = (0.9 + ((fp % 3) as f64) * 0.35) * bi * sin(age / pl * 3.14159)
+            if (fp % 2) == 0 {
+                r3d_draw_billboard(env.fire_vis, pufx, pufy, pufz, psz)
+            } else {
+                r3d_draw_billboard(env.fire2_vis, pufx, pufy, pufz, psz)
+            }
+        }
+        fp = fp + 1
+    }
+    // Smoke: a few dark puffs that rise and linger the full duration.
+    let st = age / 0.6
+    if st < 1.0 {
+        let mut sp2 = 0
+        while sp2 < 4 {
+            let sa = (sp2 as f64) * 1.57
+            let smx = cs.boomx + cos(sa) * (0.4 + age * 1.0) * bi
+            let smy = cs.boomy + 0.3 + age * 2.0
+            let smz = cs.boomz + sin(sa) * (0.4 + age * 1.0) * bi
+            r3d_draw_billboard(env.smoke_vis, smx, smy, smz, (0.7 + ((sp2 % 2) as f64) * 0.5) * bi * sin(st * 3.14159))
+            sp2 = sp2 + 1
+        }
+    }
+}
+
+// HUD: crosshair + a horizontal speed bar; turns gold while wallrunning.
+clear(0, 0, 0)
+// (Hit flash + low-health vignette are now the GPU damage shader, above.)
+// Crosshair: drawn from the player's customisable cs.settings (editor in SETTINGS).
+clienthud::draw_crosshair(cx, cy, cs.ch_size, cs.ch_gap, cs.ch_thick, cs.ch_dot, cs.ch_r, cs.ch_g, cs.ch_b)
+// BUILD STAMP (bright green, top-left): confirms which binary is actually running.
+// If this text is missing or says an older tag, you are running a STALE exe.
+draw_text(12, 12, "BUILD NETV2-22 host==guest + bot shield-AI", 18, 65280)
+// GUEST join/disconnect banner: "joining" until the host inits our character, and a clear
+// "disconnected" -> back to the menu if the host vanishes (net_connected goes false).
+if cs.net_mode == 2 {
+    if cs.g_joined == 0 {
+        draw_text(cx - text_width("JOINING LOBBY...", 30) / 2, cy - 30, "JOINING LOBBY...", 30, 255 * 65536 + 200 * 256 + 60)
+    } else {
+        if net_connected() == 0 {
+            cs.g_disc_t = cs.g_disc_t + dt
+            draw_text(cx - text_width("DISCONNECTED FROM HOST", 30) / 2, cy - 30, "DISCONNECTED FROM HOST", 30, 235 * 65536 + 70 * 256 + 60)
+            if cs.g_disc_t > 2.0 { net_leave(); cs.screen = env.s_title; cs.net_started = false }
+        } else {
+            cs.g_disc_t = 0.0
+        }
+    }
+}
+let vx = net_local_state(4)
+let vz = net_local_state(6)
+let spd = sqrt(vx * vx + vz * vz)
+
+// Wind/speed lines via the engine's procedural SHADER pass (soft, diffuse
+// white streaks at the edges, fading to a clear centre - r3d_speedlines).
+// We just feed it an intensity: slide = speed-scaled (held), dash = a one-
+// time burst, smoothed so it eases in/out.
+let mut wtarget = 0.0
+// Speed-scaled wind: only while sliding normally, but ALWAYS while overclocked
+// (still scaling with your actual speed, not a flat max).
+if net_local_state(12) > 0.5 or cs.oc_active {
+    wtarget = (spd - 5.0) * 0.085
+    if wtarget < 0.0 { wtarget = 0.0 }
+}
+if cs.dashwind > wtarget { wtarget = cs.dashwind }
+if wtarget > 1.0 { wtarget = 1.0 }
+let mut wk = 0.5
+if wtarget < cs.windlvl { wk = 0.05 }
+cs.windlvl = cs.windlvl + (wtarget - cs.windlvl) * wk
+r3d_speedlines(cs.windlvl, cs.etime)
+
+let mut bar = (spd * 18.0) as i64
+if bar > cs.fbw - 80 { bar = cs.fbw - 80 }
+let mut cr = 165       // grey speed bar (so it isn't confused with the blue shield bar)
+let mut cg = 170
+let mut cb = 178
+if net_local_state(23) > 0.5 {
+    cr = 255           // gold while wallrunning
+    cg = 200
+    cb = 60
+}
+let mut b = 0
+while b < bar {
+    let mut vrow = 0
+    while vrow < 8 { pixel(40 + b, cs.fbh - 53 + vrow, cr, cg, cb); vrow = vrow + 1 }
+    b = b + 1
+}
+
+// AUTHORITATIVE HIT FEEDBACK: the host validates our shots with lag-comp against the
+// SAME capsule we raycast, rewound to the tick we were looking at - the correct answer,
+// more so than our own local ray (remote render-cs.actors lag ~1 frame, missing fast guests).
+// When the host confirms a fresh hit (the seq bumps) on a real combatant that our local
+// prediction didn't already flash, show the hitmarker so the shot reads true.
+if cs.net_mode == 2 {
+    let hs = net_hit_seq()
+    if hs != cs.g_hit_seq {
+        cs.g_hit_seq = hs
+        let shv = net_hit_player()
+        if shv >= 0 and shv < 2000 and cs.hitmark <= 0.0 { cs.hitmark = 0.18; play_noise(45, 14) }
+    }
+}
+
+// Hitmarker: four short diagonal ticks around the crosshair (COD-style).
+// White on a normal hit, RED and bigger on a kill. Both count down.
+if cs.hitmark > 0.0 or cs.killmark > 0.0 {
+    let mut mr = 235
+    let mut mg = 235
+    let mut mb = 235
+    let mut len = 4
+    if cs.killmark > 0.0 {
+        mr = 255
+        mg = 55
+        mb = 55
+        len = 6
+    }
+    let gap = 4
+    let mut d = 0
+    while d <= len {
+        pixel(cx + gap + d, cy + gap + d, mr, mg, mb)
+        pixel(cx - gap - d, cy + gap + d, mr, mg, mb)
+        pixel(cx + gap + d, cy - gap - d, mr, mg, mb)
+        pixel(cx - gap - d, cy - gap - d, mr, mg, mb)
+        d = d + 1
+    }
+    cs.hitmark = cs.hitmark - dt
+    cs.killmark = cs.killmark - dt
+}
+
+// Health (green) + shield (cyan) bars, bottom-left.
+let mut hwi = (cs.actors[5].hp / env.php_max * 300.0) as i64
+if hwi < 0 { hwi = 0 }
+let mut hb2 = 0
+while hb2 < hwi {
+    let mut hrow = 0
+    while hrow < 11 { pixel(40 + hb2, cs.fbh - 25 + hrow, 70, 210, 90); hrow = hrow + 1 }
+    hb2 = hb2 + 1
+}
+let mut swi = (cs.actors[5].sh / env.psh_max * 300.0) as i64
+if swi < 0 { swi = 0 }
+if swi > 300 { swi = 300 }   // overshield reads as a full bar
+let mut sb2 = 0
+while sb2 < swi {
+    let mut srow = 0
+    while srow < 11 { pixel(40 + sb2, cs.fbh - 39 + srow, 120, 200, 255); srow = srow + 1 }
+    sb2 = sb2 + 1
+}
+// Shield CELLS carried (Apex-style): cyan pips right of the (wider) shield bar.
+let mut cc = 0
+while cc < cs.actors[5].cells {
+    let cpx = 352 + cc * 16
+    let mut cpy = 0
+    while cpy < 11 {
+        let mut cpw = 0
+        while cpw < 12 {
+            pixel(cpx + cpw, cs.fbh - 39 + cpy, 90, 215, 255)
+            cpw = cpw + 1
+        }
+        cpy = cpy + 1
+    }
+    cc = cc + 1
+}
+// Shield-apply channel: a progress bar under the crosshair while channeling.
+if cs.actors[5].heal > 0.0 {
+    let hw = ((1.0 - cs.actors[5].heal / env.heal_channel) * 120.0) as i64
+    let mut hbi = 0
+    while hbi < hw {
+        pixel(cx - 60 + hbi, cy + 44, 120, 220, 255)
+        pixel(cx - 60 + hbi, cy + 45, 120, 220, 255)
+        pixel(cx - 60 + hbi, cy + 46, 120, 220, 255)
+        hbi = hbi + 1
+    }
+}
+
+// Frag grenade readiness (bottom-left, above the bars): a label that is green
+// when ready, grey while busy, with a fill bar as the cooldown recharges.
+let mut fragcol = 70 * 65536 + 220 * 256 + 110
+if cs.nade_cd > 0.0 or cs.nade_live { fragcol = 110 * 65536 + 110 * 256 + 120 }
+draw_text(40, cs.fbh - 78, "FRAG", 20, fragcol)
+if cs.nade_cd > 0.0 {
+    let fcw = ((1.0 - cs.nade_cd / env.nade_cooldown) * 80.0) as i64
+    let mut fcb = 0
+    while fcb < fcw {
+        pixel(40 + fcb, cs.fbh - 52, 80, 200, 120)
+        pixel(40 + fcb, cs.fbh - 51, 80, 200, 120)
+        fcb = fcb + 1
+    }
+}
+
+// FFA HUD: round timer (big, top-centre) + cs.kills / target below it.
+let col_white = 255 * 65536 + 255 * 256 + 255
+let col_gold = 255 * 65536 + 200 * 256 + 60
+draw_int(cx - 30, 12, cs.round_timer as i64, 44, col_white)
+draw_int(cx - 46, 66, cs.kills, 26, col_gold)
+draw_text(cx - 6, 66, "/", 26, col_white)
+draw_int(cx + 14, 66, cs.kill_target, 26, col_white)
+// MP roster: everyone on the wire is just a combatant, so show one total.
+if cs.net_started {
+    draw_text(cs.fbw - 168, 18, "in match ", 16, col_gold)
+    draw_int(cs.fbw - 96, 18, net_player_count(), 16, col_white)
+}
+
+// Kill feed (top-right): "KILLER > VICTIM". Decrement every timer FIRST so expiry
+// is independent of draw order, then draw the still-active entries packed into
+// consecutive rows (oldest on top, newest at the bottom) so there are never gaps -
+// when any entry fades the ones below it shift up. Each row is right-aligned to a
+// fixed margin so long names can never run off the right edge.
+let mut kfd = 0
+while kfd < 6 { if cs.kf_time[kfd] > 0.0 { cs.kf_time[kfd] = cs.kf_time[kfd] - dt } kfd = kfd + 1 }
+let mut krow = 0
+let mut ko = 0
+while ko < 6 {
+    let ksl = (cs.kf_cur + ko) % 6   // start at the oldest active slot, walk to newest
+    if cs.kf_time[ksl] > 0.0 {
+        let kfy = 92 + krow * 24
+        // Entries from a host kill event carry NET ids (kf_*_pid >= 0); local/practice
+        // entries carry actor slots. Resolve the name + "is it me" the matching way.
+        let myid = net_my_id()
+        let mut kn = ""
+        let mut vn = ""
+        let mut kpid2 = 0
+        let mut vpid2 = 0
+        if cs.kf_killer_pid[ksl] >= 0 {
+            kn = clienthud::name_from_pid(cs.kf_killer_pid[ksl], myid, cs.username, cs.uname_len)
+            vn = clienthud::name_from_pid(cs.kf_victim_pid[ksl], myid, cs.username, cs.uname_len)
+            kpid2 = cs.kf_killer_pid[ksl]; vpid2 = cs.kf_victim_pid[ksl]
+        } else {
+            kn = clienthud::slot_name(cs.kf_killer[ksl], env.pl_i, cs.username, cs.uname_len, cs.apid)
+            vn = clienthud::slot_name(cs.kf_victim[ksl], env.pl_i, cs.username, cs.uname_len, cs.apid)
+            kpid2 = clienthud::actor_netid(cs.kf_killer[ksl], env.pl_i, cs.apid, myid)
+            vpid2 = clienthud::actor_netid(cs.kf_victim[ksl], env.pl_i, cs.apid, myid)
+        }
+        let kw = text_width(kn, 18)
+        // Killer + victim drawn in their OWN unique colours (same palette as the scoreboard
+        // + overclock glow), so you can tell at a glance who got whom.
+        let kc = clienthud::pcolor(kpid2)
+        let vc = clienthud::pcolor(vpid2)
+        draw_text(16, kfy, kn, 18, kc)
+        draw_text(16 + kw, kfy, " > ", 18, col_white)
+        draw_text(16 + kw + text_width(" > ", 18), kfy, vn, 18, vc)
+        krow = krow + 1
+    }
+    ko = ko + 1
+}
+
+// Scoreboard (hold TAB): name | K | D for the player + active bots + remotes, cs.kills desc.
+if key_down(13) > 0 {
+    // Kills/cs.deaths per slot: host-authoritative in MP (replicated meta 6/7), local in
+    // practice. So the scoreboard is identical on every machine.
+    let mut sbk = [0; 9]
+    let mut sbd = [0; 9]
+    let mut sbi = 0
+    while sbi < env.nactors {
+        if cs.net_started and (cs.net_mode != 1 or sbi >= env.bot_n) {
+            // Player + networked cs.actors: read the replicated, host-authoritative score.
+            let mut spid = cs.apid[sbi]
+            if sbi == env.pl_i { spid = net_my_id() }
+            sbk[sbi] = net_player_meta(spid, 6) as i64
+            sbd[sbi] = net_player_meta(spid, 7) as i64
+        } else {
+            // HOST's LOCAL bots (slots 0..env.bot_n-1) - their cs.apid isn't a real net id, so read
+            // their score straight from the local cs.akills/cs.adeaths (also the practice path).
+            sbk[sbi] = cs.akills[sbi]; sbd[sbi] = cs.adeaths[sbi]
+        }
+        sbi = sbi + 1
+    }
+    let mut order = [0; 9]
+    let mut ocount = 0
+    let mut si = 0
+    while si < env.nactors {
+        // Include me, any networked actor (remote human OR, on a guest, a bot - cs.apid set),
+        // and host/practice local bots. This is what was missing the guest's pool slots.
+        let mut act = 0
+        if si == env.pl_i { act = 1 }
+        if cs.apid[si] != 9999 { act = 1 }
+        if si < active_bots { act = 1 }
+        if act == 1 { order[ocount] = si; ocount = ocount + 1 }
+        si = si + 1
+    }
+    let mut a = 0
+    while a < ocount {
+        let mut best = a
+        let mut b = a + 1
+        while b < ocount {
+            if sbk[order[b]] > sbk[order[best]] { best = b }
+            b = b + 1
+        }
+        let tmp = order[a]; order[a] = order[best]; order[best] = tmp
+        a = a + 1
+    }
+    let lx = cx - 220
+    let ly = 110
+    let lh = 64 + ocount * 32
+    // Transparent panel: a 50% checkerboard dim (the game shows through the gaps).
+    let mut spy = ly
+    while spy < ly + lh {
+        let mut sbx = lx
+        while sbx < lx + 440 {
+            if (sbx + spy) % 2 == 0 { pixel(sbx, spy, 6, 8, 12) }
+            sbx = sbx + 1
+        }
+        spy = spy + 1
+    }
+    draw_text(lx + 20, ly + 14, "SCOREBOARD", 26, col_gold)
+    draw_text(lx + 300, ly + 20, "K", 20, col_white)
+    draw_text(lx + 370, ly + 20, "D", 20, col_white)
+    let mut row = 0
+    while row < ocount {
+        let s = order[row]
+        let ry = ly + 54 + row * 32
+        let nm = clienthud::slot_name(s, env.pl_i, cs.username, cs.uname_len, cs.apid)
+        // Each row in that player's unique colour - actor_netid gives the SAME net id on
+        // every machine (self via myid), so the colour matches the model + killfeed + glow.
+        let rc = clienthud::pcolor(clienthud::actor_netid(s, env.pl_i, cs.apid, net_my_id()))
+        draw_text(lx + 20, ry, nm, 22, rc)
+        draw_int(lx + 300, ry, sbk[s], 22, rc)
+        draw_int(lx + 370, ry, sbd[s], 22, rc)
+        row = row + 1
+    }
+}
+
+// Round over: a coloured top/bottom border + big WIN/LOSE + the final cs.kills.
+if cs.round_over {
+    let mut rr = 80
+    let mut rg = 210
+    let mut rb2 = 90
+    if cs.won == false { rr = 225; rg = 70; rb2 = 60 }
+    let mut fxo = 0
+    while fxo < cs.fbw {
+        let mut t = 0
+        while t < 8 {
+            pixel(fxo, t, rr, rg, rb2)
+            pixel(fxo, cs.fbh - 1 - t, rr, rg, rb2)
+            t = t + 1
+        }
+        fxo = fxo + 1
+    }
+    let bcol = rr * 65536 + rg * 256 + rb2
+    if cs.won {
+        draw_text(cx - 70, cy - 60, "WIN", 70, bcol)
+    } else {
+        draw_text(cx - 95, cy - 60, "LOSE", 70, bcol)
+    }
+    draw_int(cx - 18, cy + 30, cs.kills, 40, col_white)
+}
+
+// Ammo: LOADED / RESERVE, bottom-right. Loaded turns red when dry; reserve dim.
+let col_ammo = 230 * 65536 + 230 * 256 + 235
+let mut ammo_col = col_ammo
+if cs.actors[5].mag[cs.actors[5].wpn] == 0 { ammo_col = 230 * 65536 + 70 * 256 + 60 }
+// Current cs.actors[5].wpn name above the ammo (rifle gold-ish, launcher magenta).
+if cs.actors[5].wpn == 0 {
+    draw_text(cs.fbw - 150, cs.fbh - 84, "RIFLE", 22, 230 * 65536 + 220 * 256 + 150)
+} else {
+    draw_text(cs.fbw - 175, cs.fbh - 84, "LAUNCHER", 22, 255 * 65536 + 120 * 256 + 230)
+}
+draw_int(cs.fbw - 150, cs.fbh - 56, cs.actors[5].mag[cs.actors[5].wpn], 36, ammo_col)
+draw_text(cs.fbw - 96, cs.fbh - 50, "/", 26, col_white)
+draw_int(cs.fbw - 78, cs.fbh - 50, cs.actors[5].res[cs.actors[5].wpn], 26, 150 * 65536 + 150 * 256 + 160)
+if cs.actors[5].rl > 0.0 {
+    let rw = ((1.0 - cs.actors[5].rl / env.reload_w[cs.actors[5].wpn]) * 110.0) as i64
+    let mut rb3 = 0
+    while rb3 < rw {
+        pixel(cs.fbw - 150 + rb3, cs.fbh - 14, 255, 200, 60)
+        pixel(cs.fbw - 150 + rb3, cs.fbh - 13, 255, 200, 60)
+        rb3 = rb3 + 1
+    }
+}
+
+// Death cs.screen: big "YOU DIED" + a respawn countdown (whole seconds).
+if cs.dead {
+    let col_red = 235 * 65536 + 70 * 256 + 60
+    draw_text(cx - text_width("YOU DIED", 56) / 2, cy - 70, "YOU DIED", 56, col_red)
+    draw_int(cx - 14, cy + 10, (cs.respawn_cd as i64) + 1, 50, col_white)
+}
+
+// OVERCLOCK meter: a gold bar, bottom-centre. While active it shows the time
+// left; full + ready shows the [F] prompt.
+let ocw = 300
+let ocx = cx - 150
+let ocy = cs.fbh - 72
+let mut obt = 0
+while obt < ocw {
+    pixel(ocx + obt, ocy, 45, 38, 22)
+    pixel(ocx + obt, ocy + 1, 45, 38, 22)
+    pixel(ocx + obt, ocy + 2, 45, 38, 22)
+    pixel(ocx + obt, ocy + 3, 45, 38, 22)
+    obt = obt + 1
+}
+let mut ocf = (cs.oc_meter / 100.0 * 300.0) as i64
+if cs.oc_active { ocf = (cs.oc_timer / 10.0 * 300.0) as i64 }
+if ocf > ocw { ocf = ocw }
+if ocf < 0 { ocf = 0 }
+let mut ofg = 200
+if cs.oc_active { ofg = 235 }
+let mut obf = 0
+while obf < ocf {
+    pixel(ocx + obf, ocy, 255, ofg, 70)
+    pixel(ocx + obf, ocy + 1, 255, ofg, 70)
+    pixel(ocx + obf, ocy + 2, 255, ofg, 70)
+    pixel(ocx + obf, ocy + 3, 255, ofg, 70)
+    obf = obf + 1
+}
+let col_oc = 255 * 65536 + 210 * 256 + 70
+if cs.oc_active {
+    draw_text(cx - text_width("OVERCLOCKED", 22) / 2, ocy - 28, "OVERCLOCKED", 22, col_oc)
+} else {
+    if cs.oc_meter >= 100.0 {
+        draw_text(cx - text_width("OVERCLOCK [F]", 22) / 2, ocy - 28, "OVERCLOCK [F]", 22, col_oc)
+    }
+}
+
+        // Pause overlay: drawn ON TOP of the (blurred) live scene. Escape toggles
+        // `paused` at the top of the loop; here we render the panel + buttons.
+        if paused {
+            let pmx = mouse_x()
+            let pmy = mouse_y()
+            let pmd = mouse_down()
+            let mut pclick = 0
+            if pmd > 0 and pmprev == 0 { pclick = 1 }
+            pmprev = pmd
+            // Dim translucent panel (checkerboard) behind the menu so it reads over
+            // the blur. Only ~400x260 px and only while paused (the sim is idle).
+            let plx = cx - 200
+            let ply = cy - 130
+            let mut qy = 0
+            while qy < 260 {
+                let mut qx = 0
+                while qx < 400 {
+                    if (plx + qx + ply + qy) % 2 == 0 { pixel(plx + qx, ply + qy, 5, 7, 11) }
+                    qx = qx + 1
+                }
+                qy = qy + 1
+            }
+            draw_text(cx - text_width("PAUSED", 46) / 2, ply + 20, "PAUSED", 46, col_gold)
+            if cs.net_mode != 0 { draw_text(cx - text_width("online - match still live", 16) / 2, ply + 74, "online - match still live", 16, col_white) }
+            if clienthud::menu_btn(cx - 110, ply + 110, 220, 44, pmx, pmy) == 1 { if pclick == 1 { paused = false; grab_mouse(1); input_suppress(0); r3d_blur(0.0); was_paused = false } }
+            clienthud::draw_centered("RESUME", cx - 110, ply + 110, 220, 44, 24, col_white)
+            if clienthud::menu_btn(cx - 110, ply + 168, 220, 44, pmx, pmy) == 1 { if pclick == 1 { if cs.net_started { net_leave() } input_suppress(0); r3d_blur(0.0); cs.screen = env.s_title; cs.net_started = false } }
+            clienthud::draw_centered("QUIT TO TITLE", cx - 110, ply + 168, 220, 44, 24, col_white)
+        }
+        if cs.screen != env.s_game { break }
     }
 }
