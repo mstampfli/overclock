@@ -319,6 +319,111 @@ struct ClientEnv {
     s_settings: i64
 }
 
+// The shared SETTINGS panel (sensitivity / volume / keybinds / display). Drawn both in the menu's
+// settings screen AND inline in the in-game pause overlay, so settings work mid-match without
+// leaving run_game (which would drop the frozen solo server). Returns 1 when BACK or Escape closes
+// it, else 0. The caller draws the menu-only "Crosshair editor" button separately. (mx,my,clicked)
+// are the active pointer for this context (menu mouse, or the pause overlay's edge-detected click).
+fn settings_panel(cs: ClientState, env: ClientEnv, mx: i64, my: i64, clicked: i64) -> i64 {
+    let cx = cs.fbw / 2
+    let wht = 255 * 65536 + 255 * 256 + 255
+    let gold = 255 * 65536 + 200 * 256 + 60
+    draw_text(cx - text_width("SETTINGS", 44) / 2, 30, "SETTINGS", 44, gold)
+    let sens_unit = 0.0001
+    let sens_max = 0.012
+    let cl = cx - 260
+    draw_text(cl, 108, "Sensitivity", 22, wht)
+    if clienthud::menu_btn(cl + 160, 104, 34, 30, mx, my) == 1 { if clicked == 1 { cs.sens = cs.sens - sens_unit; if cs.sens < sens_unit { cs.sens = sens_unit } } }
+    clienthud::draw_centered("-", cl + 160, 104, 34, 30, 22, wht)
+    let sbx = cl + 202
+    let sbw = 230
+    if clienthud::draw_bar(sbx, 108, sbw, 22, cs.sens / sens_max, mx, my) == 1 { if clicked == 1 { let sf = ((mx - sbx) as f64) / (sbw as f64) * sens_max; let slv = (sf / sens_unit + 0.5) as i64; cs.sens = (slv as f64) * sens_unit; if cs.sens < sens_unit { cs.sens = sens_unit } if cs.sens > sens_max { cs.sens = sens_max } } }
+    if clienthud::menu_btn(cl + 440, 104, 34, 30, mx, my) == 1 { if clicked == 1 { cs.sens = cs.sens + sens_unit; if cs.sens > sens_max { cs.sens = sens_max } } }
+    clienthud::draw_centered("+", cl + 440, 104, 34, 30, 22, wht)
+    draw_int(cl + 486, 108, (cs.sens / sens_unit + 0.5) as i64, 22, gold)
+    draw_text(cl, 158, "Volume", 22, wht)
+    if clienthud::menu_btn(cl + 160, 154, 34, 30, mx, my) == 1 { if clicked == 1 { cs.vol = cs.vol - 1; if cs.vol < 0 { cs.vol = 0 } audio_volume(cs.vol) } }
+    clienthud::draw_centered("-", cl + 160, 154, 34, 30, 22, wht)
+    let vbx = cl + 202
+    let vbw = 230
+    if clienthud::draw_bar(vbx, 158, vbw, 22, (cs.vol as f64) / 100.0, mx, my) == 1 { if clicked == 1 { let vf = ((mx - vbx) as f64) / (vbw as f64) * 100.0; cs.vol = vf as i64; if cs.vol < 0 { cs.vol = 0 } if cs.vol > 100 { cs.vol = 100 } audio_volume(cs.vol) } }
+    if clienthud::menu_btn(cl + 440, 154, 34, 30, mx, my) == 1 { if clicked == 1 { cs.vol = cs.vol + 1; if cs.vol > 100 { cs.vol = 100 } audio_volume(cs.vol) } }
+    clienthud::draw_centered("+", cl + 440, 154, 34, 30, 22, wht)
+    draw_int(cl + 486, 158, cs.vol, 22, gold)
+    draw_text(cl, 206, "Keybinds - click a box, then press a key", 18, gold)
+    let mut ki = 0
+    while ki < env.act_n {
+        let ry = 230 + ki * 26
+        clienthud::draw_action_name(ki, cl + 10, ry + 4, wht)
+        let mut kc = gold
+        if cs.rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
+        if clienthud::menu_btn(cl + 220, ry, 90, 24, mx, my) == 1 { if clicked == 1 { cs.rebind = ki; cs.rebind_armed = 0 } }
+        clienthud::draw_centered(clienthud::key_name(cs.bind_code[ki] as i64), cl + 220, ry, 90, 24, 18, kc)
+        ki = ki + 1
+    }
+    if cs.rebind > (0 - 1) {
+        if mouse_button(0) < 1 and mouse_button(1) < 1 and mouse_button(2) < 1 and mouse_button(3) < 1 and mouse_button(4) < 1 { cs.rebind_armed = 1 }
+        let mut kc2 = 0
+        let mut found = 0 - 1
+        if cs.rebind_armed == 1 {
+            while kc2 < 66 {
+                if key_down(kc2) > 0 and found < 0 { found = kc2 }
+                kc2 = kc2 + 1
+            }
+            if mouse_button(0) > 0 { found = 100 }
+            if mouse_button(1) > 0 { found = 101 }
+            if mouse_button(2) > 0 { found = 102 }
+            if mouse_button(3) > 0 { found = 103 }
+            if mouse_button(4) > 0 { found = 104 }
+        }
+        if found > (0 - 1) {
+            cs.bind_code[cs.rebind] = found as f64
+            input_bind(cs.rebind, found)
+            cs.rebind = 0 - 1
+            cs.settings[0] = cs.sens
+            cs.settings[1] = cs.vol as f64
+            let mut wi = 0
+            while wi < env.act_n { cs.settings[2 + wi] = cs.bind_code[wi]; wi = wi + 1 }
+            save_settings(cs.settings)
+        }
+    }
+    let mut dlabel = "Display: Windowed"
+    if cs.disp_mode == 1 { dlabel = "Display: Borderless" } else { if cs.disp_mode == 2 { dlabel = "Display: Fullscreen" } }
+    if clienthud::menu_btn(cx - 130, cs.fbh - 116, 260, 38, mx, my) == 1 { if clicked == 1 {
+            cs.disp_mode = cs.disp_mode + 1
+            if cs.disp_mode > 2 { cs.disp_mode = 0 }
+            window_fullscreen(cs.disp_mode)
+            cs.settings[18] = cs.disp_mode as f64
+            save_settings(cs.settings)
+    } }
+    clienthud::draw_centered(dlabel, cx - 130, cs.fbh - 116, 260, 38, 22, wht)
+    let mut closed = 0
+    if clienthud::menu_btn(cx - 60, cs.fbh - 62, 120, 44, mx, my) == 1 {
+        if clicked == 1 {
+            cs.settings[0] = cs.sens
+            cs.settings[1] = cs.vol as f64
+            let mut wi2 = 0
+            while wi2 < env.act_n { cs.settings[2 + wi2] = cs.bind_code[wi2]; wi2 = wi2 + 1 }
+            save_settings(cs.settings)
+            cs.rebind = 0 - 1
+            closed = 1
+        }
+    }
+    clienthud::draw_centered("BACK", cx - 60, cs.fbh - 62, 120, 44, 24, wht)
+    let esc_s = key_down(20)
+    if esc_s > 0 and cs.esc_prev == 0 and cs.rebind < 0 {
+        cs.settings[0] = cs.sens
+        cs.settings[1] = cs.vol as f64
+        let mut wi3 = 0
+        while wi3 < env.act_n { cs.settings[2 + wi3] = cs.bind_code[wi3]; wi3 = wi3 + 1 }
+        save_settings(cs.settings)
+        cs.rebind = 0 - 1
+        closed = 1
+    }
+    cs.esc_prev = esc_s
+    closed
+}
+
 // ---------- MENU (title / settings / pause / lobby / crosshair) ----------
 // One self-contained loop: draws the orbiting backdrop + the active menu screen, handles
 // its clicks/keys, and returns only once a non-menu screen is chosen (PLAY/RESUME -> game,
@@ -613,113 +718,11 @@ fn run_menu(cs: ClientState, env: ClientEnv) {
                         }
                         cs.esc_prev = esc_c
                     } else {
-                        draw_text(cx - text_width("SETTINGS", 44) / 2, 30, "SETTINGS", 44, gold)
-                        // Sensitivity: a bar adjusted in steps of EXACTLY 1 (one unit = 0.0001), so it
-                        // goes very low. -/+ step by one; clicking the bar jumps to that level.
-                        let sens_unit = 0.0001
-                        let sens_max = 0.012
-                        // Centred panel: everything is laid out from `cl` (a centred left edge) so the
-                        // whole cs.settings cs.screen sits in the middle of any window size.
-                        let cl = cx - 260
-                        draw_text(cl, 108, "Sensitivity", 22, wht)
-                        if clienthud::menu_btn(cl + 160, 104, 34, 30, mx, my) == 1 { if clicked == 1 { cs.sens = cs.sens - sens_unit; if cs.sens < sens_unit { cs.sens = sens_unit } } }
-                        clienthud::draw_centered("-", cl + 160, 104, 34, 30, 22, wht)
-                        let sbx = cl + 202
-                        let sbw = 230
-                        if clienthud::draw_bar(sbx, 108, sbw, 22, cs.sens / sens_max, mx, my) == 1 { if clicked == 1 { let sf = ((mx - sbx) as f64) / (sbw as f64) * sens_max; let slv = (sf / sens_unit + 0.5) as i64; cs.sens = (slv as f64) * sens_unit; if cs.sens < sens_unit { cs.sens = sens_unit } if cs.sens > sens_max { cs.sens = sens_max } } }
-                        if clienthud::menu_btn(cl + 440, 104, 34, 30, mx, my) == 1 { if clicked == 1 { cs.sens = cs.sens + sens_unit; if cs.sens > sens_max { cs.sens = sens_max } } }
-                        clienthud::draw_centered("+", cl + 440, 104, 34, 30, 22, wht)
-                        draw_int(cl + 486, 108, (cs.sens / sens_unit + 0.5) as i64, 22, gold)
-                        // Volume: a bar, 0..100, stepped by EXACTLY 1.
-                        draw_text(cl, 158, "Volume", 22, wht)
-                        if clienthud::menu_btn(cl + 160, 154, 34, 30, mx, my) == 1 { if clicked == 1 { cs.vol = cs.vol - 1; if cs.vol < 0 { cs.vol = 0 } audio_volume(cs.vol) } }
-                        clienthud::draw_centered("-", cl + 160, 154, 34, 30, 22, wht)
-                        let vbx = cl + 202
-                        let vbw = 230
-                        if clienthud::draw_bar(vbx, 158, vbw, 22, (cs.vol as f64) / 100.0, mx, my) == 1 { if clicked == 1 { let vf = ((mx - vbx) as f64) / (vbw as f64) * 100.0; cs.vol = vf as i64; if cs.vol < 0 { cs.vol = 0 } if cs.vol > 100 { cs.vol = 100 } audio_volume(cs.vol) } }
-                        if clienthud::menu_btn(cl + 440, 154, 34, 30, mx, my) == 1 { if clicked == 1 { cs.vol = cs.vol + 1; if cs.vol > 100 { cs.vol = 100 } audio_volume(cs.vol) } }
-                        clienthud::draw_centered("+", cl + 440, 154, 34, 30, 22, wht)
-                        draw_int(cl + 486, 158, cs.vol, 22, gold)
-                        // Keybinds: click a code box, then press a key.
-                        draw_text(cl, 206, "Keybinds - click a box, then press a key", 18, gold)
-                        let mut ki = 0
-                        while ki < env.act_n {
-                            let ry = 230 + ki * 26
-                            clienthud::draw_action_name(ki, cl + 10, ry + 4, wht)
-                            let mut kc = gold
-                            if cs.rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
-                            if clienthud::menu_btn(cl + 220, ry, 90, 24, mx, my) == 1 { if clicked == 1 { cs.rebind = ki; cs.rebind_armed = 0 } }
-                            clienthud::draw_centered(clienthud::key_name(cs.bind_code[ki] as i64), cl + 220, ry, 90, 24, 18, kc)
-                            ki = ki + 1
-                        }
-                        // Capture the next key for the action being rebound.
-                        if cs.rebind > (0 - 1) {
-                            // Arm only once the box-click LMB is released, then the next key OR mouse button
-                            // (LMB 100 / RMB 101 / MMB 102) becomes the bind.
-                            if mouse_button(0) < 1 and mouse_button(1) < 1 and mouse_button(2) < 1 and mouse_button(3) < 1 and mouse_button(4) < 1 { cs.rebind_armed = 1 }
-                            let mut kc2 = 0
-                            let mut found = 0 - 1
-                            if cs.rebind_armed == 1 {
-                                while kc2 < 66 {
-                                    if key_down(kc2) > 0 and found < 0 { found = kc2 }
-                                    kc2 = kc2 + 1
-                                }
-                                if mouse_button(0) > 0 { found = 100 }
-                                if mouse_button(1) > 0 { found = 101 }
-                                if mouse_button(2) > 0 { found = 102 }
-                                if mouse_button(3) > 0 { found = 103 }
-                                if mouse_button(4) > 0 { found = 104 }
-                            }
-                            if found > (0 - 1) {
-                                cs.bind_code[cs.rebind] = found as f64
-                                input_bind(cs.rebind, found)
-                                cs.rebind = 0 - 1
-                                cs.settings[0] = cs.sens
-                                cs.settings[1] = cs.vol as f64
-                                let mut wi = 0
-                                while wi < env.act_n { cs.settings[2 + wi] = cs.bind_code[wi]; wi = wi + 1 }
-                                save_settings(cs.settings)
-                            }
-                        }
-                        // Crosshair editor (its own cs.screen).
+                        let sret = settings_panel(cs, env, mx, my, clicked)
+                        // Crosshair editor (menu-only; its own screen).
                         if clienthud::menu_btn(cx - 130, cs.fbh - 160, 260, 38, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_crosshair } }
                         clienthud::draw_centered("Crosshair editor", cx - 130, cs.fbh - 160, 260, 38, 22, wht)
-                        // BACK (saves everything).
-                        // Display mode cycle: Windowed -> Borderless -> Fullscreen.
-                        let mut dlabel = "Display: Windowed"
-                        if cs.disp_mode == 1 { dlabel = "Display: Borderless" } else { if cs.disp_mode == 2 { dlabel = "Display: Fullscreen" } }
-                        if clienthud::menu_btn(cx - 130, cs.fbh - 116, 260, 38, mx, my) == 1 { if clicked == 1 {
-                                cs.disp_mode = cs.disp_mode + 1
-                                if cs.disp_mode > 2 { cs.disp_mode = 0 }
-                                window_fullscreen(cs.disp_mode)
-                                cs.settings[18] = cs.disp_mode as f64
-                                save_settings(cs.settings)
-                        } }
-                        clienthud::draw_centered(dlabel, cx - 130, cs.fbh - 116, 260, 38, 22, wht)
-                        if clienthud::menu_btn(cx - 60, cs.fbh - 62, 120, 44, mx, my) == 1 {
-                            if clicked == 1 {
-                                cs.settings[0] = cs.sens
-                                cs.settings[1] = cs.vol as f64
-                                let mut wi2 = 0
-                                while wi2 < env.act_n { cs.settings[2 + wi2] = cs.bind_code[wi2]; wi2 = wi2 + 1 }
-                                save_settings(cs.settings)
-                                cs.rebind = 0 - 1
-                                cs.screen = cs.set_back
-                            }
-                        }
-                        clienthud::draw_centered("BACK", cx - 60, cs.fbh - 62, 120, 44, 24, wht)
-                        // Escape also backs out one level (saves first; ignored mid-cs.rebind).
-                        let esc_s = key_down(20)
-                        if esc_s > 0 and cs.esc_prev == 0 and cs.rebind < 0 {
-                            cs.settings[0] = cs.sens
-                            cs.settings[1] = cs.vol as f64
-                            let mut wi3 = 0
-                            while wi3 < env.act_n { cs.settings[2 + wi3] = cs.bind_code[wi3]; wi3 = wi3 + 1 }
-                            save_settings(cs.settings)
-                            cs.rebind = 0 - 1
-                            cs.screen = cs.set_back
-                        }
-                        cs.esc_prev = esc_s
+                        if sret == 1 { cs.screen = cs.set_back }
         } } } }
         // Leave the menu loop only once a non-menu cs.screen is chosen: PLAY/RESUME ->
         // game, QUIT/window-close -> quit. title/cs.settings/pause keep looping here.
@@ -740,6 +743,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
     grab_mouse(1)               // capture the cursor for play
     cs.esc_prev = 1                // ignore an Escape still held from the menu
     let mut paused = false      // pause overlay open?
+    let mut pause_set = false   // in-pause settings panel open?
     let mut was_paused = false  // edge-detect for blur/grab/suppress transitions
     let mut pmprev = 0          // overlay click edge-detect
 
@@ -766,7 +770,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         // don't desync) - only the blurred backdrop + overlay menu show. The blur,
         // mouse-release and input-suppress are flipped once on each transition.
         let pesc = key_down(20)
-        if pesc > 0 and cs.esc_prev == 0 { if paused { paused = false } else { paused = true } }
+        if pesc > 0 and cs.esc_prev == 0 { if paused { paused = false; pause_set = false } else { paused = true } }
         cs.esc_prev = pesc
         // SOLO PAUSE: freeze the client sim too (the server freezes in parallel, signalled via meta 21
         // below). A tiny epsilon (not exactly 0) keeps any /dt division safe; net_send_input/net_update
@@ -3173,25 +3177,33 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let mut pclick = 0
             if pmd > 0 and pmprev == 0 { pclick = 1 }
             pmprev = pmd
-            // Dim translucent panel (checkerboard) behind the menu so it reads over
-            // the blur. Only ~400x260 px and only while paused (the sim is idle).
-            let plx = cx - 200
-            let ply = cy - 130
-            let mut qy = 0
-            while qy < 260 {
-                let mut qx = 0
-                while qx < 400 {
-                    if (plx + qx + ply + qy) % 2 == 0 { pixel(plx + qx, ply + qy, 5, 7, 11) }
-                    qx = qx + 1
+            if pause_set {
+                // Settings rendered INLINE - run_game keeps ticking, so the frozen solo server
+                // connection holds (leaving to the menu would drop it). BACK returns to the overlay.
+                if settings_panel(cs, env, pmx, pmy, pclick) == 1 { pause_set = false }
+            } else {
+                // Dim translucent panel (checkerboard) behind the menu so it reads over
+                // the blur. Only ~400x260 px and only while paused (the sim is idle).
+                let plx = cx - 200
+                let ply = cy - 130
+                let mut qy = 0
+                while qy < 260 {
+                    let mut qx = 0
+                    while qx < 400 {
+                        if (plx + qx + ply + qy) % 2 == 0 { pixel(plx + qx, ply + qy, 5, 7, 11) }
+                        qx = qx + 1
+                    }
+                    qy = qy + 1
                 }
-                qy = qy + 1
+                draw_text(cx - text_width("PAUSED", 46) / 2, ply + 18, "PAUSED", 46, col_gold)
+                if net_player_count() > 1 { draw_text(cx - text_width("online - match still live", 16) / 2, ply + 68, "online - match still live", 16, col_white) } else { draw_text(cx - text_width("practice - world frozen", 16) / 2, ply + 68, "practice - world frozen", 16, col_white) }
+                if clienthud::menu_btn(cx - 110, ply + 102, 220, 42, pmx, pmy) == 1 { if pclick == 1 { paused = false; pause_set = false; grab_mouse(1); input_suppress(0); r3d_blur(0.0); was_paused = false } }
+                clienthud::draw_centered("RESUME", cx - 110, ply + 102, 220, 42, 24, col_white)
+                if clienthud::menu_btn(cx - 110, ply + 152, 220, 42, pmx, pmy) == 1 { if pclick == 1 { pause_set = true } }
+                clienthud::draw_centered("SETTINGS", cx - 110, ply + 152, 220, 42, 24, col_white)
+                if clienthud::menu_btn(cx - 110, ply + 202, 220, 42, pmx, pmy) == 1 { if pclick == 1 { if cs.net_started { net_leave() } input_suppress(0); r3d_blur(0.0); cs.screen = env.s_title; cs.net_started = false } }
+                clienthud::draw_centered("QUIT TO TITLE", cx - 110, ply + 202, 220, 42, 24, col_white)
             }
-            draw_text(cx - text_width("PAUSED", 46) / 2, ply + 20, "PAUSED", 46, col_gold)
-            if net_player_count() > 1 { draw_text(cx - text_width("online - match still live", 16) / 2, ply + 74, "online - match still live", 16, col_white) } else { draw_text(cx - text_width("practice - world frozen", 16) / 2, ply + 74, "practice - world frozen", 16, col_white) }
-            if clienthud::menu_btn(cx - 110, ply + 110, 220, 44, pmx, pmy) == 1 { if pclick == 1 { paused = false; grab_mouse(1); input_suppress(0); r3d_blur(0.0); was_paused = false } }
-            clienthud::draw_centered("RESUME", cx - 110, ply + 110, 220, 44, 24, col_white)
-            if clienthud::menu_btn(cx - 110, ply + 168, 220, 44, pmx, pmy) == 1 { if pclick == 1 { if cs.net_started { net_leave() } input_suppress(0); r3d_blur(0.0); cs.screen = env.s_title; cs.net_started = false } }
-            clienthud::draw_centered("QUIT TO TITLE", cx - 110, ply + 168, 220, 44, 24, col_white)
         }
         // ===== CLIP / ANIM INSPECTOR (toggle T) =====
         // A dummy mannequin ~3m in front loops a chosen clip so you can identify animations (e.g. find
