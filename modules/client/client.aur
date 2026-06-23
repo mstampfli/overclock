@@ -102,7 +102,10 @@ struct ClientState {
     dropx: [f64; 6], dropy: [f64; 6], dropz: [f64; 6], droptype: [f64; 6], droplife: [f64; 6], dropcur: i64,
 
     // Menu / screen flow.
-    screen: i64, set_back: i64, do_reset: bool, menu_t: f64, mprev: i64, rebind: i64, rebind_armed: i64, esc_prev: i64
+    screen: i64, set_back: i64, do_reset: bool, menu_t: f64, mprev: i64, rebind: i64, rebind_armed: i64, esc_prev: i64,
+
+    // CLIP/anim inspector ("tune mode", toggle T): a dummy mannequin in front looping a chosen clip.
+    preview_model: i64, tune_mode: i64, tune_clip: i64, tune_weapon: i64, tune_play: i64, tune_tp: i64, tune_np: i64, tune_mp: i64
 }
 
 fn new_client_state() -> ClientState {
@@ -154,7 +157,8 @@ fn new_client_state() -> ClientState {
         ppx: [0.0; 28], ppy: [0.0; 28], ppz: [0.0; 28], pvx: [0.0; 28], pvy: [0.0; 28], pvz: [0.0; 28],
         plife: [0.0; 28], pcur: 0,
         dropx: [0.0; 6], dropy: [0.0; 6], dropz: [0.0; 6], droptype: [0.0; 6], droplife: [0.0; 6], dropcur: 0,
-        screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1
+        screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1,
+        preview_model: 0, tune_mode: 0, tune_clip: 9, tune_weapon: 0, tune_play: 0 - 1, tune_tp: 0, tune_np: 0, tune_mp: 0
     }
 }
 
@@ -2254,13 +2258,14 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         // apex, clear only when actually grounded - so it never strobes around vy=0.
                         let rvy = net_player_state(pid, 5)
                         let rground = net_player_state(pid, 7)
-                        // SLIDE pose (third person): sim_step sets state[12] while sliding and it's
-                        // replicated, so bots AND human remotes read identically (one path, like the rest).
-                        // Drop + lean the model back into a slide; the legs keep their run clip and the
-                        // weapon overlay stays on the torso, so a sliding actor still reads as armed.
+                        // SLIDE (third person): sim_step sets state[12] while sliding, replicated, so bots
+                        // AND human remotes read identically. PLACEHOLDER until a real slide CLIP index is
+                        // known: dip the model a little and hold the legs STILL (no run cycle below). NO
+                        // upper-body tilt - the torso stays upright with its weapon overlay (slidelean=0).
+                        let rsliding = net_player_state(pid, 12) > 0.5
                         let mut slideoff = 0.0
-                        let mut slidelean = 0.0
-                        if net_player_state(pid, 12) > 0.5 { slideoff = 0.0 - 0.5; slidelean = 0.0 - 0.6 }
+                        let slidelean = 0.0
+                        if rsliding { slideoff = 0.0 - 0.25 }
                         let aydraw = ey + slideoff + env.actor_yoff
                         if rvy > 3.0 or rvy < (0.0 - 5.0) { cs.ajump[ai] = 0.45 }
                         if rground > 0.5 and rvy < 1.0 { cs.ajump[ai] = 0.0 }
@@ -2268,6 +2273,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         if cs.ajump[ai] < 0.0 { cs.ajump[ai] = 0.0 }
                         if rspd > 1.4 { rdes = env.anim_run; cs.aidle_t[ai] = 0.0 } else { cs.aidle_t[ai] = cs.aidle_t[ai] + dt; if cs.aidle_t[ai] > 0.35 { rdes = env.anim_idle } }
                         if cs.ajump[ai] > 0.0 { rdes = env.anim_jump }
+                        if rsliding { rdes = env.anim_idle }   // hold the legs still during a slide (placeholder)
                         cs.astate_t[ai] = cs.astate_t[ai] + dt
                         let mut rallow = 0
                         if cs.astate[ai] < 0 { rallow = 1 }
@@ -3002,6 +3008,46 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             clienthud::draw_centered("RESUME", cx - 110, ply + 110, 220, 44, 24, col_white)
             if clienthud::menu_btn(cx - 110, ply + 168, 220, 44, pmx, pmy) == 1 { if pclick == 1 { if cs.net_started { net_leave() } input_suppress(0); r3d_blur(0.0); cs.screen = env.s_title; cs.net_started = false } }
             clienthud::draw_centered("QUIT TO TITLE", cx - 110, ply + 168, 220, 44, 24, col_white)
+        }
+        // ===== CLIP / ANIM INSPECTOR (toggle T) =====
+        // A dummy mannequin ~3m in front loops a chosen clip so you can identify animations (e.g. find
+        // a slide/crouch clip to wire up). T toggles it + flips bots passive (they freeze + hold fire);
+        // N cycles the clip, M cycles the weapon held. The current clip index + count show in the HUD.
+        if cs.preview_model == 0 { cs.preview_model = r3d_load_model("models/Mannequin.gltf") }
+        let tdn = key_down(59)
+        if tdn > 0 and cs.tune_tp == 0 {
+            if cs.tune_mode == 0 { cs.tune_mode = 1 } else { cs.tune_mode = 0 }
+            net_cfg_set(3, (cs.tune_mode) as f64)   // passive bots while inspecting (host/practice control channel)
+        }
+        cs.tune_tp = tdn
+        if cs.tune_mode > 0 {
+            let clipn = r3d_clip_count(cs.preview_model)
+            let ndn = key_down(53)
+            if ndn > 0 and cs.tune_np == 0 { cs.tune_clip = cs.tune_clip + 1; if cs.tune_clip >= clipn { cs.tune_clip = 0 } }
+            cs.tune_np = ndn
+            let mdn = key_down(52)
+            if mdn > 0 and cs.tune_mp == 0 { cs.tune_weapon = cs.tune_weapon + 1; if cs.tune_weapon > 2 { cs.tune_weapon = 0 } }
+            cs.tune_mp = mdn
+            let pvx = px + sin(cs.yaw) * 3.0
+            let pvz = pz - cos(cs.yaw) * 3.0
+            let pvyaw = cs.yaw + 3.14159
+            if cs.tune_play != cs.tune_clip { r3d_anim_play(cs.preview_model, cs.tune_clip, 1, 1.0, 0.1); cs.tune_play = cs.tune_clip }
+            r3d_anim_update(cs.preview_model, dt)
+            r3d_draw(cs.preview_model, pvx, py + env.actor_yoff, pvz, pvyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale)
+            let mut pwm = env.vm_rifle
+            let mut pwsc = env.rifle_scale_tp
+            let mut pwx = cs.hand_ox
+            let mut pwy = cs.hand_oy
+            let mut pwz = cs.hand_oz
+            let mut pwyaw = cs.hand_oyaw
+            let mut pwpit = cs.hand_opitch
+            let mut pwrol = cs.hand_oroll
+            if cs.tune_weapon == 1 { pwm = env.vm_launcher; pwsc = env.lnch_scale_tp }
+            if cs.tune_weapon == 2 { pwm = env.vm_katana; pwsc = env.kat_scale_tp; pwx = cs.kat_hand_ox; pwy = cs.kat_hand_oy; pwz = cs.kat_hand_oz; pwyaw = cs.kat_hand_oyaw; pwpit = cs.kat_hand_opitch; pwrol = cs.kat_hand_oroll }
+            r3d_draw_on_joint(pwm, cs.preview_model, env.hand_joint, pvx, py + env.actor_yoff, pvz, pvyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, pwx, pwy, pwz, pwyaw, pwpit, pwrol, pwsc)
+            draw_text(20, 100, "CLIP INSPECTOR (T exit, bots passive) - N=clip  M=weapon", 16, col_gold)
+            draw_text(20, 124, "clip", 16, col_white); draw_int(120, 124, cs.tune_clip, 16, col_white); draw_text(170, 124, "of", 16, col_white); draw_int(210, 124, clipn, 16, col_white)
+            draw_text(20, 148, "weapon (0 rifle / 1 launcher / 2 katana)", 16, col_white); draw_int(360, 148, cs.tune_weapon, 16, col_white)
         }
         if cs.screen != env.s_game { break }
     }
