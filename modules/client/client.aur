@@ -105,7 +105,10 @@ struct ClientState {
     screen: i64, set_back: i64, do_reset: bool, menu_t: f64, mprev: i64, rebind: i64, rebind_armed: i64, esc_prev: i64,
 
     // CLIP/anim inspector ("tune mode", toggle T): a dummy mannequin in front looping a chosen clip.
-    preview_model: i64, tune_mode: i64, tune_clip: i64, tune_weapon: i64, tune_play: i64, tune_tp: i64, tune_np: i64, tune_mp: i64
+    preview_model: i64, tune_mode: i64, tune_clip: i64, tune_weapon: i64, tune_play: i64, tune_tp: i64, tune_np: i64, tune_mp: i64,
+    // Live-tunable SLIDE pose (dialed in the inspector with C=pick param, I/K=adjust; same values drive
+    // the real in-game slide): thigh fwd, shin/knee, hip recline, body drop. tune_sel = selected param.
+    sl_thigh: f64, sl_shin: f64, sl_hip: f64, sl_drop: f64, tune_sel: i64, tune_cp: i64
 }
 
 fn new_client_state() -> ClientState {
@@ -158,7 +161,8 @@ fn new_client_state() -> ClientState {
         plife: [0.0; 28], pcur: 0,
         dropx: [0.0; 6], dropy: [0.0; 6], dropz: [0.0; 6], droptype: [0.0; 6], droplife: [0.0; 6], dropcur: 0,
         screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1,
-        preview_model: 0, tune_mode: 0, tune_clip: 9, tune_weapon: 0, tune_play: 0 - 1, tune_tp: 0, tune_np: 0, tune_mp: 0
+        preview_model: 0, tune_mode: 0, tune_clip: 9, tune_weapon: 0, tune_play: 0 - 1, tune_tp: 0, tune_np: 0, tune_mp: 0,
+        sl_thigh: 0.0 - 1.2, sl_shin: 0.0, sl_hip: 0.0 - 0.6, sl_drop: 0.0 - 0.55, tune_sel: 0, tune_cp: 0
     }
 }
 
@@ -2266,15 +2270,17 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         let mut slideoff = 0.0
                         let slidelean = 0.0
                         if rsliding {
-                            slideoff = 0.0 - 0.35   // drop the body toward the floor
-                            // Real slide pose via per-bone override: bend the THIGHS forward (legs shoot
-                            // out in front) + tuck the SHINS, while the spine/torso keep their clip pose -
-                            // so ONLY the legs curve. Mannequin bones: thigh.L 45 thigh.R 49, shin.L 46
-                            // shin.R 50. Legs are held still (idle base below). Angles are first-pass - tune.
-                            r3d_pose_bone(cs.actor_models[ai], 45, 0.0 - 1.45, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 49, 0.0 - 1.45, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 46, 0.9, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 50, 0.9, 0.0, 0.0)
+                            slideoff = cs.sl_drop   // drop the body toward the floor
+                            // Real slide pose via per-bone override (tunable in the inspector). Recline the
+                            // HIPS so the whole body leans back as a rigid unit (stays straight, doesn't
+                            // curve), extend the THIGHS forward + keep the SHINS near-straight so the legs
+                            // go out FLAT (not a bent sitting pose). Bones: hips 1, thigh.L 45 thigh.R 49,
+                            // shin.L 46 shin.R 50. Legs held still (idle base below).
+                            r3d_pose_bone(cs.actor_models[ai], 1, cs.sl_hip, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 45, cs.sl_thigh, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 49, cs.sl_thigh, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 46, cs.sl_shin, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 50, cs.sl_shin, 0.0, 0.0)
                         } else {
                             r3d_clear_pose(cs.actor_models[ai])
                         }
@@ -3043,9 +3049,26 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let pvx = px + sin(cs.yaw) * 3.0
             let pvz = pz - cos(cs.yaw) * 3.0
             let pvyaw = cs.yaw + 3.14159
+            // SLIDE-pose tuner: C picks a param (thigh/shin/hip/drop), I/K nudge it. The dummy shows the
+            // live slide pose, and the same cs.sl_* values drive the real in-game slide - so dial it here.
+            let cdn = key_down(42)
+            if cdn > 0 and cs.tune_cp == 0 { cs.tune_sel = cs.tune_sel + 1; if cs.tune_sel > 3 { cs.tune_sel = 0 } }
+            cs.tune_cp = cdn
+            let mut tstep = 0.0
+            if key_down(48) > 0 { tstep = 0.015 }
+            if key_down(50) > 0 { tstep = 0.0 - 0.015 }
+            if cs.tune_sel == 0 { cs.sl_thigh = cs.sl_thigh + tstep }
+            if cs.tune_sel == 1 { cs.sl_shin = cs.sl_shin + tstep }
+            if cs.tune_sel == 2 { cs.sl_hip = cs.sl_hip + tstep }
+            if cs.tune_sel == 3 { cs.sl_drop = cs.sl_drop + tstep }
+            r3d_pose_bone(cs.preview_model, 1, cs.sl_hip, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 45, cs.sl_thigh, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 49, cs.sl_thigh, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 46, cs.sl_shin, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 50, cs.sl_shin, 0.0, 0.0)
             if cs.tune_play != cs.tune_clip { r3d_anim_play(cs.preview_model, cs.tune_clip, 1, 1.0, 0.1); cs.tune_play = cs.tune_clip }
             r3d_anim_update(cs.preview_model, dt)
-            r3d_draw(cs.preview_model, pvx, py + env.actor_yoff, pvz, pvyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale)
+            r3d_draw(cs.preview_model, pvx, py + env.actor_yoff + cs.sl_drop, pvz, pvyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale)
             let mut pwm = env.vm_rifle
             let mut pwsc = env.rifle_scale_tp
             let mut pwx = cs.hand_ox
@@ -3056,10 +3079,15 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let mut pwrol = cs.hand_oroll
             if cs.tune_weapon == 1 { pwm = env.vm_launcher; pwsc = env.lnch_scale_tp }
             if cs.tune_weapon == 2 { pwm = env.vm_katana; pwsc = env.kat_scale_tp; pwx = cs.kat_hand_ox; pwy = cs.kat_hand_oy; pwz = cs.kat_hand_oz; pwyaw = cs.kat_hand_oyaw; pwpit = cs.kat_hand_opitch; pwrol = cs.kat_hand_oroll }
-            r3d_draw_on_joint(pwm, cs.preview_model, env.hand_joint, pvx, py + env.actor_yoff, pvz, pvyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, pwx, pwy, pwz, pwyaw, pwpit, pwrol, pwsc)
+            r3d_draw_on_joint(pwm, cs.preview_model, env.hand_joint, pvx, py + env.actor_yoff + cs.sl_drop, pvz, pvyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, pwx, pwy, pwz, pwyaw, pwpit, pwrol, pwsc)
             draw_text(20, 100, "CLIP INSPECTOR (T exit, bots passive) - N=clip  M=weapon", 16, col_gold)
             draw_text(20, 124, "clip", 16, col_white); draw_int(120, 124, cs.tune_clip, 16, col_white); draw_text(170, 124, "of", 16, col_white); draw_int(210, 124, clipn, 16, col_white)
             draw_text(20, 148, "weapon (0 rifle / 1 launcher / 2 katana)", 16, col_white); draw_int(360, 148, cs.tune_weapon, 16, col_white)
+            draw_text(20, 176, "SLIDE TUNE  C=pick  I/K=adjust   sel(0thigh 1shin 2hip 3drop) =", 16, col_gold); draw_int(660, 176, cs.tune_sel, 16, col_gold)
+            draw_text(20, 200, "thigh", 16, col_white); draw_int(100, 200, (cs.sl_thigh * 100.0) as i64, 16, col_white)
+            draw_text(170, 200, "shin", 16, col_white); draw_int(240, 200, (cs.sl_shin * 100.0) as i64, 16, col_white)
+            draw_text(310, 200, "hip", 16, col_white); draw_int(370, 200, (cs.sl_hip * 100.0) as i64, 16, col_white)
+            draw_text(440, 200, "drop", 16, col_white); draw_int(520, 200, (cs.sl_drop * 100.0) as i64, 16, col_white)
         }
         if cs.screen != env.s_game { break }
     }
