@@ -1561,7 +1561,10 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     cs.actors[ci].rlw = awp
                 }
                 cs.actors[ci].fcd = cs.actors[ci].fcd - dt
-                if cs.actors[ci].fcd < 0.0 { cs.actors[ci].fcd = 0.0 }
+                // Floor a touch BELOW 0 (not at 0) so the fire timer can carry its overshoot into the
+                // next shot - keeps the average fire rate exact and catches up after a slow frame, instead
+                // of discarding the remainder and drifting (which made sustained fire stutter every few shots).
+                if cs.actors[ci].fcd < (0.0 - 0.06) { cs.actors[ci].fcd = 0.0 - 0.06 }
                 // ---- INTENT: where this actor wants to shoot this frame ----
                 let mut want = 0
                 let mut ax = 0.0
@@ -1838,8 +1841,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         // GUEST: send the rocket LAUNCH INTENT so the host applies authoritative damage.
                         if mine == 1 and cs.net_mode == 2 { net_projectile_intent(0, ox, oy, oz, ax, ay, az) }
                     }
-                    cs.actors[ci].fcd = env.fire_w[wp]
-                    if mine == 1 and cs.oc_active { cs.actors[ci].fcd = cs.actors[ci].fcd * 0.55 }
+                    let mut fw = env.fire_w[wp]
+                    if mine == 1 and cs.oc_active { fw = fw * 0.55 }
+                    cs.actors[ci].fcd = cs.actors[ci].fcd + fw   // ADD the interval (carry overshoot), don't reset
                 }
                 // ---- PICKUPS (folded in, one path): every actor collects fixed spots AND
                 // enemy drops it walks over - health pad -> full heal, shield cell -> inventory,
@@ -2487,7 +2491,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let vuz = vrx * fy
             let byaw = atan2(fx, fz)
             let bpitch = 0.0 - eff_pitch
-            let recoil = cs.actors[5].fcd * 0.5         // gun kicks back briefly after each shot
+            let mut recoil = cs.actors[5].fcd * 0.5     // gun kicks back briefly after each shot
+            if recoil < 0.0 { recoil = 0.0 }            // fcd can dip slightly negative (carry); no negative kick
             let bor = 0.16                            // right
             let mut bou = 0.0 - 0.15                  // down
             let mut bof = 0.40 - recoil               // forward

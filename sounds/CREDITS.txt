@@ -9,9 +9,9 @@ launcher.wav  - single shot from a Tikka rifle
   License: CC0 1.0 (public domain, no rights reserved)
 
 explosion.wav
-  Trimmed + normalized from an explosion sound on OpenGameArt.
-  Source : https://opengameart.org/content/explosion-0
-  License: CC0 1.0 (public domain, no rights reserved)
+  Trimmed + normalized from "DeathFlash" (a lossless big-explosion recording).
+  Source : https://opengameart.org/content/big-explosion
+  License: Creative Commons Attribution 3.0 (CC BY 3.0)
 
 reload.wav
   Synthesized with sox for OVERCLOCK (mechanical mag-out / mag-in / charging
