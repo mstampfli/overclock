@@ -704,78 +704,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
     // PLAY arms a fresh round: reset score/health/ammo/overclock, clear the
     // transient pools (projectiles/tracers/sparks/drops), and respawn the player
     // and every bot at their anchors. RESUME (from pause) leaves cs.do_reset false.
-    if cs.do_reset {
-        cs.kills = 0
-        cs.deaths = 0
-        let mut zk = 0
-        while zk < 9 { cs.akills[zk] = 0; cs.adeaths[zk] = 0; zk = zk + 1 }
-        cs.round_timer = cs.round_len
-        cs.round_over = false
-        cs.over_t = 0.0
-        cs.won = false
-        cs.actors[5].hp = env.php_max
-        cs.actors[5].sh = 0.0   // first spawn is SHIELDLESS too (matches respawn + the guest); loot cells
-        cs.dead = false
-        cs.prev_dead = false
-        cs.respawn_cd = 0.0
-        cs.pinvuln = 0.0   // no spawn protection - killable the instant you spawn
-        cs.dmg_timer = env.regen_delay
-        cs.hurt_flash = 0.0
-        cs.actors[5].cells = 0
-        cs.actors[5].heal = 0.0
-        cs.respawn_req = 1.0
-        cs.actors[5].wpn = 0
-        cs.prev_weapon = 0
-        cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1
-        cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2
-        cs.actors[5].rl = 0.0
-        cs.oc_meter = 0.0
-        cs.oc_active = false
-        cs.oc_timer = 0.0
-        cs.oc_gain_t = 3.0
-        cs.grapple_on = false
-        cs.g_cd = 0.0
-        cs.g_time = 0.0
-        cs.nade_live = false
-        cs.nfuse = 0.0
-        cs.nade_cd = 0.0
-        cs.explode = false
-        cs.boom_t = 0.0
-        cs.blast_ix = 0.0; cs.blast_iy = 0.0; cs.blast_iz = 0.0
-        let mut rp = 0
-        while rp < env.proj_n { cs.prjlife[rp] = 0.0; rp = rp + 1 }
-        rp = 0
-        while rp < env.tracer_n { cs.trlife[rp] = 0.0; rp = rp + 1 }
-        rp = 0
-        while rp < 28 { cs.plife[rp] = 0.0; rp = rp + 1 }
-        rp = 0
-        while rp < env.drop_n { cs.droplife[rp] = 0.0; rp = rp + 1 }
-        rp = 0
-        while rp < 6 { cs.kf_time[rp] = 0.0; rp = rp + 1 }   // clear the kill feed on a fresh game
-        cs.kf_cur = 0
-        rp = 0
-        while rp < 9 { cs.death_done[rp] = 0; cs.last_hit[rp] = 0 - 1; rp = rp + 1 }   // re-arm death sweep
-        let mut rb = 0
-        while rb < env.bot_n {
-            cs.actors[rb].hp = env.enemy_hp_max
-            if rb >= cs.bot_count { cs.actors[rb].hp = 0.0; cs.brains[rb].resp = 1000000.0 }   // inactive bot
-            cs.actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
-            cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]
-            cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2
-            cs.actors[rb].rl = 0.0
-            cs.actors[rb].wpn = 0
-            cs.actors[rb].cells = 0
-            cs.actors[rb].heal = 0.0
-            cs.brains[rb].resp = 0.0
-            cs.brains[rb].kx = 0.0; cs.brains[rb].ky = 0.0; cs.brains[rb].kz = 0.0
-            cs.brains[rb].vy = 0.0
-            cs.brains[rb].pop = 0.0
-            cs.brains[rb].jcd = 0.0
-            phys3d_set_pos(cs.actors[rb].hdl as i64, env.esx[rb], 0.9, env.esz[rb])
-            rb = rb + 1
-        }
-        cs.do_reset = false
-    }
+    reset_round(cs, env)
     grab_mouse(1)               // capture the cursor for play
     cs.esc_prev = 1                // ignore an Escape still held from the menu
     let mut paused = false      // pause overlay open?
@@ -3145,5 +3074,83 @@ if cs.oc_active {
             clienthud::draw_centered("QUIT TO TITLE", cx - 110, ply + 168, 220, 44, 24, col_white)
         }
         if cs.screen != env.s_game { break }
+    }
+}
+
+// PLAY arms a fresh round: reset score/health/ammo/overclock, clear the transient pools
+// (projectiles/tracers/sparks/drops/kill-feed), re-arm the death sweep, and respawn the
+// player + every bot at their anchors. RESUME (from pause) leaves cs.do_reset false.
+fn reset_round(cs: ClientState, env: ClientEnv) {
+    if cs.do_reset {
+        cs.kills = 0
+        cs.deaths = 0
+        let mut zk = 0
+        while zk < 9 { cs.akills[zk] = 0; cs.adeaths[zk] = 0; zk = zk + 1 }
+        cs.round_timer = cs.round_len
+        cs.round_over = false
+        cs.over_t = 0.0
+        cs.won = false
+        cs.actors[5].hp = env.php_max
+        cs.actors[5].sh = 0.0   // first spawn is SHIELDLESS too (matches respawn + the guest); loot cells
+        cs.dead = false
+        cs.prev_dead = false
+        cs.respawn_cd = 0.0
+        cs.pinvuln = 0.0   // no spawn protection - killable the instant you spawn
+        cs.dmg_timer = env.regen_delay
+        cs.hurt_flash = 0.0
+        cs.actors[5].cells = 0
+        cs.actors[5].heal = 0.0
+        cs.respawn_req = 1.0
+        cs.actors[5].wpn = 0
+        cs.prev_weapon = 0
+        cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1
+        cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2
+        cs.actors[5].rl = 0.0
+        cs.oc_meter = 0.0
+        cs.oc_active = false
+        cs.oc_timer = 0.0
+        cs.oc_gain_t = 3.0
+        cs.grapple_on = false
+        cs.g_cd = 0.0
+        cs.g_time = 0.0
+        cs.nade_live = false
+        cs.nfuse = 0.0
+        cs.nade_cd = 0.0
+        cs.explode = false
+        cs.boom_t = 0.0
+        cs.blast_ix = 0.0; cs.blast_iy = 0.0; cs.blast_iz = 0.0
+        let mut rp = 0
+        while rp < env.proj_n { cs.prjlife[rp] = 0.0; rp = rp + 1 }
+        rp = 0
+        while rp < env.tracer_n { cs.trlife[rp] = 0.0; rp = rp + 1 }
+        rp = 0
+        while rp < 28 { cs.plife[rp] = 0.0; rp = rp + 1 }
+        rp = 0
+        while rp < env.drop_n { cs.droplife[rp] = 0.0; rp = rp + 1 }
+        rp = 0
+        while rp < 6 { cs.kf_time[rp] = 0.0; rp = rp + 1 }   // clear the kill feed on a fresh game
+        cs.kf_cur = 0
+        rp = 0
+        while rp < 9 { cs.death_done[rp] = 0; cs.last_hit[rp] = 0 - 1; rp = rp + 1 }   // re-arm death sweep
+        let mut rb = 0
+        while rb < env.bot_n {
+            cs.actors[rb].hp = env.enemy_hp_max
+            if rb >= cs.bot_count { cs.actors[rb].hp = 0.0; cs.brains[rb].resp = 1000000.0 }   // inactive bot
+            cs.actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
+            cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]
+            cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2
+            cs.actors[rb].rl = 0.0
+            cs.actors[rb].wpn = 0
+            cs.actors[rb].cells = 0
+            cs.actors[rb].heal = 0.0
+            cs.brains[rb].resp = 0.0
+            cs.brains[rb].kx = 0.0; cs.brains[rb].ky = 0.0; cs.brains[rb].kz = 0.0
+            cs.brains[rb].vy = 0.0
+            cs.brains[rb].pop = 0.0
+            cs.brains[rb].jcd = 0.0
+            phys3d_set_pos(cs.actors[rb].hdl as i64, env.esx[rb], 0.9, env.esz[rb])
+            rb = rb + 1
+        }
+        cs.do_reset = false
     }
 }
