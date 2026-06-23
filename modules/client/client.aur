@@ -898,12 +898,35 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 if dvg > 2.5 {
                     phys3d_set_pos(cch, tcx, tcy, tcz)
                     phys3d_set_vel(cch, vlx, vly, vlz)
-                } else { if dvg > 0.4 {
-                        phys3d_set_vel(cch, vlx, vly, vlz)
-                        phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.2, ccy + (tcy - ccy) * 0.2, ccz + (tcz - ccz) * 0.2)
+                } else { if dvg > 0.55 {
+                        // Gentle correction: EASE the velocity toward the host's (hard-setting it every
+                        // frame was the residual stutter) and nudge the position only a little. A wider
+                        // dead-zone (0.55) leaves a well-predicted box completely alone.
+                        let cvx = phys3d_vel_x(cch)
+                        let cvy = phys3d_vel_y(cch)
+                        let cvz = phys3d_vel_z(cch)
+                        phys3d_set_vel(cch, cvx + (vlx - cvx) * 0.25, cvy + (vly - cvy) * 0.25, cvz + (vlz - cvz) * 0.25)
+                        phys3d_set_pos(cch, ccx + (tcx - ccx) * 0.12, ccy + (tcy - ccy) * 0.12, ccz + (tcz - ccz) * 0.12)
                 } }
-                phys3d_set_rot(cch, net_object_qx(gci), net_object_qy(gci), net_object_qz(gci), net_object_qw(gci))
-                phys3d_set_angvel(cch, 0.0, 0.0, 0.0)   // orientation is host-driven (quat above); no local spin
+                // Smooth the orientation toward the host's (shortest-path nlerp) instead of snapping it each
+                // frame - the per-frame snap at the broadcast rate made a pushed/tumbling box's spin jitter.
+                let qx = phys3d_rot_qx(cch)
+                let qy = phys3d_rot_qy(cch)
+                let qz = phys3d_rot_qz(cch)
+                let qw = phys3d_rot_qw(cch)
+                let mut sx = net_object_qx(gci)
+                let mut sy = net_object_qy(gci)
+                let mut sz = net_object_qz(gci)
+                let mut sw = net_object_qw(gci)
+                if qx * sx + qy * sy + qz * sz + qw * sw < 0.0 { sx = 0.0 - sx; sy = 0.0 - sy; sz = 0.0 - sz; sw = 0.0 - sw }
+                let mut nx = qx + (sx - qx) * 0.35
+                let mut ny = qy + (sy - qy) * 0.35
+                let mut nz = qz + (sz - qz) * 0.35
+                let mut nw = qw + (sw - qw) * 0.35
+                let nl = sqrt(nx * nx + ny * ny + nz * nz + nw * nw)
+                if nl > 0.0001 { nx = nx / nl; ny = ny / nl; nz = nz / nl; nw = nw / nl }
+                phys3d_set_rot(cch, nx, ny, nz, nw)
+                phys3d_set_angvel(cch, 0.0, 0.0, 0.0)   // no local spin; host-driven, eased above
                 gci = gci + 1
             }
         }
