@@ -114,6 +114,7 @@ fn main() {
     let vm_rifle = r3d_load_model("models/rifle.glb")
     let vm_launcher = r3d_load_model("models/launcher.glb")
     let vm_katana = r3d_load_model("models/katana.glb")
+    let vm_deagle = r3d_load_model("models/deagle.glb")   // Desert Eagle (modelled along +X like the rifle)
     let rifle_scale = 0.12      // FIRST-PERSON viewmodel size (original)
     let rifle_scale_tp = 0.18   // THIRD-PERSON (on others) - 1.5x bigger so it reads at range
     let lnch_scale = 0.33       // mesh is ~1.8 units long (first-person)
@@ -304,15 +305,15 @@ fn main() {
         aml = aml + 1
     }
     cs.actors = [
-        world::Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: 0 - 1, hp: 100.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [30, 1], res: [60, 2], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 }
+        world::Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: 0 - 1, hp: 100.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 }
     ]
     // Per-actor AI/behaviour, parallel to cs.actors[]. Only the bots (0..bot_n-1) use a real
     // Brain; the player + remote slots get a dummy (aim 0, unused). `aim` (shot spread) is a
@@ -495,11 +496,11 @@ fn main() {
     // cs.actors[5].wpn config (same for every Actor - player and bots). Per-actor ammo (mag +
     // reserve) and current cs.actors[5].wpn live in the Actor struct (the player's is `me`, below).
     cs.prev_weapon = 0
-    let mag_size_w = [30, 1]    // mag sizes (launcher = single-shot rocket)
-    let fire_w = [0.11, 0.5]    // fire interval (rifle fast, launcher slow)
-    let reload_w = [1.6, 3.0]   // reload time per cs.actors[5].wpn (launcher much slower)
-    let res_max = [90, 3]       // reserve cap = 3 extra mags (rifle 3x30, launcher 3x1)
-    let res_refill = [30, 2]    // reserve added per ammo pickup (a full mag / 2 rockets)
+    let mag_size_w = [30, 1, 7]    // mag sizes (launcher single-shot rocket; deagle 7-round .50 AE)
+    let fire_w = [0.11, 0.5, 0.5]  // fire interval (rifle fast, launcher slow, deagle = slow hand cannon)
+    let reload_w = [1.6, 3.0, 1.2] // reload time per wpn (launcher slow; deagle a fast pistol reload)
+    let res_max = [90, 3, 28]   // reserve cap (rifle 3x30, launcher 3x1, deagle 4x7)
+    let res_refill = [30, 2, 7] // reserve added per ammo pickup (full mag / 2 rockets / 1 deagle mag)
     // OVERCLOCK signature mechanic: meter fills from cs.kills + movement style; at full,
     // trigger a powered state (faster fire/move, instant reloads, gold glow). Kills
     // while overclocked EXTEND it with no cap (chain cs.kills = stay overclocked).
@@ -582,6 +583,14 @@ fn main() {
 
     // Combat tuning (data-driven). Player gun is a fast hitscan; bots are slower.
     let gun_dmg = 17.0           // rifle hits harder now (still fast); explosives are the heavy hits
+    // Desert Eagle: a high-damage SINGLE-FIRE hand cannon with EXPLICIT per-zone damage (not a
+    // multiplier off one base). A headshot (120) burns the full 50 shield + 70 health, leaving a
+    // full-pool target at 30 hp (no longer a one-shot kill); the body (40) is ~4 shots through the
+    // full 150 pool. The slow 0.5s cadence + 7-round mag balance the punch.
+    let deagle_body = 40.0
+    let deagle_leg = 25.0
+    let deagle_head = 120.0
+    let deagle_scale = 0.10      // FIRST-PERSON viewmodel size (tune in-game; a pistol reads smaller than the rifle)
     let enemy_hp_max = 100.0
     let enemy_respawn = 3.0
     // (No separate bot damage/weapons - bots are Actors and run the SAME cs.actors[5].wpn config
@@ -641,7 +650,7 @@ fn main() {
     let drop_life = 12.0
     // Shields are Apex-style: you carry CELLS (cs.actors[5].cells) and apply them with an action (a
     // channel, cs.actors[5].heal) rather than picking up instant shield. cs.actors[5].heal > 0 = mid-channel.
-    let heal_channel = 2.5      // seconds to apply one cell
+    let heal_channel = 2.0      // seconds to apply one cell (shorter: shield is counterable now)
     let cell_shield = 25.0      // shield restored per cell (psh_max 50 = 2 cells)
     let max_cells = 4
 
@@ -668,7 +677,7 @@ fn main() {
 
     // Read-only assets + config the menu/game functions draw from. Built once now that the
     // window is open and models are loaded; passed alongside the mutable cs.
-    let mut env = client::ClientEnv { act_back: act_back, act_dash: act_dash, act_fire: act_fire, act_frag: act_frag, act_fwd: act_fwd, act_grapple: act_grapple, act_heal: act_heal, act_jump: act_jump, act_left: act_left, act_melee: act_melee, actor_scale: actor_scale, actor_yaw_off: actor_yaw_off, actor_yoff: actor_yoff, act_overclock: act_overclock, act_reload: act_reload, act_right: act_right, act_slide: act_slide, act_wep1: act_wep1, act_wep2: act_wep2, ammo_vis: ammo_vis, anim_aim: anim_aim, anim_idle: anim_idle, anim_jump: anim_jump, anim_run: anim_run, anim_shoot: anim_shoot, body_vis: body_vis, bot_kb: bot_kb, bot_n: bot_n, cell_shield: cell_shield, crate_n: crate_n, crates: crates, crate_vis: crate_vis, drop_n: drop_n, enemy_glow_body: enemy_glow_body, enemy_glow_head: enemy_glow_head, enemy_head: enemy_head, enemy_hp_max: enemy_hp_max, enemy_respawn: enemy_respawn, enemy_vis: enemy_vis, enemy_vis_sh: enemy_vis_sh, esx: esx, esz: esz, exrx: exrx, exrz: exrz, ext_n: ext_n, exx: exx, exy: exy, exz: exz, fire2_vis: fire2_vis, fire_vis: fire_vis, fire_w: fire_w, flash_vis: flash_vis, geo_n: geo_n, ground_vis: ground_vis, gun_dmg: gun_dmg, gun_pitch: gun_pitch, gun_roll: gun_roll, gun_yaw: gun_yaw, hand_joint: hand_joint, head_vis: head_vis, heal_channel: heal_channel, heal_vis: heal_vis, kat_pitch: kat_pitch, kat_roll: kat_roll, kat_scale: kat_scale, kat_scale_tp: kat_scale_tp, kat_swing_clip: kat_swing_clip, kat_yaw: kat_yaw, lnch_scale: lnch_scale, lnch_scale_tp: lnch_scale_tp, mag_size_w: mag_size_w, max_cells: max_cells, max_remote: max_remote, melee_cooldown: melee_cooldown, melee_dmg: melee_dmg, melee_range: melee_range, nactors: nactors, nade_cooldown: nade_cooldown, nade_dmg: nade_dmg, nade_fuse: nade_fuse, nade_intensity: nade_intensity, nade_kb_radius: nade_kb_radius, nade_radius: nade_radius, nade_throw: nade_throw, nade_vis: nade_vis, php_max: php_max, pk_n: pk_n, pk_respawn: pk_respawn, pktype: pktype, pkx: pkx, pkz: pkz, player_kb: player_kb, pl_i: pl_i, proj_life: proj_life, proj_n: proj_n, proj_speed: proj_speed, proj_vis: proj_vis, psh_max: psh_max, regen_delay: regen_delay, reload_w: reload_w, res_max: res_max, res_refill: res_refill, rifle_scale: rifle_scale, rifle_scale_tp: rifle_scale_tp, rocket_intensity: rocket_intensity, s_game: s_game, shieldcube_vis: shieldcube_vis, shield_vis: shield_vis, s_lobby: s_lobby, smoke_vis: smoke_vis, spark: spark, spawn_r: spawn_r, sp_n: sp_n, spx: spx, spz: spz, s_quit: s_quit, s_title: s_title, tracer_n: tracer_n, upper_mask_root: upper_mask_root, vm_katana: vm_katana, vm_launcher: vm_launcher, vm_rifle: vm_rifle, act_n: act_n, cfg: cfg, net_port: net_port, s_crosshair: s_crosshair, s_pause: s_pause, s_settings: s_settings }
+    let mut env = client::ClientEnv { act_back: act_back, act_dash: act_dash, act_fire: act_fire, act_frag: act_frag, act_fwd: act_fwd, act_grapple: act_grapple, act_heal: act_heal, act_jump: act_jump, act_left: act_left, act_melee: act_melee, actor_scale: actor_scale, actor_yaw_off: actor_yaw_off, actor_yoff: actor_yoff, act_overclock: act_overclock, act_reload: act_reload, act_right: act_right, act_slide: act_slide, act_wep1: act_wep1, act_wep2: act_wep2, ammo_vis: ammo_vis, anim_aim: anim_aim, anim_idle: anim_idle, anim_jump: anim_jump, anim_run: anim_run, anim_shoot: anim_shoot, body_vis: body_vis, bot_kb: bot_kb, bot_n: bot_n, cell_shield: cell_shield, crate_n: crate_n, crates: crates, crate_vis: crate_vis, drop_n: drop_n, enemy_glow_body: enemy_glow_body, enemy_glow_head: enemy_glow_head, enemy_head: enemy_head, enemy_hp_max: enemy_hp_max, enemy_respawn: enemy_respawn, enemy_vis: enemy_vis, enemy_vis_sh: enemy_vis_sh, esx: esx, esz: esz, exrx: exrx, exrz: exrz, ext_n: ext_n, exx: exx, exy: exy, exz: exz, fire2_vis: fire2_vis, fire_vis: fire_vis, fire_w: fire_w, flash_vis: flash_vis, geo_n: geo_n, ground_vis: ground_vis, gun_dmg: gun_dmg, deagle_body: deagle_body, deagle_leg: deagle_leg, deagle_head: deagle_head, deagle_scale: deagle_scale, vm_deagle: vm_deagle, gun_pitch: gun_pitch, gun_roll: gun_roll, gun_yaw: gun_yaw, hand_joint: hand_joint, head_vis: head_vis, heal_channel: heal_channel, heal_vis: heal_vis, kat_pitch: kat_pitch, kat_roll: kat_roll, kat_scale: kat_scale, kat_scale_tp: kat_scale_tp, kat_swing_clip: kat_swing_clip, kat_yaw: kat_yaw, lnch_scale: lnch_scale, lnch_scale_tp: lnch_scale_tp, mag_size_w: mag_size_w, max_cells: max_cells, max_remote: max_remote, melee_cooldown: melee_cooldown, melee_dmg: melee_dmg, melee_range: melee_range, nactors: nactors, nade_cooldown: nade_cooldown, nade_dmg: nade_dmg, nade_fuse: nade_fuse, nade_intensity: nade_intensity, nade_kb_radius: nade_kb_radius, nade_radius: nade_radius, nade_throw: nade_throw, nade_vis: nade_vis, php_max: php_max, pk_n: pk_n, pk_respawn: pk_respawn, pktype: pktype, pkx: pkx, pkz: pkz, player_kb: player_kb, pl_i: pl_i, proj_life: proj_life, proj_n: proj_n, proj_speed: proj_speed, proj_vis: proj_vis, psh_max: psh_max, regen_delay: regen_delay, reload_w: reload_w, res_max: res_max, res_refill: res_refill, rifle_scale: rifle_scale, rifle_scale_tp: rifle_scale_tp, rocket_intensity: rocket_intensity, s_game: s_game, shieldcube_vis: shieldcube_vis, shield_vis: shield_vis, s_lobby: s_lobby, smoke_vis: smoke_vis, spark: spark, spawn_r: spawn_r, sp_n: sp_n, spx: spx, spz: spz, s_quit: s_quit, s_title: s_title, tracer_n: tracer_n, upper_mask_root: upper_mask_root, vm_katana: vm_katana, vm_launcher: vm_launcher, vm_rifle: vm_rifle, act_n: act_n, cfg: cfg, net_port: net_port, s_crosshair: s_crosshair, s_pause: s_pause, s_settings: s_settings }
     loop {
         if cs.screen == s_quit { break }
 

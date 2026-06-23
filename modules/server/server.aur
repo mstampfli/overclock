@@ -574,7 +574,13 @@ fn client_shots_tick(w: world::World) -> i64 {
         }
         if vai >= 0 and w.actors[vai].hp > 0.0 {
             let hrel = hY - phys3d_y(w.actors[vai].hdl)
-            combat::apply_hit(w.actors, vai, 17.0, hrel, 0)   // gun_dmg, shield-then-hp + zoning
+            // Authoritative damage by the weapon the client actually fired (round-tripped through
+            // net_fire). Desert Eagle (2) = explicit per-zone 40/25/120; everything else = rifle.
+            if net_server_hit_weapon(sh) == 2 {
+                combat::apply_hit_zoned(w.actors, vai, 40.0, 25.0, 120.0, hrel, 0)
+            } else {
+                combat::apply_hit(w.actors, vai, 17.0, hrel, 0)   // gun_dmg, shield-then-hp + zoning
+            }
             if vai < 5 { w.brains[vai].pop = 0.1 }
             // Credit the shooter (a client slot) so the death sweep counts the kill for them.
             let mut sai = 0 - 1
@@ -1150,6 +1156,9 @@ fn broadcast_bots(w: world::World) -> i64 {
         let mut sh_up = 0.0
         if w.actors[b2].heal > 0.0 { sh_up = 1.0 }
         net_set_bot_meta(b2, 16, sh_up)                   // shield-up: client draws the blue cube
+        let mut rl_up = 0.0
+        if w.actors[b2].rl > 0.0 { rl_up = 1.0 }
+        net_set_bot_meta(b2, 20, rl_up)                   // reload flag: client plays the reload anim (clip 22)
         b2 = b2 + 1
     }
     0

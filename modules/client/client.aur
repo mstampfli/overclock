@@ -18,6 +18,7 @@ struct ClientState {
     // Per-actor render/animation state (parallel to actors[]).
     actor_models: [i64; 9], astate: [i64; 9], aprevx: [f64; 9], aprevz: [f64; 9],
     ashoot: [f64; 9], ushoot: [i64; 9], aspd: [f64; 9], astate_t: [f64; 9],
+    arshot: [i64; 9], aslide: [f64; 9],
     ajump: [f64; 9], aidle_t: [f64; 9], ayaw: [f64; 9],
 
     // Loose gun-crate meshes (visual) + explosion-debris meshes.
@@ -66,7 +67,7 @@ struct ClientState {
     kill_target: i64, round_len: f64, bot_count: i64, round_timer: f64, round_over: bool, over_t: f64, won: bool,
 
     // Death / damage.
-    dmg_dir: f64, dead: bool, prev_dead: bool, respawn_cd: f64, prev_weapon: i64,
+    dmg_dir: f64, dead: bool, prev_dead: bool, respawn_cd: f64, prev_weapon: i64, fire_held: i64,
 
     // Overclock meter.
     oc_meter: f64, oc_active: bool, oc_timer: f64, oc_gain_t: f64,
@@ -126,12 +127,13 @@ fn new_client_state() -> ClientState {
         kat_hand_ox: 0.0, kat_hand_oy: 0.0, kat_hand_oz: 0.0, kat_hand_oyaw: 0.0, kat_hand_opitch: 0.0, kat_hand_oroll: 0.0,
         actor_models: [0; 9], astate: [0; 9], aprevx: [0.0; 9], aprevz: [0.0; 9],
         ashoot: [0.0; 9], ushoot: [0; 9], aspd: [0.0; 9], astate_t: [0.0; 9],
+        arshot: [0; 9], aslide: [0.0; 9],
         ajump: [0.0; 9], aidle_t: [0.0; 9], ayaw: [0.0; 9],
         gcx: [0.0; 30], gcy: [0.0; 30], gcz: [0.0; 30], ghx: [0.0; 30], ghy: [0.0; 30], ghz: [0.0; 30], gmesh: [0; 30],
         exmesh: [0; 8],
         pkcd: [0.0; 11],
         crpx: [0.0; 12], crpy: [0.0; 12], crpz: [0.0; 12],
-        actors: [ world::Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0], res: [0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
+        actors: [ world::Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
         brains: [ world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0, stuckt: 0.0 } ; 9 ],
         bind_code: [0.0; 16], sens: 0.0, vol: 0, disp_mode: 0, disp_applied: 0, lobby_focus: 0,
         username: "", uname_len: 0, uname_codes: [0; 16],
@@ -149,7 +151,7 @@ fn new_client_state() -> ClientState {
         kf_killer: [0; 6], kf_victim: [0; 6], kf_time: [0.0; 6],
         kf_killer_pid: [0 - 1; 6], kf_victim_pid: [0 - 1; 6], kf_cur: 0,
         kill_target: 15, round_len: 120.0, bot_count: 5, round_timer: 120.0, round_over: false, over_t: 0.0, won: false,
-        dmg_dir: 0.0, dead: false, prev_dead: false, respawn_cd: 0.0, prev_weapon: 0,
+        dmg_dir: 0.0, dead: false, prev_dead: false, respawn_cd: 0.0, prev_weapon: 0, fire_held: 0,
         oc_meter: 0.0, oc_active: false, oc_timer: 0.0, oc_gain_t: 3.0,
         grapple_on: false, gx: 0.0, gy: 0.0, gz: 0.0, g_cd: 0.0, g_time: 0.0, g_prev: 0, g_lx: 0.0, g_ly: 0.0, g_lz: 0.0,
         nade_live: false, grx: 0.0, gry: 0.0, grz: 0.0, grvx: 0.0, grvy: 0.0, grvz: 0.0,
@@ -168,8 +170,8 @@ fn new_client_state() -> ClientState {
         dropx: [0.0; 6], dropy: [0.0; 6], dropz: [0.0; 6], droptype: [0.0; 6], droplife: [0.0; 6], dropcur: 0,
         screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1,
         preview_model: 0, tune_mode: 0, tune_clip: 9, tune_weapon: 0, tune_play: 0 - 1, tune_tp: 0, tune_np: 0, tune_mp: 0,
-        sl_thigh: 0.0 - 1.02, sl_shin: 0.03, sl_hip: 0.0 - 0.46, sl_drop: 0.0 - 0.56, tune_sel: 0, tune_cp: 0,
-        sl_lthx: 0.0 - 0.62, sl_lthy: 0.0, sl_lthz: 0.0, sl_lshx: 0.03, sl_lshy: 0.0, sl_lshz: 0.0
+        sl_thigh: 0.0 - 1.03, sl_shin: 0.0 - 0.01, sl_hip: 0.0 - 0.80, sl_drop: 0.0 - 0.90, tune_sel: 0, tune_cp: 0,
+        sl_lthx: 0.0 - 0.57, sl_lthy: 0.0 - 0.10, sl_lthz: 0.0 - 0.05, sl_lshx: 0.0 - 0.10, sl_lshy: 0.0 - 0.05, sl_lshz: 0.01
     }
 }
 
@@ -227,8 +229,13 @@ struct ClientEnv {
     exz: [f64; 8],
     fire2_vis: i64,
     fire_vis: i64,
-    fire_w: [f64; 2],
+    fire_w: [f64; 3],
     flash_vis: i64,
+    deagle_body: f64,
+    deagle_leg: f64,
+    deagle_head: f64,
+    deagle_scale: f64,
+    vm_deagle: i64,
     geo_n: i64,
     ground_vis: i64,
     gun_dmg: f64,
@@ -247,7 +254,7 @@ struct ClientEnv {
     kat_yaw: f64,
     lnch_scale: f64,
     lnch_scale_tp: f64,
-    mag_size_w: [i64; 2],
+    mag_size_w: [i64; 3],
     max_cells: i64,
     max_remote: i64,
     melee_cooldown: f64,
@@ -276,9 +283,9 @@ struct ClientEnv {
     proj_vis: i64,
     psh_max: f64,
     regen_delay: f64,
-    reload_w: [f64; 2],
-    res_max: [i64; 2],
-    res_refill: [i64; 2],
+    reload_w: [f64; 3],
+    res_max: [i64; 3],
+    res_refill: [i64; 3],
     rifle_scale: f64,
     rifle_scale_tp: f64,
     rocket_intensity: f64,
@@ -798,7 +805,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         let mut oc_mult = 1.0
         if cs.oc_active { oc_mult = 1.35 }
         // Overclock perk: unlimited reserve mags (keep the reserve topped up each frame).
-        if cs.oc_active { cs.actors[5].res[0] = env.res_max[0]; cs.actors[5].res[1] = env.res_max[1] }
+        if cs.oc_active { cs.actors[5].res[0] = env.res_max[0]; cs.actors[5].res[1] = env.res_max[1]; cs.actors[5].res[2] = env.res_max[2] }
         if cs.actors[5].heal > 0.0 { oc_mult = 0.5 }
         // Grapple anchor + active flag (set last frame after aiming; 1-frame lag fine).
         let mut g_flag = 0.0
@@ -858,6 +865,10 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         let mut shield_m = 0.0
         if cs.actors[5].heal > 0.0 { shield_m = 1.0 }
         net_set_meta(16, shield_m)
+        // Reload flag (slot 20): 1 while reloading, so OTHERS see my third-person reload anim (clip 22).
+        let mut reload_m = 0.0
+        if cs.actors[5].rl > 0.0 { reload_m = 1.0 }
+        net_set_meta(20, reload_m)
         // Grapple anchor (12/13/14) + rope timer (15) so OTHERS draw my grapple rope.
         net_set_meta(12, cs.actors[5].gax)
         net_set_meta(13, cs.actors[5].gay)
@@ -1131,6 +1142,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         // swap just changes the index; it cancels a reload and adds a brief swap delay.
         if input_down(env.act_wep1) > 0 { cs.actors[5].wpn = 0 }
         if input_down(env.act_wep2) > 0 { cs.actors[5].wpn = 1 }
+        if key_down(32) > 0 { cs.actors[5].wpn = 2 }   // '3' = Desert Eagle (single-fire hand cannon)
         if cs.actors[5].wpn != cs.prev_weapon {
             cs.actors[5].rl = 0.0
             cs.actors[5].fcd = 0.25
@@ -1563,7 +1575,18 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     let mut crl = env.reload_w[cs.actors[ci].wpn]
                     if cs.oc_active { crl = env.reload_w[cs.actors[ci].wpn] * 0.4 }
                     if input_down(env.act_reload) > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[cs.actors[ci].wpn] < env.mag_size_w[cs.actors[ci].wpn] and cs.actors[ci].res[cs.actors[ci].wpn] > 0 and cs.dead == false { cs.actors[ci].rl = crl; cs.actors[ci].rlw = cs.actors[ci].wpn }
-                    if input_down(env.act_fire) > 0 and cs.dead == false { want = 1 }
+                    // Fire intent: rifle/launcher are full-auto (fire while held). The Desert Eagle is
+                    // SINGLE-FIRE: it only fires on a fresh press (rising edge), gated further by its own
+                    // long cooldown below. cs.fire_held tracks the button across frames for the edge.
+                    let fbtn = input_down(env.act_fire) > 0
+                    if cs.dead == false {
+                        if cs.actors[ci].wpn == 2 {
+                            if fbtn and cs.fire_held == 0 { want = 1 }
+                        } else {
+                            if fbtn { want = 1 }
+                        }
+                    }
+                    if fbtn { cs.fire_held = 1 } else { cs.fire_held = 0 }
                 } else {
                     // Bot: nearest enemy + weapon + aim (with spread). Fire is blocked while
                     // channelling a shield (the heal gate in the shot below).
@@ -1693,10 +1716,10 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     let ox = sox + ax * 0.6
                     let oy = soy + ay * 0.6
                     let oz = soz + az * 0.6
-                    if wp == 0 {
+                    if wp == 0 or wp == 2 {
                         let mut sg = 6
                         if mine == 1 { sg = 8 }
-                        play_sound_at(2, 26, sg, ox, oy, oz)
+                        if wp == 2 { play_sound_at(0 - 5, 45, sg + 2, ox, oy, oz) } else { play_sound_at(2, 26, sg, ox, oy, oz) }
                         // Tell the host about my shot so IT validates the hit (lag-comp) and
                         // applies authoritative damage. My local raycast below is prediction
                         // (tracer + hitmarker); the host owns the real hp. Host's own net_fire
@@ -1729,12 +1752,17 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             let mut vk = 0
                             while vk < env.nactors {
                                 if vk != ci and hb == (cs.actors[vk].hdl as i64) and cs.actors[vk].hp > 0.0 and (mine == 0 or cs.net_mode != 1) {
-                                    let mut dmg = env.gun_dmg
-                                    // Hit location (height of the impact vs the capsule centre):
-                                    // head = 2x, low legs = 0.65x, torso = 1x.
                                     let hrel = hY - phys3d_y(cs.actors[vk].hdl as i64)
+                                    let mut dmg = env.gun_dmg
                                     let mut headshot = 0
-                                    if hrel > 0.5 { dmg = dmg * 2.0; headshot = 1 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+                                    // Hit-location zoning. Rifle: head 2x, low legs 0.65x, torso 1x.
+                                    // Desert Eagle (wp 2): EXPLICIT per-zone - 120 head / 40 body / 25 legs.
+                                    if wp == 2 {
+                                        dmg = env.deagle_body
+                                        if hrel > 0.6 { dmg = env.deagle_head; headshot = 1 } else { if hrel < (0.0 - 0.4) { dmg = env.deagle_leg } }
+                                    } else {
+                                        if hrel > 0.6 { dmg = dmg * 2.0; headshot = 1 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+                                    }
                                     if headshot == 1 and mine == 1 { play_sound(12, 90, 0) }   // headshot ding
                                     if cs.actors[vk].sh > 0.0 {
                                         if cs.actors[vk].sh >= dmg { cs.actors[vk].sh = cs.actors[vk].sh - dmg; dmg = 0.0 }
@@ -1942,7 +1970,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 cs.death_done[env.pl_i] = 0; cs.last_hit[env.pl_i] = 0 - 1   // re-arm the death sweep
                 cs.actors[5].hp = env.php_max
                 cs.actors[5].sh = 0.0   // respawn SHIELDLESS - shields are scarce; find/loot cells
-                cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1; cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2   // ammo back to start
+                cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1; cs.actors[5].mag[2] = 7; cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2; cs.actors[5].res[2] = 21   // ammo back to start
                 cs.actors[5].rl = 0.0
                 cs.pinvuln = 0.0   // no spawn protection after respawn (server owns hp; cs.pinvuln only desynced prediction)
                 cs.respawn_req = 1.0
@@ -2056,8 +2084,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     cs.actors[5].cells = 0
                     cs.actors[5].heal = 0.0
                     cs.actors[5].wpn = 0
-                    cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1
-                    cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2
+                    cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1; cs.actors[5].mag[2] = 7
+                    cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2; cs.actors[5].res[2] = 21
                     cs.actors[5].rl = 0.0
                     cs.dead = false
                     cs.respawn_req = 1.0
@@ -2073,8 +2101,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         cs.actors[rb].hp = env.enemy_hp_max
                         if rb >= cs.bot_count { cs.actors[rb].hp = 0.0; cs.brains[rb].resp = 1000000.0 }
                         cs.actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
-                        cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]
-                        cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2
+                        cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]; cs.actors[rb].mag[2] = env.mag_size_w[2]
+                        cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2; cs.actors[rb].res[2] = 21
                         cs.actors[rb].rl = 0.0
                         cs.actors[rb].wpn = 0
                         cs.actors[rb].cells = 0
@@ -2299,8 +2327,21 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 if cs.net_mode == 2 { cs.actors[ai].hp = rhp; cs.actors[ai].sh = net_player_meta(pid, 1) }
                 // Cull the cs.dead from the render. The host keeps a cs.dead client's SLOT (cs.apid set
                 // above) so respawn still maps it; we just park its body and skip drawing.
+                cs.ashoot[ai] = cs.ashoot[ai] - dt
+                if cs.ashoot[ai] < 0.0 { cs.ashoot[ai] = 0.0 }
                 let r_alive = cs.actors[ai].hp > 0.0
-                if r_alive == false { phys3d_set_pos(cs.actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0) }
+                // DEAD: keep the body where it fell, playing the death clip (4) ONCE and holding the
+                // last frame, until this actor respawns. Park only the COLLIDER so it can't block.
+                if r_alive == false {
+                    phys3d_set_pos(cs.actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0)
+                    if cs.actor_models[ai] >= 0 {
+                        if cs.astate[ai] != 4 { r3d_anim_play(cs.actor_models[ai], 4, 0, 1.0, 0.12); r3d_anim_stop_upper(cs.actor_models[ai], 0.12); cs.astate[ai] = 4; cs.ushoot[ai] = 0 - 1 }
+                        r3d_clear_pose(cs.actor_models[ai])
+                        r3d_anim_update(cs.actor_models[ai], dt)
+                        let ddy = ey + env.actor_yoff
+                        r3d_draw_tint(cs.actor_models[ai], ex, ddy, ez, eyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale, clienthud::ptint(cs.apid[ai], 0, 0.55), clienthud::ptint(cs.apid[ai], 1, 0.55), clienthud::ptint(cs.apid[ai], 2, 0.55))
+                    }
+                }
                 if r_alive {
                     phys3d_set_pos(cs.actors[ai].hdl, ex, ey, ez)
                     if cs.actor_models[ai] >= 0 {
@@ -2310,7 +2351,6 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         if rinst > 40.0 { rinst = 0.0 }
                         cs.aspd[ai] = cs.aspd[ai] + (rinst - cs.aspd[ai]) * 0.12
                         let rspd = cs.aspd[ai]
-                        let mut rdes = env.anim_idle
                         // Airborne LATCH (mirrors the bot anim): remote HUMANS broadcast their vy
                         // (slot 5) + grounded flag (slot 7) via sim_step, so show the jump/midair clip
                         // instead of forcing idle. Set on a real takeoff/hard fall, hold through the
@@ -2324,18 +2364,20 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         let rsliding = net_player_state(pid, 12) > 0.5
                         let mut slideoff = 0.0
                         let slidelean = 0.0
-                        if rsliding {
-                            slideoff = cs.sl_drop   // drop the body toward the floor
-                            // Real slide pose via per-bone override (tunable in the inspector). Recline the
-                            // HIPS so the whole body leans back as a rigid unit (stays straight, doesn't
-                            // curve), extend the THIGHS forward + keep the SHINS near-straight so the legs
-                            // go out FLAT (not a bent sitting pose). Bones: hips 1, thigh.L 45 thigh.R 49,
-                            // shin.L 46 shin.R 50. Legs held still (idle base below).
-                            r3d_pose_bone(cs.actor_models[ai], 1, cs.sl_hip, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 49, cs.sl_thigh, 0.0, 0.0)         // RIGHT thigh (the good one)
-                            r3d_pose_bone(cs.actor_models[ai], 50, cs.sl_shin, 0.0, 0.0)          // RIGHT shin
-                            r3d_pose_bone(cs.actor_models[ai], 45, cs.sl_lthx, cs.sl_lthy, cs.sl_lthz)   // LEFT thigh (full XYZ to match)
-                            r3d_pose_bone(cs.actor_models[ai], 46, cs.sl_lshx, cs.sl_lshy, cs.sl_lshz)   // LEFT shin
+                        // Slide BLEND: ramp a 0..1 weight in (fast) and out (faster) so the slide pose
+                        // eases in and out instead of snapping. Every slide bone + the body drop scales
+                        // by the weight, so the legs flow into and out of the recline. Bones: hips 1,
+                        // thigh.L 45 thigh.R 49, shin.L 46 shin.R 50. Legs held at idle (base blend below).
+                        let mut sw = cs.aslide[ai]
+                        if rsliding { sw = sw + dt * 7.0; if sw > 1.0 { sw = 1.0 } } else { sw = sw - dt * 9.0; if sw < 0.0 { sw = 0.0 } }
+                        cs.aslide[ai] = sw
+                        if sw > 0.002 {
+                            slideoff = cs.sl_drop * sw   // drop the body toward the floor, eased
+                            r3d_pose_bone(cs.actor_models[ai], 1, cs.sl_hip * sw, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 49, cs.sl_thigh * sw, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 50, cs.sl_shin * sw, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 45, cs.sl_lthx * sw, cs.sl_lthy * sw, cs.sl_lthz * sw)
+                            r3d_pose_bone(cs.actor_models[ai], 46, cs.sl_lshx * sw, cs.sl_lshy * sw, cs.sl_lshz * sw)
                         } else {
                             r3d_clear_pose(cs.actor_models[ai])
                         }
@@ -2344,21 +2386,51 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         if rground > 0.5 and rvy < 1.0 { cs.ajump[ai] = 0.0 }
                         cs.ajump[ai] = cs.ajump[ai] - dt
                         if cs.ajump[ai] < 0.0 { cs.ajump[ai] = 0.0 }
-                        if rspd > 1.4 { rdes = env.anim_run; cs.aidle_t[ai] = 0.0 } else { cs.aidle_t[ai] = cs.aidle_t[ai] + dt; if cs.aidle_t[ai] > 0.35 { rdes = env.anim_idle } }
-                        if cs.ajump[ai] > 0.0 { rdes = env.anim_jump }
-                        if rsliding { rdes = env.anim_idle }   // hold the legs still during a slide (placeholder)
-                        cs.astate_t[ai] = cs.astate_t[ai] + dt
-                        let mut rallow = 0
-                        if cs.astate[ai] < 0 { rallow = 1 }
-                        if cs.astate_t[ai] > 0.15 { rallow = 1 }
-                        if rdes == env.anim_jump { rallow = 1 }
-                        if cs.astate[ai] == env.anim_jump and cs.ajump[ai] <= 0.0 { rallow = 1 }
-                        if rallow == 1 and cs.astate[ai] != rdes { r3d_anim_play(cs.actor_models[ai], rdes, 1, 1.0, 0.15); cs.astate[ai] = rdes; cs.astate_t[ai] = 0.0 }
+                        // Base locomotion: airborne -> the jump clip (crossfade). Grounded -> a sustained
+                        // idle<->run BLEND by speed, so the legs ease smoothly into standing still instead
+                        // of snapping at a threshold. A slide holds the legs at idle (weight 0). Landing
+                        // crossfades from the jump clip INTO the blend (r3d_anim_blend's first call fades in).
+                        if cs.ajump[ai] > 0.0 {
+                            if cs.astate[ai] != env.anim_jump { r3d_anim_play(cs.actor_models[ai], env.anim_jump, 1, 1.0, 0.12); cs.astate[ai] = env.anim_jump }
+                        } else {
+                            let mut mw = rspd / 4.2   // run clip reaches full weight near ~4.2 m/s; 0 = idle
+                            if mw > 1.0 { mw = 1.0 }
+                            if mw < 0.0 { mw = 0.0 }
+                            if rsliding { mw = 0.0 }
+                            r3d_anim_blend(cs.actor_models[ai], env.anim_idle, env.anim_run, mw, 1.0, 0.14)
+                            cs.astate[ai] = 0 - 2
+                        }
                         // Upper-body overlay: the katana SWING (clip 41) while this remote is meleeing
                         // (replicated meta 8), else the held weapon pose. Reuses the existing overlay.
-                        let mut ruwant = env.anim_aim
-                        if net_player_meta(pid, 8) > 0.5 { ruwant = env.kat_swing_clip }
-                        if cs.ushoot[ai] != ruwant { let mut kspd = 1.0; if ruwant == env.kat_swing_clip { kspd = 1.7 }; r3d_anim_play_upper(cs.actor_models[ai], ruwant, 1, kspd, 0.1, env.upper_mask_root); cs.ushoot[ai] = ruwant }
+                        // Upper-body overlay priority: reload (clip 22) > katana swing > recoil (clip 23,
+                        // played FAST) > aim look up/down (a real weighted blend of clips 18 down / 19 mid /
+                        // 20 up by the actor's replicated pitch, via the new r3d_anim_aim_upper builtin).
+                        let r_reload = net_player_meta(pid, 20) > 0.5
+                        let r_melee = net_player_meta(pid, 8) > 0.5
+                        let r_recoil = cs.ashoot[ai] > 0.0
+                        if r_reload {
+                            if cs.ushoot[ai] != 22 { r3d_anim_play_upper(cs.actor_models[ai], 22, 1, 1.0, 0.12, env.upper_mask_root); cs.ushoot[ai] = 22 }
+                        } else { if r_melee {
+                            if cs.ushoot[ai] != env.kat_swing_clip { r3d_anim_play_upper(cs.actor_models[ai], env.kat_swing_clip, 1, 1.7, 0.1, env.upper_mask_root); cs.ushoot[ai] = env.kat_swing_clip }
+                        } else { if r_recoil {
+                            // Per-SHOT recoil: each incoming round (arshot pulse) RESTARTS clip 23 from
+                            // frame 0 (play once, fast), so the kick lines up with every shot, any weapon.
+                            if cs.arshot[ai] == 1 or cs.ushoot[ai] != 23 { r3d_anim_play_upper(cs.actor_models[ai], 23, 0, 2.6, 0.03, env.upper_mask_root); cs.ushoot[ai] = 23 }
+                            cs.arshot[ai] = 0
+                        } else {
+                            // Pitch (replicated meta 19) -> blend weight 0=down..1=up, passing through the
+                            // mid pose (19) at center. Flip the (apitch +/- ...) sign if it reads inverted.
+                            let apitch = net_player_meta(pid, 19)
+                            let mut pw = (apitch + 0.9) / 1.8
+                            if pw < 0.0 { pw = 0.0 }
+                            if pw > 1.0 { pw = 1.0 }
+                            let mut ca = 18
+                            let mut cb = 19
+                            let mut bw = pw * 2.0
+                            if pw > 0.5 { ca = 19; cb = 20; bw = (pw - 0.5) * 2.0 }
+                            r3d_anim_aim_upper(cs.actor_models[ai], ca, cb, bw, 1.0, 0.14, env.upper_mask_root)
+                            cs.ushoot[ai] = 0 - 1
+                        } } }
                         r3d_anim_update(cs.actor_models[ai], dt)
                         // A remote that is ITSELF overclocked (its replicated meta 2) glows a bright pulsing
                         // GOLD so everyone can read who's powered up - independent of my own overclock. Checked
@@ -2450,9 +2522,16 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     let wz = vez + vrz * bor + vuz * bou + fz * bof
                     if cs.actors[5].wpn == 0 {
                         r3d_draw(env.vm_rifle, wx, wy, wz, byaw + env.gun_yaw, bpitch + env.gun_pitch, env.gun_roll, env.rifle_scale)
+                    } else { if cs.actors[5].wpn == 2 {
+                        // Deagle rides CLOSER to the camera than the rifle (a smaller mesh reads better up close).
+                        let dbof = bof - 0.12
+                        let dwx = vex + vrx * bor + vux * bou + fx * dbof
+                        let dwy = vey + vuy * bou + fy * dbof
+                        let dwz = vez + vrz * bor + vuz * bou + fz * dbof
+                        r3d_draw(env.vm_deagle, dwx, dwy, dwz, byaw + env.gun_yaw, bpitch + env.gun_pitch, env.gun_roll, env.deagle_scale)
                     } else {
                         r3d_draw(env.vm_launcher, wx, wy, wz, byaw + env.gun_yaw, bpitch + env.gun_pitch, env.gun_roll, env.lnch_scale)
-                    }
+                    } }
                 }
             }
         }
@@ -2495,6 +2574,12 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 cs.trcur = cs.trcur + 1
                 if cs.trcur >= env.tracer_n { cs.trcur = 0 }
                 play_sound_at(2, 26, 6, sx1, sy1, sz1)   // remote rifle crack at the muzzle
+                // Kick the shooter's upper body into the recoil overlay (clip 23): map its pid -> slot.
+                let mut rsa = 0
+                while rsa < env.nactors {
+                    if cs.apid[rsa] == ssh { cs.ashoot[rsa] = 0.28; cs.arshot[rsa] = 1 }
+                    rsa = rsa + 1
+                }
                 let edx = ex2 - px
                 let edy = ey2 - eye
                 let edz = ez2 - pz
@@ -2994,9 +3079,11 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         // Current cs.actors[5].wpn name above the ammo (rifle gold-ish, launcher magenta).
         if cs.actors[5].wpn == 0 {
             draw_text(cs.fbw - 150, cs.fbh - 84, "RIFLE", 22, 230 * 65536 + 220 * 256 + 150)
+        } else { if cs.actors[5].wpn == 2 {
+            draw_text(cs.fbw - 160, cs.fbh - 84, "DEAGLE", 22, 255 * 65536 + 210 * 256 + 90)
         } else {
             draw_text(cs.fbw - 175, cs.fbh - 84, "LAUNCHER", 22, 255 * 65536 + 120 * 256 + 230)
-        }
+        } }
         draw_int(cs.fbw - 150, cs.fbh - 56, cs.actors[5].mag[cs.actors[5].wpn], 36, ammo_col)
         draw_text(cs.fbw - 96, cs.fbh - 50, "/", 26, col_white)
         draw_int(cs.fbw - 78, cs.fbh - 50, cs.actors[5].res[cs.actors[5].wpn], 26, 150 * 65536 + 150 * 256 + 160)
@@ -3182,8 +3269,8 @@ fn reset_round(cs: ClientState, env: ClientEnv) {
         cs.respawn_req = 1.0
         cs.actors[5].wpn = 0
         cs.prev_weapon = 0
-        cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1
-        cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2
+        cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1; cs.actors[5].mag[2] = 7
+        cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2; cs.actors[5].res[2] = 21
         cs.actors[5].rl = 0.0
         cs.oc_meter = 0.0
         cs.oc_active = false
@@ -3216,8 +3303,8 @@ fn reset_round(cs: ClientState, env: ClientEnv) {
             cs.actors[rb].hp = env.enemy_hp_max
             if rb >= cs.bot_count { cs.actors[rb].hp = 0.0; cs.brains[rb].resp = 1000000.0 }   // inactive bot
             cs.actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
-            cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]
-            cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2
+            cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]; cs.actors[rb].mag[2] = env.mag_size_w[2]
+            cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2; cs.actors[rb].res[2] = 21
             cs.actors[rb].rl = 0.0
             cs.actors[rb].wpn = 0
             cs.actors[rb].cells = 0

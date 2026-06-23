@@ -1,0 +1,6 @@
+Third-party 3D assets bundled with OVERCLOCK and their licenses.
+
+models/deagle.glb  -  "Desert Eagle" by AdamKokrito
+  Source : https://poly.pizza/m/5HnKjrbxUx
+  License: Creative Commons Attribution 3.0 (CC BY 3.0)
+           https://creativecommons.org/licenses/by/3.0/

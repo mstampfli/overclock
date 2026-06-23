@@ -6,7 +6,7 @@
 // Shared CODE, separate DATA - that is what stops client/server drift.
 
 // Apply one hit's damage to actor `vk`: hit-location zoning first (head 2x when the
-// impact is above the capsule centre by +0.5, legs 0.65x below -0.4, torso 1x), then
+// impact is above the capsule centre by +0.6, legs 0.65x below -0.4, torso 1x), then
 // shield-then-health UNLESS `bypass` is set (the katana goes straight to green hp).
 // Returns 1 if it was a headshot so the caller can play the headshot ding. This is the
 // single source of truth for: the rifle, the bot rifle, lag-comp'd client shots,
@@ -14,13 +14,29 @@
 fn apply_hit(actors: [world::Actor; 9], vk: i64, base: f64, hrel: f64, bypass: i64) -> i64 {
     let mut dmg = base
     let mut head = 0
-    if hrel > 0.5 { dmg = dmg * 2.0; head = 1 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+    if hrel > 0.6 { dmg = dmg * 2.0; head = 1 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
     if bypass == 0 and actors[vk].sh > 0.0 {
         if actors[vk].sh >= dmg { actors[vk].sh = actors[vk].sh - dmg; dmg = 0.0 }
         else { dmg = dmg - actors[vk].sh; actors[vk].sh = 0.0 }
     }
     actors[vk].hp = actors[vk].hp - dmg
     head
+}
+
+// Like apply_hit but with EXPLICIT per-zone damage: head/torso/legs are given as absolute
+// numbers, not a multiplier off one base. For weapons whose zone ratios aren't the rifle's
+// 2x/0.65x - the Desert Eagle (40 body / 25 legs / 120 head). Same shield-then-health + bypass
+// rules; returns 1 on a headshot. Shared by the host (authority) and client (prediction).
+fn apply_hit_zoned(actors: [world::Actor; 9], vk: i64, body: f64, leg: f64, head: f64, hrel: f64, bypass: i64) -> i64 {
+    let mut dmg = body
+    let mut hs = 0
+    if hrel > 0.6 { dmg = head; hs = 1 } else { if hrel < (0.0 - 0.4) { dmg = leg } }
+    if bypass == 0 and actors[vk].sh > 0.0 {
+        if actors[vk].sh >= dmg { actors[vk].sh = actors[vk].sh - dmg; dmg = 0.0 }
+        else { dmg = dmg - actors[vk].sh; actors[vk].sh = 0.0 }
+    }
+    actors[vk].hp = actors[vk].hp - dmg
+    hs
 }
 
 // Apply one explosion's effect to actor `j`: linear-falloff radial damage inside `rad`
