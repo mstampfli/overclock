@@ -979,6 +979,18 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             // leap rides the same knockback-velocity decay blasts use; the knock>4 gate below freezes
             // steering so the launch reads). Skipped while seeking loot. Anchor + a 0.4s rope timer go
             // out over meta 12-15 so every client draws the cyan rope, same as a human player's grapple.
+            // MOVEMENT TECH: bots move like skilled players. A per-bot etime phase (each on its own
+            // rhythm) drives slide-hops while crossing open ground - slide to gather speed, then jump to
+            // carry it (bunny-hop) - and a quick dash to juke mid-fight. All fed as one-frame edges below.
+            let cyc = w.etime * 0.5 + (ei2 as f64) * 1.3
+            let frac = cyc - floor(cyc)
+            let mut want_slide = 0
+            let mut want_dash = 0
+            if grnd and channeling == 0 and passive == 0 and seeking == 0 {
+                if tdist > 12.0 and frac > 0.50 and frac < 0.57 { want_slide = 1 }
+                if tdist > 12.0 and frac > 0.57 and frac < 0.63 { want_jump = 1; w.brains[ei2].jcd = 0.5 }
+            }
+            if channeling == 0 and passive == 0 and edist < 22.0 and frac > 0.82 and frac < 0.86 { want_dash = 1 }
             w.brains[ei2].gcd = w.brains[ei2].gcd - dt
             if grnd and w.brains[ei2].gcd <= 0.0 and tdist > 24.0 and seeking == 0 and channeling == 0 and passive == 0 {
                 let aimx = tmx - bx0
@@ -1051,6 +1063,8 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                 f32_store(bin, 1, juke)                           // strafe: lateral juke
             }
             if want_jump == 1 { f32_store(bin, 3, 1.0) }
+            if want_slide == 1 { f32_store(bin, 4, 1.0) }   // slide-hop (one-frame edge; sim starts the slide)
+            if want_dash == 1 { f32_store(bin, 5, 1.0) }    // dash juke (one-frame edge)
             f32_store(bin, 6, dt)
             f32_store(bin, 14, w.brains[ei2].kx)
             f32_store(bin, 15, w.brains[ei2].ky)
@@ -1058,8 +1072,8 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             w.brains[ei2].kx = 0.0
             w.brains[ei2].ky = 0.0
             w.brains[ei2].kz = 0.0
-            // Bots run a touch faster than base player ground speed (they don't slide/dash to gain
-            // pace like a human) and sprint when far, so they can cross the arena for ammo + enemies
+            // Bots run a touch faster than base player ground speed (on top of the slide-hops/dashes
+            // above) and sprint when far, so they can cross the arena for ammo + enemies
             // like the old direct-velocity bots did. Same sim_step, just bot-tuned ground speed.
             let mut bcfg = sim::default_cfg()
             bcfg[2] = 9.5
