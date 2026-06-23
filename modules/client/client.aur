@@ -2277,10 +2277,10 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             // go out FLAT (not a bent sitting pose). Bones: hips 1, thigh.L 45 thigh.R 49,
                             // shin.L 46 shin.R 50. Legs held still (idle base below).
                             r3d_pose_bone(cs.actor_models[ai], 1, cs.sl_hip, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 45, cs.sl_thigh, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 49, 0.0 - cs.sl_thigh, 0.0, 0.0)   // right leg mirrors the left
-                            r3d_pose_bone(cs.actor_models[ai], 46, cs.sl_shin, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 50, 0.0 - cs.sl_shin, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 45, 0.0 - cs.sl_thigh, 0.0, 0.0)   // left leg mirrors the right
+                            r3d_pose_bone(cs.actor_models[ai], 49, cs.sl_thigh, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 46, 0.0 - cs.sl_shin, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 50, cs.sl_shin, 0.0, 0.0)
                         } else {
                             r3d_clear_pose(cs.actor_models[ai])
                         }
@@ -3062,10 +3062,10 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             if cs.tune_sel == 2 { cs.sl_hip = cs.sl_hip + tstep }
             if cs.tune_sel == 3 { cs.sl_drop = cs.sl_drop + tstep }
             r3d_pose_bone(cs.preview_model, 1, cs.sl_hip, 0.0, 0.0)
-            r3d_pose_bone(cs.preview_model, 45, cs.sl_thigh, 0.0, 0.0)
-            r3d_pose_bone(cs.preview_model, 49, 0.0 - cs.sl_thigh, 0.0, 0.0)   // right leg mirrors the left
-            r3d_pose_bone(cs.preview_model, 46, cs.sl_shin, 0.0, 0.0)
-            r3d_pose_bone(cs.preview_model, 50, 0.0 - cs.sl_shin, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 45, 0.0 - cs.sl_thigh, 0.0, 0.0)   // left leg mirrors the right
+            r3d_pose_bone(cs.preview_model, 49, cs.sl_thigh, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 46, 0.0 - cs.sl_shin, 0.0, 0.0)
+            r3d_pose_bone(cs.preview_model, 50, cs.sl_shin, 0.0, 0.0)
             if cs.tune_play != cs.tune_clip { r3d_anim_play(cs.preview_model, cs.tune_clip, 1, 1.0, 0.1); cs.tune_play = cs.tune_clip }
             r3d_anim_update(cs.preview_model, dt)
             r3d_draw(cs.preview_model, pvx, py + env.actor_yoff + cs.sl_drop, pvz, pvyaw + env.actor_yaw_off, 0.0, 0.0, env.actor_scale)
