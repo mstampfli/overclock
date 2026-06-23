@@ -2271,10 +2271,10 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             // out in front) + tuck the SHINS, while the spine/torso keep their clip pose -
                             // so ONLY the legs curve. Mannequin bones: thigh.L 45 thigh.R 49, shin.L 46
                             // shin.R 50. Legs are held still (idle base below). Angles are first-pass - tune.
-                            r3d_pose_bone(cs.actor_models[ai], 45, 1.45, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 49, 1.45, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 46, 0.0 - 0.9, 0.0, 0.0)
-                            r3d_pose_bone(cs.actor_models[ai], 50, 0.0 - 0.9, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 45, 0.0 - 1.45, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 49, 0.0 - 1.45, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 46, 0.9, 0.0, 0.0)
+                            r3d_pose_bone(cs.actor_models[ai], 50, 0.9, 0.0, 0.0)
                         } else {
                             r3d_clear_pose(cs.actor_models[ai])
                         }
