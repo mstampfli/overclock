@@ -1232,23 +1232,36 @@ fn server_main() -> i64 {
         if active < 0 { active = 0 }
         if active > lobby_bots { active = lobby_bots }
         w.round.bots = active
-        phys3d_step(0.016)   // advance the dynamic world (crates) exactly ONCE per tick (updates the
-                             // query for this tick's character moves; integrates last tick's impulses)
-        sync_clients(w)
-        bots_tick(w, 0.016)
-        combat_tick(w, 0.016)
-        client_shots_tick(w)
-        client_projectiles_tick(w)
-        projectiles_tick(w, 0.016)
-        grenade_tick(w, 0.016)
-        deaths_tick(w)
-        loot_tick(w, 0.016)
-        pickups_tick(w, 0.016)
-        round_tick(w, 0.016)
+        // SOLO PAUSE: when you're the only player AND you've opened the pause menu (broadcast on meta
+        // slot 21), freeze the whole authoritative world by skipping every sim tick - so practice
+        // ACTUALLY pauses. A real match (another human present) never freezes. The network is still
+        // serviced below so you stay connected and the frozen frame keeps broadcasting.
+        let mut frozen = false
+        if humans <= 1 {
+            let hpid = net_player_id_at(0)
+            if hpid >= 0 and net_player_meta(hpid, 21) > 0.5 { frozen = true }
+        }
+        if frozen == false {
+            phys3d_step(0.016)   // advance the dynamic world (crates) exactly ONCE per tick (updates the
+                                 // query for this tick's character moves; integrates last tick's impulses)
+            sync_clients(w)
+            bots_tick(w, 0.016)
+            combat_tick(w, 0.016)
+            client_shots_tick(w)
+            client_projectiles_tick(w)
+            projectiles_tick(w, 0.016)
+            grenade_tick(w, 0.016)
+            deaths_tick(w)
+            loot_tick(w, 0.016)
+            pickups_tick(w, 0.016)
+            round_tick(w, 0.016)
+        }
         broadcast_bots(w)
         broadcast_fx(w)
         broadcast_objects(w)
-        net_update(0.016)   // re-sim connected clients (steps physics) + broadcast snapshots
+        let mut ndt = 0.016
+        if frozen { ndt = 0.000000001 }   // ~0 (not exactly 0) freezes the client re-sim, division-safe
+        net_update(ndt)     // re-sim connected clients (steps physics) + broadcast snapshots
         net_shots_clear()   // flush this tick's shot announcements to clients
         net_booms_clear()   // flush this tick's explosions so remotes actually see them (was missing)
         sleep_ms(16)
