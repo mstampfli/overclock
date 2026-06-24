@@ -58,6 +58,9 @@ struct ClientState {
     fp_back: f64, fp_eye: f64, fp_lift: f64, fp_scale: f64, fp_pitchf: f64,
     w_hox: [f64; 3], w_hoy: [f64; 3], w_hoz: [f64; 3], w_hyaw: [f64; 3], w_hpit: [f64; 3], w_hrol: [f64; 3], w_hsc: [f64; 3],
     fp_tune: i64, fp_tsel: i64, fp_tprev: i64, fp_ocp: i64,
+    // Screen-lock deadzone: the arms track a LAGGED yaw/pitch that only catches up to the camera
+    // once it moves past fp_dead radians (a stylized "the arms hold, then snap to follow").
+    fp_lyaw: f64, fp_lpit: f64, fp_dead: f64,
 
     // Score.
     kills: i64, deaths: i64,
@@ -162,6 +165,7 @@ fn new_client_state() -> ClientState {
         fp_back: 0.32, fp_eye: 1.55, fp_lift: 0.0 - 0.09, fp_scale: 0.85, fp_pitchf: 1.0,
         w_hox: [0.0; 3], w_hoy: [0.0; 3], w_hoz: [0.0; 3], w_hyaw: [0.0; 3], w_hpit: [0.0; 3], w_hrol: [0.0; 3], w_hsc: [1.0; 3],
         fp_tune: 0, fp_tsel: 0, fp_tprev: 0, fp_ocp: 0,
+        fp_lyaw: 0.0, fp_lpit: 0.0, fp_dead: 0.05,
         kills: 0, deaths: 0,
         apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9],
         g_resp_ctr: 0.0, g_heal_ctr: 0.0, g_hp_prev: 100.0, g_pk_cells: 0, g_pk_res: 60,
@@ -2597,19 +2601,46 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let cam_x = px + sjx
             let cam_y = eye + sjy
             let cam_z = pz + sjz
-            let fh = sqrt(fx * fx + fz * fz)
-            let mut fhx = 0.0
-            let mut fhz = 1.0
-            if fh > 0.001 { fhx = fx / fh; fhz = fz / fh }
-            // Root the rig under-and-behind the camera so the arms frame forward (riding the view bob).
-            let fp_x = cam_x - fhx * cs.fp_back
-            let fp_z = cam_z - fhz * cs.fp_back
-            let fp_y = cam_y - cs.fp_eye + cs.fp_lift
-            let fp_yaw = atan2(fx, fz) + env.actor_yaw_off
+            // DEADZONE with a SMOOTH catch-up: the arms hold a lagged yaw/pitch while the camera stays
+            // within fp_dead radians, then catch up FAST-but-SMOOTH (not a snap) past the deadzone, so
+            // they "stick" on screen then flow to follow. cf = catch-up fraction this frame.
+            let mut cf = 16.0 * dt
+            if cf > 1.0 { cf = 1.0 }
+            let mut dyw = cs.yaw - cs.fp_lyaw
+            if dyw > 3.14159 { dyw = dyw - 6.28319 }
+            if dyw < (0.0 - 3.14159) { dyw = dyw + 6.28319 }
+            let mut eyw = 0.0
+            if dyw > cs.fp_dead { eyw = dyw - cs.fp_dead }
+            if dyw < (0.0 - cs.fp_dead) { eyw = dyw + cs.fp_dead }
+            cs.fp_lyaw = cs.fp_lyaw + eyw * cf
+            let dpt = eff_pitch - cs.fp_lpit
+            let mut ept = 0.0
+            if dpt > cs.fp_dead { ept = dpt - cs.fp_dead }
+            if dpt < (0.0 - cs.fp_dead) { ept = dpt + cs.fp_dead }
+            cs.fp_lpit = cs.fp_lpit + ept * cf
+            // Horizontal forward of the LAGGED yaw (forward = (sin yaw, cos yaw)).
+            let lfhx = sin(cs.fp_lyaw)
+            let lfhz = cos(cs.fp_lyaw)
+            // PIVOT AT THE TORSO, not the feet: the rig pitches CONTINUOUSLY with the camera, but
+            // around an anchor at the torso (near the camera) so the arms rotate in place instead of
+            // swinging on a long arm from the feet. Anchor = behind+lifted from the camera; the feet
+            // root sits fp_eye DOWN the model's (pitched) up axis from that anchor, so at pitch 0 the
+            // framing is unchanged but a look up/down rotates the arms about the torso.
+            let epit = cs.fp_lpit * cs.fp_pitchf
+            let sp = sin(epit)
+            let cp = cos(epit)
+            let upx = 0.0 - sp * lfhx
+            let upy = cp
+            let upz = 0.0 - sp * lfhz
+            let anch_x = cam_x - lfhx * cs.fp_back
+            let anch_y = cam_y + cs.fp_lift
+            let anch_z = cam_z - lfhz * cs.fp_back
+            let fp_x = anch_x - upx * cs.fp_eye
+            let fp_y = anch_y - upy * cs.fp_eye
+            let fp_z = anch_z - upz * cs.fp_eye
+            let fp_yaw = cs.fp_lyaw + env.actor_yaw_off
             let fp_sc = env.actor_scale * cs.fp_scale
-            // Pitch the whole rig with the camera so the arms + weapon follow your up/down look
-            // (on top of the aim clips). Tunable amount; flip the sign if it reads inverted.
-            let fp_pitch = (0.0 - eff_pitch) * cs.fp_pitchf
+            let fp_pitch = 0.0 - epit
             let healing = cs.actors[5].heal > 0.0
             let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
             // Base layer: a quiet looping idle (legs are out of view; this just keeps the rig live).
@@ -2632,15 +2663,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 if cs.fp_rpulse == 1 or cs.fp_ushoot != 23 { r3d_anim_play_upper(env.fp_arms, 23, 0, 2.6, 0.03, env.upper_mask_root); cs.fp_ushoot = 23 }
                 cs.fp_rpulse = 0
             } else {
-                // Flip the (eff_pitch +/- ...) sign if it reads inverted in-game.
-                let mut pw = (eff_pitch + 0.9) / 1.8
-                if pw < 0.0 { pw = 0.0 }
-                if pw > 1.0 { pw = 1.0 }
-                let mut ca = 18
-                let mut cb = 19
-                let mut bw = pw * 2.0
-                if pw > 0.5 { ca = 19; cb = 20; bw = (pw - 0.5) * 2.0 }
-                r3d_anim_aim_upper(env.fp_arms, ca, cb, bw, 1.0, 0.18, env.upper_mask_root)
+                // Static mid HOLD (clip 19): the up/down aim is now the whole-rig torso pitch above,
+                // not a clip blend, so the arms just hold the weapon forward and the rig rotates.
+                r3d_anim_aim_upper(env.fp_arms, 19, 19, 0.0, 1.0, 0.18, env.upper_mask_root)
                 cs.fp_ushoot = 0 - 1
             } } }
             r3d_anim_update(env.fp_arms, dt)
@@ -2672,7 +2697,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         cs.fp_tprev = fpt
         if cs.fp_tune > 0 {
             let odn = key_down(54)
-            if odn > 0 and cs.fp_ocp == 0 { cs.fp_tsel = cs.fp_tsel + 1; if cs.fp_tsel > 11 { cs.fp_tsel = 0 } }
+            if odn > 0 and cs.fp_ocp == 0 { cs.fp_tsel = cs.fp_tsel + 1; if cs.fp_tsel > 12 { cs.fp_tsel = 0 } }
             cs.fp_ocp = odn
             let mut st = 0.0
             if key_down(48) > 0 { st = 1.0 }
@@ -2696,12 +2721,13 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             if sel == 9 { cs.w_hpit[wt] = cs.w_hpit[wt] + d }
             if sel == 10 { cs.w_hrol[wt] = cs.w_hrol[wt] + d }
             if sel == 11 { cs.w_hsc[wt] = cs.w_hsc[wt] + d }
+            if sel == 12 { cs.fp_dead = cs.fp_dead + d }
             let gold = 255 * 65536 + 200 * 256 + 60
             let white = 230 * 65536 + 230 * 256 + 230
             let yel = 255 * 65536 + 255 * 256 + 90
             draw_text(20, 88, "FP TUNER   P exit   O next field   I/K adjust", 16, gold)
             draw_text(20, 112, "sel", 16, white); draw_int(70, 112, sel, 16, yel)
-            draw_text(120, 112, "0bk 1eye 2lift 3scl 4pf  5x 6y 7z 8yaw 9pit 10rol 11hsc", 14, white)
+            draw_text(120, 112, "0bk 1eye 2lift 3scl 4pf 5x 6y 7z 8yaw 9pit 10rol 11hsc 12dead", 14, white)
             draw_text(20, 134, "wpn(0R/1L/2D)", 16, white); draw_int(220, 134, wt, 16, yel)
             draw_text(20, 158, "back", 14, white); draw_int(90, 158, (cs.fp_back * 1000.0) as i64, 14, white)
             draw_text(160, 158, "eye", 14, white); draw_int(220, 158, (cs.fp_eye * 1000.0) as i64, 14, white)
@@ -2715,6 +2741,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             draw_text(560, 180, "pit", 14, white); draw_int(620, 180, (cs.w_hpit[wt] * 1000.0) as i64, 14, white)
             draw_text(710, 180, "rol", 14, white); draw_int(770, 180, (cs.w_hrol[wt] * 1000.0) as i64, 14, white)
             draw_text(860, 180, "hsc", 14, white); draw_int(920, 180, (cs.w_hsc[wt] * 1000.0) as i64, 14, white)
+            draw_text(20, 202, "dead", 14, white); draw_int(90, 202, (cs.fp_dead * 1000.0) as i64, 14, white)
         }
 
         // Impact env.spark for a few frames after the player's shot (the tracer line itself is
