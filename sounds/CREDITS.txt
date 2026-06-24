@@ -69,3 +69,10 @@ grapple.wav
   to one channel, trimmed + normalized.
   Source : https://opengameart.org/content/50-cc0-sci-fi-sfx
   License: CC0 1.0 (public domain, no rights reserved)
+
+hurt.wav / death.wav
+  Taking damage + dying: body-hit impacts from "37 hits/punches". Downmixed to
+  one channel, trimmed (tail shortened) + normalized; hurt is a short punch,
+  death keeps more of the impact tail.
+  Source : https://opengameart.org/content/37-hitspunches
+  License: CC0 1.0 (public domain, no rights reserved)

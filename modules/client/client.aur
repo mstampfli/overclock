@@ -269,6 +269,9 @@ struct ClientEnv {
     snd_slash: i64,
     snd_grapple: i64,
     snd_throw: i64,
+    // Taking damage + dying (centered body impacts).
+    snd_hurt: i64,
+    snd_death: i64,
     // First-person arms: a dedicated mannequin instance glued to the camera, with the weapon
     // bone-attached to the hand joint (29) - same skeleton/offsets as the third-person hold.
     // The body is shifted BACK so the head/torso sit behind the near plane and only the arms
@@ -1850,7 +1853,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                                     if mine == 1 { cs.hitmark = 0.18; if headshot == 0 { play_sound_handle(env.snd_hit, 90) } }   // real hitmarker tick (headshot has its own ding)
                                     if vk == env.pl_i and cs.pinvuln <= 0.0 and cs.dead == false {
                                         cs.dmg_timer = 0.0; cs.hurt_flash = 0.6; cs.shake = 0.085
-                                        play_sound(0 - 18, 70, 0)
+                                        play_sound_handle(env.snd_hurt, 80)   // real body-hit impact
                                         let rcx = sox - px
                                         let rcz = soz - pz
                                         let fwd_c = rcx * sin(cs.yaw) + rcz * (0.0 - cos(cs.yaw))
@@ -1985,7 +1988,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 let dbz = phys3d_z(cs.actors[dv].hdl as i64)
                 cs.actors[dv].cells = 0
                 if dv == env.pl_i {
-                    cs.dead = true; cs.respawn_cd = 3.0; cs.deaths = cs.deaths + 1; play_sound(0 - 26, 260, 0)
+                    cs.dead = true; cs.respawn_cd = 3.0; cs.deaths = cs.deaths + 1; play_sound_handle(env.snd_death, 120)   // real death impact
                 } else {
                     cs.brains[dv].resp = env.enemy_respawn   // (dummy for client slots; they respawn themselves)
                 }
