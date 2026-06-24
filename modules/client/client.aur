@@ -35,7 +35,7 @@ struct ClientState {
     actors: [world::Actor; 9], brains: [world::Brain; 9],
 
     // Keybinds + settings.
-    bind_code: [f64; 16], sens: f64, vol: i64, disp_mode: i64, disp_applied: i64, lobby_focus: i64,
+    bind_code: [f64; 16], sens: f64, vol: i64, music_vol: i64, disp_mode: i64, disp_applied: i64, lobby_focus: i64,
     username: str, uname_len: i64, uname_codes: [i64; 16],
     ch_size: i64, ch_gap: i64, ch_thick: i64, ch_dot: i64, ch_r: i64, ch_g: i64, ch_b: i64, active_preset: i64,
     settings: [f64; 100],
@@ -135,7 +135,7 @@ fn new_client_state() -> ClientState {
         crpx: [0.0; 12], crpy: [0.0; 12], crpz: [0.0; 12],
         actors: [ world::Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
         brains: [ world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0, stuckt: 0.0 } ; 9 ],
-        bind_code: [0.0; 16], sens: 0.0, vol: 0, disp_mode: 0, disp_applied: 0, lobby_focus: 0,
+        bind_code: [0.0; 16], sens: 0.0, vol: 0, music_vol: 40, disp_mode: 0, disp_applied: 0, lobby_focus: 0,
         username: "", uname_len: 0, uname_codes: [0; 16],
         ch_size: 0, ch_gap: 0, ch_thick: 0, ch_dot: 0, ch_r: 0, ch_g: 0, ch_b: 0, active_preset: 0,
         settings: [0.0; 100],
@@ -241,6 +241,7 @@ struct ClientEnv {
     snd_launcher: i64,
     snd_explosion: i64,
     snd_reload: i64,
+    snd_music: i64,
     geo_n: i64,
     ground_vis: i64,
     gun_dmg: f64,
@@ -350,10 +351,20 @@ fn settings_panel(cs: ClientState, env: ClientEnv, mx: i64, my: i64, clicked: i6
     if clienthud::menu_btn(cl + 440, 154, 34, 30, mx, my) == 1 { if clicked == 1 { cs.vol = cs.vol + 1; if cs.vol > 100 { cs.vol = 100 } audio_volume(cs.vol) } }
     clienthud::draw_centered("+", cl + 440, 154, 34, 30, 22, wht)
     draw_int(cl + 486, 158, cs.vol, 22, gold)
-    draw_text(cl, 206, "Keybinds - click a box, then press a key", 18, gold)
+    // Music volume (independent of master): drives the looping soundtrack live.
+    draw_text(cl, 188, "Music", 22, wht)
+    if clienthud::menu_btn(cl + 160, 184, 34, 30, mx, my) == 1 { if clicked == 1 { cs.music_vol = cs.music_vol - 1; if cs.music_vol < 0 { cs.music_vol = 0 } music_volume(cs.music_vol); cs.settings[19] = cs.music_vol as f64; save_settings(cs.settings) } }
+    clienthud::draw_centered("-", cl + 160, 184, 34, 30, 22, wht)
+    let mbx = cl + 202
+    let mbw = 230
+    if clienthud::draw_bar(mbx, 188, mbw, 22, (cs.music_vol as f64) / 100.0, mx, my) == 1 { if clicked == 1 { let mf = ((mx - mbx) as f64) / (mbw as f64) * 100.0; cs.music_vol = mf as i64; if cs.music_vol < 0 { cs.music_vol = 0 } if cs.music_vol > 100 { cs.music_vol = 100 } music_volume(cs.music_vol); cs.settings[19] = cs.music_vol as f64; save_settings(cs.settings) } }
+    if clienthud::menu_btn(cl + 440, 184, 34, 30, mx, my) == 1 { if clicked == 1 { cs.music_vol = cs.music_vol + 1; if cs.music_vol > 100 { cs.music_vol = 100 } music_volume(cs.music_vol); cs.settings[19] = cs.music_vol as f64; save_settings(cs.settings) } }
+    clienthud::draw_centered("+", cl + 440, 184, 34, 30, 22, wht)
+    draw_int(cl + 486, 188, cs.music_vol, 22, gold)
+    draw_text(cl, 226, "Keybinds - click a box, then press a key", 18, gold)
     let mut ki = 0
     while ki < env.act_n {
-        let ry = 230 + ki * 26
+        let ry = 250 + ki * 26
         clienthud::draw_action_name(ki, cl + 10, ry + 4, wht)
         let mut kc = gold
         if cs.rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
@@ -382,6 +393,7 @@ fn settings_panel(cs: ClientState, env: ClientEnv, mx: i64, my: i64, clicked: i6
             cs.rebind = 0 - 1
             cs.settings[0] = cs.sens
             cs.settings[1] = cs.vol as f64
+            cs.settings[19] = cs.music_vol as f64
             let mut wi = 0
             while wi < env.act_n { cs.settings[2 + wi] = cs.bind_code[wi]; wi = wi + 1 }
             save_settings(cs.settings)
@@ -402,6 +414,7 @@ fn settings_panel(cs: ClientState, env: ClientEnv, mx: i64, my: i64, clicked: i6
         if clicked == 1 {
             cs.settings[0] = cs.sens
             cs.settings[1] = cs.vol as f64
+            cs.settings[19] = cs.music_vol as f64
             let mut wi2 = 0
             while wi2 < env.act_n { cs.settings[2 + wi2] = cs.bind_code[wi2]; wi2 = wi2 + 1 }
             save_settings(cs.settings)
@@ -414,6 +427,7 @@ fn settings_panel(cs: ClientState, env: ClientEnv, mx: i64, my: i64, clicked: i6
     if esc_s > 0 and cs.esc_prev == 0 and cs.rebind < 0 {
         cs.settings[0] = cs.sens
         cs.settings[1] = cs.vol as f64
+        cs.settings[19] = cs.music_vol as f64
         let mut wi3 = 0
         while wi3 < env.act_n { cs.settings[2 + wi3] = cs.bind_code[wi3]; wi3 = wi3 + 1 }
         save_settings(cs.settings)

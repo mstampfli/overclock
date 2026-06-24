@@ -18,3 +18,9 @@ reload.wav
   normalized.
   Source : https://opengameart.org/content/gun-reload-sounds
   License: CC0 1.0 (public domain, no rights reserved)
+
+music_synthwave.wav
+  Looping dark-synthwave background bed. Decoded from the OGG, downmixed to one
+  channel, high-passed + loudness-normalized (the loop seam is left intact).
+  Source : https://opengameart.org/content/synthwave-house-loop
+  License: CC0 1.0 (public domain, no rights reserved)

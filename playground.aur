@@ -122,6 +122,7 @@ fn main() {
     let snd_launcher = load_sound("sounds/launcher.wav")
     let snd_explosion = load_sound("sounds/explosion.wav")
     let snd_reload = load_sound("sounds/reload.wav")
+    let snd_music = load_sound("sounds/music_synthwave.wav")   // looping dark-synthwave bed (CC0)
     let rifle_scale = 0.12      // FIRST-PERSON viewmodel size (original)
     let rifle_scale_tp = 0.18   // THIRD-PERSON (on others) - 1.5x bigger so it reads at range
     let lnch_scale = 0.33       // mesh is ~1.8 units long (first-person)
@@ -362,6 +363,7 @@ fn main() {
     cs.bind_code = [5.0, 7.0, 6.0, 8.0, 4.0, 11.0, 10.0, 100.0, 14.0, 17.0, 15.0, 46.0, 16.0, 30.0, 31.0, 19.0]
     cs.sens = 0.0025      // mouse sensitivity (rad per mouse unit)
     cs.vol = 70           // master volume 0..100
+    cs.music_vol = 40     // background-music volume 0..100 (independent slider)
     cs.disp_mode = 0      // display: 0 windowed, 1 borderless fullscreen, 2 exclusive
     cs.disp_applied = 0   // apply the saved display mode once at startup
     cs.lobby_focus = 0    // which lobby text field is being typed into (0 none, 1 name, 2 host)
@@ -377,12 +379,13 @@ fn main() {
     cs.ch_g = 240
     cs.ch_b = 240
     cs.active_preset = 0   // selected crosshair preset slot (0..5)
-    // cs.settings layout: 0 cs.sens, 1 cs.vol, 2..17 binds, 18 display, 20..36 cs.username,
-    // 40..46 live crosshair, 56..97 six crosshair presets (7 each), 98 active preset.
+    // cs.settings layout: 0 cs.sens, 1 cs.vol, 2..17 binds, 18 display, 19 music vol,
+    // 20..36 cs.username, 40..46 live crosshair, 56..97 six crosshair presets (7 each), 98 active preset.
     cs.settings = [0.0; 100]
     if load_settings(cs.settings) > 2 {
         cs.sens = cs.settings[0]
         cs.vol = (cs.settings[1]) as i64
+        if cs.settings[19] > 0.0 { cs.music_vol = (cs.settings[19]) as i64 }
         let mut li = 0
         while li < act_n { cs.bind_code[li] = cs.settings[2 + li]; li = li + 1 }
         // Saves from before melee existed have no code for it (reads as 0 = ArrowLeft);
@@ -415,6 +418,9 @@ fn main() {
         bi = bi + 1
     }
     audio_volume(cs.vol)
+    // Start the looping soundtrack now; it plays under menu + match and its level is the music
+    // slider (independent of master). Loops for the whole session.
+    play_music(snd_music, cs.music_vol)
 
     // Movement tuning (data-driven; tweak and re-run to change the feel).
     // Movement tuning lives in the sim module now (one source of truth for client prediction +
@@ -684,7 +690,7 @@ fn main() {
 
     // Read-only assets + config the menu/game functions draw from. Built once now that the
     // window is open and models are loaded; passed alongside the mutable cs.
-    let mut env = client::ClientEnv { act_back: act_back, act_dash: act_dash, act_fire: act_fire, act_frag: act_frag, act_fwd: act_fwd, act_grapple: act_grapple, act_heal: act_heal, act_jump: act_jump, act_left: act_left, act_melee: act_melee, actor_scale: actor_scale, actor_yaw_off: actor_yaw_off, actor_yoff: actor_yoff, act_overclock: act_overclock, act_reload: act_reload, act_right: act_right, act_slide: act_slide, act_wep1: act_wep1, act_wep2: act_wep2, ammo_vis: ammo_vis, anim_aim: anim_aim, anim_idle: anim_idle, anim_jump: anim_jump, anim_run: anim_run, anim_shoot: anim_shoot, body_vis: body_vis, bot_kb: bot_kb, bot_n: bot_n, cell_shield: cell_shield, crate_n: crate_n, crates: crates, crate_vis: crate_vis, drop_n: drop_n, enemy_glow_body: enemy_glow_body, enemy_glow_head: enemy_glow_head, enemy_head: enemy_head, enemy_hp_max: enemy_hp_max, enemy_respawn: enemy_respawn, enemy_vis: enemy_vis, enemy_vis_sh: enemy_vis_sh, esx: esx, esz: esz, exrx: exrx, exrz: exrz, ext_n: ext_n, exx: exx, exy: exy, exz: exz, fire2_vis: fire2_vis, fire_vis: fire_vis, fire_w: fire_w, flash_vis: flash_vis, geo_n: geo_n, ground_vis: ground_vis, gun_dmg: gun_dmg, deagle_body: deagle_body, deagle_leg: deagle_leg, deagle_head: deagle_head, deagle_scale: deagle_scale, vm_deagle: vm_deagle, snd_rifle: snd_rifle, snd_deagle: snd_deagle, snd_launcher: snd_launcher, snd_explosion: snd_explosion, snd_reload: snd_reload, gun_pitch: gun_pitch, gun_roll: gun_roll, gun_yaw: gun_yaw, hand_joint: hand_joint, head_vis: head_vis, heal_channel: heal_channel, heal_vis: heal_vis, kat_pitch: kat_pitch, kat_roll: kat_roll, kat_scale: kat_scale, kat_scale_tp: kat_scale_tp, kat_swing_clip: kat_swing_clip, kat_yaw: kat_yaw, lnch_scale: lnch_scale, lnch_scale_tp: lnch_scale_tp, mag_size_w: mag_size_w, max_cells: max_cells, max_remote: max_remote, melee_cooldown: melee_cooldown, melee_dmg: melee_dmg, melee_range: melee_range, nactors: nactors, nade_cooldown: nade_cooldown, nade_dmg: nade_dmg, nade_fuse: nade_fuse, nade_intensity: nade_intensity, nade_kb_radius: nade_kb_radius, nade_radius: nade_radius, nade_throw: nade_throw, nade_vis: nade_vis, php_max: php_max, pk_n: pk_n, pk_respawn: pk_respawn, pktype: pktype, pkx: pkx, pkz: pkz, player_kb: player_kb, pl_i: pl_i, proj_life: proj_life, proj_n: proj_n, proj_speed: proj_speed, proj_vis: proj_vis, psh_max: psh_max, regen_delay: regen_delay, reload_w: reload_w, res_max: res_max, res_refill: res_refill, rifle_scale: rifle_scale, rifle_scale_tp: rifle_scale_tp, rocket_intensity: rocket_intensity, s_game: s_game, shieldcube_vis: shieldcube_vis, shield_vis: shield_vis, s_lobby: s_lobby, smoke_vis: smoke_vis, spark: spark, spawn_r: spawn_r, sp_n: sp_n, spx: spx, spz: spz, s_quit: s_quit, s_title: s_title, tracer_n: tracer_n, upper_mask_root: upper_mask_root, vm_katana: vm_katana, vm_launcher: vm_launcher, vm_rifle: vm_rifle, act_n: act_n, cfg: cfg, net_port: net_port, s_crosshair: s_crosshair, s_pause: s_pause, s_settings: s_settings }
+    let mut env = client::ClientEnv { act_back: act_back, act_dash: act_dash, act_fire: act_fire, act_frag: act_frag, act_fwd: act_fwd, act_grapple: act_grapple, act_heal: act_heal, act_jump: act_jump, act_left: act_left, act_melee: act_melee, actor_scale: actor_scale, actor_yaw_off: actor_yaw_off, actor_yoff: actor_yoff, act_overclock: act_overclock, act_reload: act_reload, act_right: act_right, act_slide: act_slide, act_wep1: act_wep1, act_wep2: act_wep2, ammo_vis: ammo_vis, anim_aim: anim_aim, anim_idle: anim_idle, anim_jump: anim_jump, anim_run: anim_run, anim_shoot: anim_shoot, body_vis: body_vis, bot_kb: bot_kb, bot_n: bot_n, cell_shield: cell_shield, crate_n: crate_n, crates: crates, crate_vis: crate_vis, drop_n: drop_n, enemy_glow_body: enemy_glow_body, enemy_glow_head: enemy_glow_head, enemy_head: enemy_head, enemy_hp_max: enemy_hp_max, enemy_respawn: enemy_respawn, enemy_vis: enemy_vis, enemy_vis_sh: enemy_vis_sh, esx: esx, esz: esz, exrx: exrx, exrz: exrz, ext_n: ext_n, exx: exx, exy: exy, exz: exz, fire2_vis: fire2_vis, fire_vis: fire_vis, fire_w: fire_w, flash_vis: flash_vis, geo_n: geo_n, ground_vis: ground_vis, gun_dmg: gun_dmg, deagle_body: deagle_body, deagle_leg: deagle_leg, deagle_head: deagle_head, deagle_scale: deagle_scale, vm_deagle: vm_deagle, snd_rifle: snd_rifle, snd_deagle: snd_deagle, snd_launcher: snd_launcher, snd_explosion: snd_explosion, snd_reload: snd_reload, snd_music: snd_music, gun_pitch: gun_pitch, gun_roll: gun_roll, gun_yaw: gun_yaw, hand_joint: hand_joint, head_vis: head_vis, heal_channel: heal_channel, heal_vis: heal_vis, kat_pitch: kat_pitch, kat_roll: kat_roll, kat_scale: kat_scale, kat_scale_tp: kat_scale_tp, kat_swing_clip: kat_swing_clip, kat_yaw: kat_yaw, lnch_scale: lnch_scale, lnch_scale_tp: lnch_scale_tp, mag_size_w: mag_size_w, max_cells: max_cells, max_remote: max_remote, melee_cooldown: melee_cooldown, melee_dmg: melee_dmg, melee_range: melee_range, nactors: nactors, nade_cooldown: nade_cooldown, nade_dmg: nade_dmg, nade_fuse: nade_fuse, nade_intensity: nade_intensity, nade_kb_radius: nade_kb_radius, nade_radius: nade_radius, nade_throw: nade_throw, nade_vis: nade_vis, php_max: php_max, pk_n: pk_n, pk_respawn: pk_respawn, pktype: pktype, pkx: pkx, pkz: pkz, player_kb: player_kb, pl_i: pl_i, proj_life: proj_life, proj_n: proj_n, proj_speed: proj_speed, proj_vis: proj_vis, psh_max: psh_max, regen_delay: regen_delay, reload_w: reload_w, res_max: res_max, res_refill: res_refill, rifle_scale: rifle_scale, rifle_scale_tp: rifle_scale_tp, rocket_intensity: rocket_intensity, s_game: s_game, shieldcube_vis: shieldcube_vis, shield_vis: shield_vis, s_lobby: s_lobby, smoke_vis: smoke_vis, spark: spark, spawn_r: spawn_r, sp_n: sp_n, spx: spx, spz: spz, s_quit: s_quit, s_title: s_title, tracer_n: tracer_n, upper_mask_root: upper_mask_root, vm_katana: vm_katana, vm_launcher: vm_launcher, vm_rifle: vm_rifle, act_n: act_n, cfg: cfg, net_port: net_port, s_crosshair: s_crosshair, s_pause: s_pause, s_settings: s_settings }
     loop {
         if cs.screen == s_quit { break }
 
