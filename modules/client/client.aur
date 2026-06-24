@@ -259,6 +259,8 @@ struct ClientEnv {
     snd_launcher: i64,
     snd_explosion: i64,
     snd_reload: i64,
+    snd_reload_pistol: i64,
+    snd_reload_launcher: i64,
     snd_music: i64,
     // Six stone footstep variants, laid out [L1,L2,L3,R1,R2,R3] for L/R alternation.
     snd_step: [i64; 6],
@@ -369,6 +371,14 @@ struct ClientEnv {
 // leaving run_game (which would drop the frozen solo server). Returns 1 when BACK or Escape closes
 // it, else 0. The caller draws the menu-only "Crosshair editor" button separately. (mx,my,clicked)
 // are the active pointer for this context (menu mouse, or the pause overlay's edge-detected click).
+// The reload SFX for a weapon: pistol clack for the deagle (2), a heavy mechanical chunk for the
+// launcher (1), the assault-rifle reload for the rifle (0).
+fn reload_snd(env: ClientEnv, wpn: i64) -> i64 {
+    if wpn == 2 { return env.snd_reload_pistol }
+    if wpn == 1 { return env.snd_reload_launcher }
+    return env.snd_reload
+}
+
 fn settings_panel(cs: ClientState, env: ClientEnv, mx: i64, my: i64, clicked: i64) -> i64 {
     let cx = cs.fbw / 2
     let wht = 255 * 65536 + 255 * 256 + 255
@@ -1664,7 +1674,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     ax = fx; ay = fy; az = fz
                     let mut crl = env.reload_w[cs.actors[ci].wpn]
                     if cs.oc_active { crl = env.reload_w[cs.actors[ci].wpn] * 0.4 }
-                    if input_down(env.act_reload) > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[cs.actors[ci].wpn] < env.mag_size_w[cs.actors[ci].wpn] and cs.actors[ci].res[cs.actors[ci].wpn] > 0 and cs.dead == false { cs.actors[ci].rl = crl; cs.actors[ci].rlw = cs.actors[ci].wpn; play_sound_handle(env.snd_reload, 120) }
+                    if input_down(env.act_reload) > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[cs.actors[ci].wpn] < env.mag_size_w[cs.actors[ci].wpn] and cs.actors[ci].res[cs.actors[ci].wpn] > 0 and cs.dead == false { cs.actors[ci].rl = crl; cs.actors[ci].rlw = cs.actors[ci].wpn; play_sound_handle(reload_snd(env, cs.actors[ci].wpn), 120) }
                     // Fire intent: rifle/launcher are full-auto (fire while held). The Desert Eagle is
                     // SINGLE-FIRE: it only fires on a fresh press (rising edge), gated further by its own
                     // long cooldown below. cs.fire_held tracks the button across frames for the edge.
@@ -1801,7 +1811,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 let wp = cs.actors[ci].wpn
                 if want > 0 and cs.actors[ci].mag[wp] > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].heal <= 0.0 and cs.actors[ci].fcd <= 0.0 {
                     cs.actors[ci].mag[wp] = cs.actors[ci].mag[wp] - 1
-                    if cs.actors[ci].mag[wp] <= 0 and cs.actors[ci].res[wp] > 0 { cs.actors[ci].rl = env.reload_w[wp]; cs.actors[ci].rlw = wp; if mine == 1 { play_sound_handle(env.snd_reload, 120) } }
+                    if cs.actors[ci].mag[wp] <= 0 and cs.actors[ci].res[wp] > 0 { cs.actors[ci].rl = env.reload_w[wp]; cs.actors[ci].rlw = wp; if mine == 1 { play_sound_handle(reload_snd(env, wp), 120) } }
                     if ci != env.pl_i { cs.ashoot[ci] = 0.6 }   // hold the shoot overlay across brief fire gaps
                     if ci == env.pl_i { cs.fp_shot = 0.30; cs.fp_rpulse = 1 }   // local FP recoil: kick the arms, restart clip 23
                     let ox = sox + ax * 0.6
