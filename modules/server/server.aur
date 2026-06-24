@@ -1086,7 +1086,10 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             if tdist > 18.0 { bcfg[2] = 12.5 }
             sim::sim_step(w.bot_state[ei2], bin, bcfg)
         } else {
-            phys3d_set_pos(h, w.esx[ei2], 0.0 - 50.0, w.esz[ei2])
+            // DEAD: leave the body where it FELL (do not park it underground) so its death
+            // animation is visible to clients - exactly like a downed remote player, whose body
+            // also stays at its death spot. reset_bot_state() teleports it to spawn on respawn.
+            // (Combat only targets/moves live actors (hp>0), so the resting corpse is inert.)
             w.brains[ei2].resp = w.brains[ei2].resp - dt
             if w.brains[ei2].resp <= 0.0 and w.death_done[ei2] == 1 {
                 w.actors[ei2].hp = 100.0
