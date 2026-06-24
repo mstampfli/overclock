@@ -849,6 +849,11 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             f32_store(w.bot_state[ei2], 1, phys3d_y(h))
             f32_store(w.bot_state[ei2], 2, phys3d_z(h))
             f32_store(w.bot_state[ei2], 21, (h + 1) as f64)
+            // UNIFY: hand this bot's sim state (incl. its body handle, slot 21) to the netcode, which
+            // now STEPS it with the same run_sim as a networked player. From here the host only sets
+            // the bot's INPUT (its AI decision); net_update moves it + broadcasts it on the player channel.
+            net_set_bot_state(ei2, w.bot_state[ei2])
+            net_set_bot_alive(ei2, 1)
         }
         w.brains[ei2].pop = w.brains[ei2].pop - dt
         if w.brains[ei2].pop < 0.0 { w.brains[ei2].pop = 0.0 }
@@ -1110,14 +1115,15 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             // Bots run a touch faster than base player ground speed (on top of the slide-hops/dashes
             // above) and sprint when far, so they can cross the arena for ammo + enemies
             // like the old direct-velocity bots did. Same sim_step, just bot-tuned ground speed.
-            let mut bcfg = sim::default_cfg()
-            bcfg[2] = 9.5
-            if tdist > 18.0 { bcfg[2] = 12.5 }
-            sim::sim_step(w.bot_state[ei2], bin, bcfg)
+            // UNIFY: feed the AI's decision to the netcode as this bot's INPUT - net_update steps it
+            // with the SAME sim + default_cfg as a networked player (so bots move at player speed). No
+            // local sim_step, no bot-only config: the bot is now just a player with a local input source.
+            net_set_bot_input(ei2, bin)
         } else {
-            // DEAD: park the COLLIDER out of the world so the corpse can't be shot or block bullets
-            // (no hitmarkers on a body, no bullet-absorbing corpse). The body still RENDERS at the
-            // death spot - broadcast_bots sends w.death_* for a dead bot, not this parked position.
+            // DEAD: tell the netcode to STOP simming this bot (net_set_bot_alive 0) so its corpse
+            // stays frozen, and park the COLLIDER out of the world so it can't be shot or block
+            // bullets. The frozen sim state keeps broadcasting it at the death spot.
+            net_set_bot_alive(ei2, 0)
             phys3d_set_pos(h, w.death_x[ei2], 0.0 - 50.0, w.death_z[ei2])
             w.brains[ei2].resp = w.brains[ei2].resp - dt
             if w.brains[ei2].resp <= 0.0 and w.death_done[ei2] == 1 {
@@ -1131,6 +1137,10 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                 w.actors[ei2].heal = 0.0
                 w.brains[ei2].vy = 0.0
                 reset_bot_state(w, ei2, w.esx[ei2], w.esz[ei2])
+                // Re-seed the netcode bot with the fresh spawn state + bring it back to life so the
+                // netcode steps it again from the spawn point.
+                net_set_bot_state(ei2, w.bot_state[ei2])
+                net_set_bot_alive(ei2, 1)
             }
         }
         ei2 = ei2 + 1
@@ -1171,22 +1181,9 @@ fn broadcast_bots(w: world::World) -> i64 {
     net_set_bot_count(w.round.bots)
     let mut b2 = 0
     while b2 < w.round.bots {
-        let h = w.actors[b2].hdl
-        // A live bot broadcasts its body position; a DEAD bot broadcasts its frozen death spot (its
-        // collider is parked underground so it can't be shot), so the corpse renders where it fell.
-        let mut bbx = phys3d_x(h)
-        let mut bby = phys3d_y(h)
-        let mut bbz = phys3d_z(h)
-        if w.actors[b2].hp <= 0.0 {
-            bbx = w.death_x[b2]
-            bby = w.death_y[b2]
-            bbz = w.death_z[b2]
-        }
-        // Broadcast the bot's facing in the SAME convention a human client sends (raw look-yaw, =
-        // pi - draw_face), so the client renders bots and players with ONE formula - no pid<1000
-        // special case. (A human sends look-yaw; the renderer faces pi - look-yaw. A bot faces
-        // draw_face, so it sends pi - draw_face, and pi - (pi - draw_face) = draw_face.)
-        net_set_bot(b2, bbx, bby, bbz, 3.14159 - w.brains[b2].face)
+        // Position + yaw are now written by the netcode SIM (net_update steps the bot exactly like a
+        // player and stores its state on the player channel). broadcast_bots only pushes the
+        // game-owned META - hp/ammo/scoreboard/grapple/etc. - same as the meta a human relays.
         net_set_bot_name(b2, srv_bot_name(b2))   // so guests see the bot's real name in feed/scoreboard
         net_set_bot_meta(b2, 0, w.actors[b2].hp)
         net_set_bot_meta(b2, 1, w.actors[b2].sh)
