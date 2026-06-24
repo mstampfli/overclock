@@ -48,6 +48,9 @@ struct ClientState {
 
     // Hit feedback + HUD framebuffer size.
     hit_t: f64, hxp: f64, hyp: f64, hzp: f64, hitmark: f64, killmark: f64, fbw: i64, fbh: i64,
+    // First-person arms animation state: base-clip + upper-overlay-clip latches (mirrors the
+    // per-actor astate/ushoot, but for the local FP mannequin) + a per-shot recoil pulse.
+    fp_astate: i64, fp_ushoot: i64, fp_shot: f64, fp_pwpn: i64,
 
     // Score.
     kills: i64, deaths: i64,
@@ -145,6 +148,7 @@ fn new_client_state() -> ClientState {
         settings: [0.0; 100],
         net_mode: 0, net_started: false, lobby_full: false, join_addr: "", addr_len: 0,
         hit_t: 0.0, hxp: 0.0, hyp: 0.0, hzp: 0.0, hitmark: 0.0, killmark: 0.0, fbw: 0, fbh: 0,
+        fp_astate: 0 - 99, fp_ushoot: 0 - 1, fp_shot: 0.0, fp_pwpn: 0 - 1,
         kills: 0, deaths: 0,
         apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9],
         g_resp_ctr: 0.0, g_heal_ctr: 0.0, g_hp_prev: 100.0, g_pk_cells: 0, g_pk_res: 60,
@@ -259,6 +263,15 @@ struct ClientEnv {
     snd_overclock: i64,
     // Looping arena ambience bed (subtle, plays under the music).
     snd_ambience: i64,
+    // First-person arms: a dedicated mannequin instance glued to the camera, with the weapon
+    // bone-attached to the hand joint (29) - same skeleton/offsets as the third-person hold.
+    // The body is shifted BACK so the head/torso sit behind the near plane and only the arms
+    // reach into view. All four are data-driven; tweak and re-run to frame the arms.
+    fp_arms: i64,
+    fp_back: f64,
+    fp_eye: f64,
+    fp_lift: f64,
+    fp_scale: f64,
     geo_n: i64,
     ground_vis: i64,
     gun_dmg: f64,
@@ -2535,80 +2548,56 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             pi = pi + 1
         }
 
-        // ---- First-person weapon viewmodel: the equipped gun (or the katana mid-swing),
-        // built from boxes and pinned to the camera. Master offset bor/bou/bof = right/down/fwd.
-        if cs.dead == false {
-            let vex = px + sjx
-            let vey = eye + sjy
-            let vez = pz + sjz
-            let vrgt = sqrt(fx * fx + fz * fz)
-            let mut vrx = 1.0
-            let mut vrz = 0.0
-            if vrgt > 0.001 { vrx = (0.0 - fz) / vrgt; vrz = fx / vrgt }
-            let vux = 0.0 - vrz * fy
-            let vuy = vrgt
-            let vuz = vrx * fy
-            let byaw = atan2(fx, fz)
-            let bpitch = 0.0 - eff_pitch
-            let mut recoil = cs.actors[5].fcd * 0.5     // gun kicks back briefly after each shot
-            if recoil < 0.0 { recoil = 0.0 }            // fcd can dip slightly negative (carry); no negative kick
-            let bor = 0.16                            // right
-            let mut bou = 0.0 - 0.15                  // down
-            let mut bof = 0.40 - recoil               // forward
-            // Reload: cs.dip the gun down + back, then bring it up again (a bump over the reload time).
-            if cs.actors[5].rl > 0.0 {
-                let rfr = cs.actors[5].rl / env.reload_w[cs.actors[5].wpn]
-                let rdip = sin(rfr * 3.14159) * 0.34
-                bou = bou - rdip
-                bof = bof - rdip * 0.25
-            }
-            if cs.actors[5].heal > 0.0 {
-                // SHIELD-UP: hold the blue energy cube up in view while channeling a shield-apply.
-                // The weapon is stowed (you can't fire mid-channel); the cube charges - it grows +
-                // spins as the channel fills. This is the first-person half of the shield-up anim
-                // (the third-person half rides meta 16 so other players read the vulnerable channel).
-                let chp = cs.actors[5].heal / env.heal_channel               // 0 -> 1 channel progress
-                let bob = sin(cs.etime * 6.0) * 0.02
-                let cu = bou + 0.04 + bob                             // a bit DOWN (was up + centred)
-                let cf = bof + 0.20                                   // pushed FURTHER out in front
-                let cr = bor - 0.05
-                let scx = vex + vrx * cr + vux * cu + fx * cf
-                let scy = vey + vuy * cu + fy * cf
-                let scz = vez + vrz * cr + vuz * cu + fz * cf
-                r3d_draw(env.shieldcube_vis, scx, scy, scz, cs.etime * 1.6, cs.etime * 1.2, 0.0, 0.8 + chp * 0.3)
+        // ---- First-person ARMS: the local player's own mannequin, glued to the camera, with the
+        // weapon bone-attached to the hand joint (29) - the SAME skeleton + hand offsets as the
+        // third-person hold, so the grip matches exactly. The body is shifted BACK (env.fp_back)
+        // so the head/torso fall behind the near plane and only the arms reach into view. The arms
+        // aim up/down via the same clip-18/19/20 blend the third-person upper overlay uses.
+        if cs.dead == false and env.fp_arms >= 0 {
+            let cam_x = px + sjx
+            let cam_y = eye + sjy
+            let cam_z = pz + sjz
+            let fh = sqrt(fx * fx + fz * fz)
+            let mut fhx = 0.0
+            let mut fhz = 1.0
+            if fh > 0.001 { fhx = fx / fh; fhz = fz / fh }
+            // Root the rig under-and-behind the camera so the arms frame forward (riding the view bob).
+            let fp_x = cam_x - fhx * env.fp_back
+            let fp_z = cam_z - fhz * env.fp_back
+            let fp_y = cam_y - env.fp_eye + env.fp_lift
+            let fp_yaw = atan2(fx, fz) + env.actor_yaw_off
+            let fp_sc = env.actor_scale * env.fp_scale
+            let healing = cs.actors[5].heal > 0.0
+            let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
+            // Base layer: a quiet looping idle (legs are out of view; this just keeps the rig live).
+            if cs.fp_astate != env.anim_idle { r3d_anim_play(env.fp_arms, env.anim_idle, 1, 1.0, 0.12); cs.fp_astate = env.anim_idle }
+            // Upper overlay: aim look up/down - a weighted blend of clips 18 (down) / 19 (mid) /
+            // 20 (up) by the LOCAL eff_pitch (the same value the remotes read via replicated meta 19).
+            // Flip the (eff_pitch +/- ...) sign if it reads inverted in-game.
+            let mut pw = (eff_pitch + 0.9) / 1.8
+            if pw < 0.0 { pw = 0.0 }
+            if pw > 1.0 { pw = 1.0 }
+            let mut ca = 18
+            let mut cb = 19
+            let mut bw = pw * 2.0
+            if pw > 0.5 { ca = 19; cb = 20; bw = (pw - 0.5) * 2.0 }
+            r3d_anim_aim_upper(env.fp_arms, ca, cb, bw, 1.0, 0.18, env.upper_mask_root)
+            cs.fp_ushoot = 0 - 1
+            r3d_anim_update(env.fp_arms, dt)
+            // Draw the arms, then the held item bone-attached to the hand joint (29). During a shield
+            // channel the gun is stowed for the energy cube; while meleeing it is the katana; else the gun.
+            r3d_draw(env.fp_arms, fp_x, fp_y, fp_z, fp_yaw, 0.0, 0.0, fp_sc)
+            if healing {
+                r3d_draw_on_joint(env.shieldcube_vis, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, 0.0, 0.0, fp_sc, cs.hand_ox, cs.hand_oy + 0.18, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, 1.6)
+            } else { if katana_on {
+                r3d_draw_on_joint(env.vm_katana, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, 0.0, 0.0, fp_sc, cs.kat_hand_ox, cs.kat_hand_oy, cs.kat_hand_oz, cs.kat_hand_oyaw, cs.kat_hand_opitch, cs.kat_hand_oroll, env.kat_scale_tp)
             } else {
-                let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
-                if katana_on {
-                    // A real diagonal slash: the blade sweeps upper-right -> lower-left AND tilts down
-                    // through the arc (the mesh isn't rigged, so we animate its whole transform).
-                    let sp = (cs.melee_cd - (env.melee_cooldown - 0.35)) / 0.35   // 1 -> 0 over the slash
-                    let prog = 1.0 - sp
-                    let swr = bor + 0.30 - prog * 0.46
-                    let swu = bou + 0.26 - prog * 0.44
-                    let swp = (0.5 - sp) * 1.6                             // blade pitches down through it
-                    let swrl = (sp - 0.5) * 1.4                            // and rolls into the cut
-                    let kx = vex + vrx * swr + vux * swu + fx * bof
-                    let ky = vey + vuy * swu + fy * bof
-                    let kz = vez + vrz * swr + vuz * swu + fz * bof
-                    r3d_draw(env.vm_katana, kx, ky, kz, byaw + env.kat_yaw, bpitch + env.kat_pitch + swp, env.kat_roll + swrl, env.kat_scale)
-                } else {
-                    let wx = vex + vrx * bor + vux * bou + fx * bof
-                    let wy = vey + vuy * bou + fy * bof
-                    let wz = vez + vrz * bor + vuz * bou + fz * bof
-                    if cs.actors[5].wpn == 0 {
-                        r3d_draw(env.vm_rifle, wx, wy, wz, byaw + env.gun_yaw, bpitch + env.gun_pitch, env.gun_roll, env.rifle_scale)
-                    } else { if cs.actors[5].wpn == 2 {
-                        // Deagle rides CLOSER to the camera than the rifle (a smaller mesh reads better up close).
-                        let dbof = bof - 0.12
-                        let dwx = vex + vrx * bor + vux * bou + fx * dbof
-                        let dwy = vey + vuy * bou + fy * dbof
-                        let dwz = vez + vrz * bor + vuz * bou + fz * dbof
-                        r3d_draw(env.vm_deagle, dwx, dwy, dwz, byaw + env.gun_yaw, bpitch + env.gun_pitch, env.gun_roll, env.deagle_scale)
-                    } else {
-                        r3d_draw(env.vm_launcher, wx, wy, wz, byaw + env.gun_yaw, bpitch + env.gun_pitch, env.gun_roll, env.lnch_scale)
-                    } }
-                }
-            }
+                let mut wm = env.vm_rifle
+                let mut wsc = env.rifle_scale_tp
+                if cs.actors[5].wpn == 2 { wm = env.vm_deagle; wsc = env.deagle_scale }
+                if cs.actors[5].wpn == 1 { wm = env.vm_launcher; wsc = env.lnch_scale_tp }
+                r3d_draw_on_joint(wm, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, 0.0, 0.0, fp_sc, cs.hand_ox, cs.hand_oy, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, wsc)
+            } }
         }
 
         // Impact env.spark for a few frames after the player's shot (the tracer line itself is
