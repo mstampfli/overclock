@@ -2661,21 +2661,20 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 cs.fp_ushoot = 0 - 1
             } } }
             r3d_anim_update(env.fp_arms, dt)
-            // Place the root in the CAMERA frame (right fp_ox / up voff / forward fp_back), NOT the
-            // model's negated-yaw frame - so the root sits at a fixed screen-right spot and does NOT
-            // orbit the camera as you turn (that orbit was what beat the weapon centre<->side). The
-            // up/down ride is kept (camera up * voff). Only the arm itself still swings a little.
-            let lcp = cos(cs.fp_lpit)
-            let lfx = lcp * sin(cs.fp_lyaw)
-            let lfy = sin(cs.fp_lpit)
-            let lfz = lcp * cos(cs.fp_lyaw)
-            let cux = (0.0 - lfy) * sin(cs.fp_lyaw)
-            let cuy = lcp
-            let cuz = (0.0 - lfy) * cos(cs.fp_lyaw)
+            // The base offset (voff up, fp_back forward) sits in the RIG's own facing frame
+            // R(fp_yaw, fp_pitch) - which is screen-fixed because the rig faces where you look, so
+            // the CENTRED arms track the view perfectly. The lateral MUST use the SAME frame: the
+            // rig's own RIGHT vector (cos fp_yaw, -sin fp_yaw). Using the raw camera yaw (fp_lyaw)
+            // instead made the offset rotate the OPPOSITE way (fp_yaw = pi - fp_lyaw), so turning
+            // swept the weapon off the right ("rotating into it"). Same frame -> it stays put.
+            let sp = sin(fp_pitch)
+            let cp = cos(fp_pitch)
+            let syw = sin(fp_yaw)
+            let cyw = cos(fp_yaw)
             let voff = cs.fp_lift - cs.fp_eye
-            let fp_x = cam_x + cos(cs.fp_lyaw) * cs.fp_ox + cux * voff + lfx * cs.fp_back
-            let fp_y = cam_y + cuy * voff + lfy * cs.fp_back
-            let fp_z = cam_z + (0.0 - sin(cs.fp_lyaw)) * cs.fp_ox + cuz * voff + lfz * cs.fp_back
+            let fp_x = cam_x + cyw * cs.fp_ox + (sp * syw) * voff + (cp * syw) * cs.fp_back
+            let fp_y = cam_y + cp * voff + (0.0 - sp) * cs.fp_back
+            let fp_z = cam_z + (0.0 - syw) * cs.fp_ox + (sp * cyw) * voff + (cp * cyw) * cs.fp_back
             // Draw the arms, then the held item bone-attached to the hand joint (29). During a shield
             // channel the gun is stowed for the energy cube; while meleeing it is the katana; else the gun.
             r3d_draw(env.fp_arms, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc)
