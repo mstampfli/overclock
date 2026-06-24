@@ -281,6 +281,7 @@ struct ClientEnv {
     fp_eye: f64,
     fp_lift: f64,
     fp_scale: f64,
+    fp_pitch_follow: f64,
     geo_n: i64,
     ground_vis: i64,
     gun_dmg: f64,
@@ -2585,6 +2586,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let fp_y = cam_y - env.fp_eye + env.fp_lift
             let fp_yaw = atan2(fx, fz) + env.actor_yaw_off
             let fp_sc = env.actor_scale * env.fp_scale
+            // Pitch the whole rig with the camera so the arms + weapon follow your up/down look
+            // (on top of the aim clips). Tunable amount; flip the sign if it reads inverted.
+            let fp_pitch = (0.0 - eff_pitch) * env.fp_pitch_follow
             let healing = cs.actors[5].heal > 0.0
             let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
             // Base layer: a quiet looping idle (legs are out of view; this just keeps the rig live).
@@ -2621,17 +2625,20 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             r3d_anim_update(env.fp_arms, dt)
             // Draw the arms, then the held item bone-attached to the hand joint (29). During a shield
             // channel the gun is stowed for the energy cube; while meleeing it is the katana; else the gun.
-            r3d_draw(env.fp_arms, fp_x, fp_y, fp_z, fp_yaw, 0.0, 0.0, fp_sc)
+            r3d_draw(env.fp_arms, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc)
             if healing {
-                r3d_draw_on_joint(env.shieldcube_vis, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, 0.0, 0.0, fp_sc, cs.hand_ox, cs.hand_oy + 0.18, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, 1.6)
+                r3d_draw_on_joint(env.shieldcube_vis, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc, cs.hand_ox, cs.hand_oy + 0.18, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, 1.6)
             } else { if katana_on {
-                r3d_draw_on_joint(env.vm_katana, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, 0.0, 0.0, fp_sc, cs.kat_hand_ox, cs.kat_hand_oy, cs.kat_hand_oz, cs.kat_hand_oyaw, cs.kat_hand_opitch, cs.kat_hand_oroll, env.kat_scale_tp)
+                r3d_draw_on_joint(env.vm_katana, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc, cs.kat_hand_ox, cs.kat_hand_oy, cs.kat_hand_oz, cs.kat_hand_oyaw, cs.kat_hand_opitch, cs.kat_hand_oroll, env.kat_scale_tp)
             } else {
                 let mut wm = env.vm_rifle
                 let mut wsc = env.rifle_scale_tp
-                if cs.actors[5].wpn == 2 { wm = env.vm_deagle; wsc = env.deagle_scale }
+                // Deagle keeps a CONSTANT on-screen size: dividing by fp_scale cancels the rig
+                // shrink (fp_sc * wsc = actor_scale * deagle_scale), so shrinking the arms makes
+                // the rifle/launcher smaller but leaves the deagle as-is.
+                if cs.actors[5].wpn == 2 { wm = env.vm_deagle; wsc = env.deagle_scale / env.fp_scale }
                 if cs.actors[5].wpn == 1 { wm = env.vm_launcher; wsc = env.lnch_scale_tp }
-                r3d_draw_on_joint(wm, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, 0.0, 0.0, fp_sc, cs.hand_ox, cs.hand_oy, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, wsc)
+                r3d_draw_on_joint(wm, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc, cs.hand_ox, cs.hand_oy, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, wsc)
             } }
         }
 
