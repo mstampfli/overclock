@@ -1126,9 +1126,12 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             if want_slide == 1 { f32_store(bin, 4, 1.0) }   // slide-hop (one-frame edge; sim starts the slide)
             if want_dash == 1 { f32_store(bin, 5, 1.0) }    // dash juke (one-frame edge)
             f32_store(bin, 6, dt)
-            f32_store(bin, 14, w.brains[ei2].kx)
-            f32_store(bin, 15, w.brains[ei2].ky)
-            f32_store(bin, 16, w.brains[ei2].kz)
+            // Knockback (blast/grapple) goes through the SAME server impulse channel a player's does
+            // - net_push_impulse keyed by the bot's net id (1000+i). The netcode's impulse override
+            // writes it into the sim input, so the AI never stuffs the knockback slots itself.
+            if w.brains[ei2].kx != 0.0 or w.brains[ei2].ky != 0.0 or w.brains[ei2].kz != 0.0 {
+                net_push_impulse(1000 + ei2, w.brains[ei2].kx, w.brains[ei2].ky, w.brains[ei2].kz)
+            }
             w.brains[ei2].kx = 0.0
             w.brains[ei2].ky = 0.0
             w.brains[ei2].kz = 0.0
