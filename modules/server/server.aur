@@ -45,23 +45,61 @@ fn smart_respawn(w: world::World, myslot: i64, pid: i64, claimed: [i64; 8]) -> i
     0
 }
 
-// Shared respawn RESTORE for ANY actor (bot or client) - the common state both respawn paths must
-// set: full hp, no shield/cells, re-arm the death sweep (death_done), clear the last killer. ONE
-// source of truth so the bot path (auto-respawn on the timer) and the client path (respawn on the
-// player's signal) can't drift apart - the dead-body-underground bug was exactly that kind of drift.
-// Bot-specific extras (ammo refill, AI-state reset / spawn teleport) stay in the bot path; a client
-// owns its own ammo + position.
+// Shared respawn RESTORE for ANY actor (bot or client), called from the ONE unified respawn_tick:
+// full hp, no shield/cells, re-arm the death sweep (death_done), clear the last killer, fresh ammo.
+// There is a single respawn path now - players and bots can't drift apart (the dead-body-underground
+// bug was exactly that kind of drift). The teleport itself is the netcode's (net_force_respawn).
 fn respawn_actor(w: world::World, slot: i64) {
     w.actors[slot].hp = 100.0
     w.actors[slot].sh = 0.0
     w.actors[slot].cells = 0
     w.death_done[slot] = 0
     w.last_hit[slot] = 0 - 1
+    // Fresh loadout. The server owns a bot's ammo (its AI fires from these); for a player this is
+    // harmless - the client owns + predicts its own and the host never broadcasts mag/res. Shared
+    // either way, so the respawn has NO per-actor-type branch.
+    w.actors[slot].mag[0] = 30
+    w.actors[slot].mag[1] = 1
+    w.actors[slot].res[0] = 60
+    w.actors[slot].res[1] = 2
+    w.actors[slot].rl = 0.0
+    w.actors[slot].heal = 0.0
 }
 
 // Keep a physics body per connected client, positioned at its replicated net position, so bots can
 // hitscan-hit it and the host owns its hp. Maps each client's net id to a slot (6..8), inits hp on
 // first sight, and replicates the host-owned hp/shield back to the client (it predicts + reconciles).
+// THE UNIFIED RESPAWN - ONE function for EVERY actor, players and bots handled identically. Run once
+// per tick after deaths_tick. For any dead combatant it keeps choosing a far spawn point (server owns
+// WHERE), counts the shared death timer (server owns WHEN), and when it elapses restores hp/ammo +
+// FORCES the teleport through the netcode (net_force_respawn). The ONLY thing that varies by actor
+// type is the net id the override is keyed on - a bot rides BOT_ID_BASE+slot, a client its own pid;
+// the logic is a single path. A player also predicts its respawn client-side for feel, but this is the
+// authority that lands it (the meta-9 ack, replicated in sync_clients from cresp_seen, clears its wait).
+fn respawn_tick(w: world::World, dt: f64) -> i64 {
+    let mut claimed = [0; 8]   // spawn points reserved this frame so no two respawners share one
+    let mut s = 0
+    while s < 9 {
+        let is_bot = s < w.round.bots
+        let is_client = s >= 6 and w.apid[s] != 9999
+        if (is_bot or is_client) and w.actors[s].hp <= 0.0 {
+            // This actor's net id - the one difference: bots ride BOT_ID_BASE+slot, clients their pid.
+            let mut aid = 1000 + s
+            if is_client { aid = w.apid[s] }
+            smart_respawn(w, s, aid, claimed)              // WHERE: far from enemies, refreshed each frame
+            if w.brains[s].resp > 0.0 {
+                w.brains[s].resp = w.brains[s].resp - dt   // WHEN: count the shared death timer down
+            } else { if w.death_done[s] == 1 {
+                respawn_actor(w, s)                        // restore hp/shield/ammo (shared)
+                net_force_respawn(aid)                     // server teleports it to the chosen point
+                w.cresp_seen[s] = net_player_meta(aid, 3) as i64   // ack (replicated as meta 9; no-op for a bot)
+            } }
+        }
+        s = s + 1
+    }
+    0
+}
+
 fn sync_clients(w: world::World) -> i64 {
     let mut k = 6
     while k < 9 {
@@ -69,7 +107,6 @@ fn sync_clients(w: world::World) -> i64 {
         k = k + 1
     }
     let pc = net_player_count()
-    let mut claimed = [0; 8]   // spawn points reserved by dead clients this frame (no two share one)
     let mut slot = 6
     let mut pj = 0
     while pj < pc and slot < 9 {
@@ -89,31 +126,9 @@ fn sync_clients(w: world::World) -> i64 {
                 w.cmelee_seen[slot] = net_player_meta(pid, 17) as i64
                 w.ammo_evt[slot] = 0
             }
-            // RESPAWN HANDSHAKE: a client signals a respawn by ++ its meta 3; the host owns the
-            // result (restore full hp, re-arm the death sweep) and echoes the counter back as meta 9
-            // so the client knows the respawn really landed (instead of trusting a stale hp).
-            // While this client is DEAD, the server keeps choosing its respawn point FAR from everyone
-            // (refreshed each frame so it's current when it comes back) - it never respawns where it died
-            // on the loot it dropped. It also counts down the server's OWN respawn timer (armed at death
-            // in deaths_tick), so the server - not the client - owns WHEN you come back.
-            if w.actors[slot].hp <= 0.0 {
-                smart_respawn(w, slot, pid, claimed)
-                if w.brains[slot].resp > 0.0 {
-                    w.brains[slot].resp = w.brains[slot].resp - 0.016
-                } else { if w.death_done[slot] == 1 {
-                    // SERVER-AUTHORITATIVE auto-respawn the instant the shared 3s timer elapses -
-                    // the EXACT same path a bot takes (bots_tick). The player no longer asks to come
-                    // back; the host owns WHEN (the timer) and WHERE (smart_respawn above) and just
-                    // restores hp here. The client still predicts its own respawn for responsiveness,
-                    // but this is the authority - it can't respawn early and a forged signal does nothing.
-                    respawn_actor(w, slot)
-                    // ACK ONLY NOW (hp is restored): meta 9 catches up to the client's respawn counter
-                    // so its g_resp_wait clears AFTER full hp lands. Setting it every frame (the old bug)
-                    // cleared the wait early -> the client reconciled to the still-0 hp and INSTANTLY
-                    // re-died on respawn. The ack must mean "your hp is back", not "I saw your request".
-                    w.cresp_seen[slot] = net_player_meta(pid, 3) as i64
-                } }
-            }
+            // RESPAWN is handled in respawn_tick now - ONE shared path for players and bots, run after
+            // deaths_tick. It restores this client's hp + updates cresp_seen; the meta-9 ack replicated
+            // below then clears the client's respawn wait once its hp is actually back.
             // HEAL HANDSHAKE: a client signals a shield-pop by ++ its meta 5; the host owns the result
             // (spend one carried cell for +25 shield). Without this the client could collect cells but
             // never actually convert them - the "shield disappears / can't pop it" bug.
@@ -1143,28 +1158,15 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             // local sim_step, no bot-only config: the bot is now just a player with a local input source.
             net_set_bot_input(ei2, bin)
         } else {
-            // DEAD: tell the netcode to STOP simming this bot (net_set_bot_alive 0) so its corpse
-            // stays frozen, and park the COLLIDER out of the world so it can't be shot or block
-            // bullets. The frozen sim state keeps broadcasting it at the death spot.
-            net_set_bot_alive(ei2, 0)
-            phys3d_set_pos(h, w.death_x[ei2], 0.0 - 50.0, w.death_z[ei2])
-            w.brains[ei2].resp = w.brains[ei2].resp - dt
-            if w.brains[ei2].resp <= 0.0 and w.death_done[ei2] == 1 {
-                respawn_actor(w, ei2)   // shared restore - identical to a client's respawn
-                // Bot-only: the server owns a bot's ammo + body, so refill + reset the AI sim state.
-                w.actors[ei2].mag[0] = 30
-                w.actors[ei2].mag[1] = 1
-                w.actors[ei2].res[0] = 60
-                w.actors[ei2].res[1] = 2
-                w.actors[ei2].rl = 0.0
-                w.actors[ei2].heal = 0.0
-                w.brains[ei2].vy = 0.0
-                reset_bot_state(w, ei2, w.esx[ei2], w.esz[ei2])
-                // Re-seed the netcode bot with the fresh spawn state + bring it back to life so the
-                // netcode steps it again from the spawn point.
-                net_set_bot_state(ei2, w.bot_state[ei2])
-                net_set_bot_alive(ei2, 1)
-            }
+            // DEAD: feed ZERO movement input so the body stops + falls under gravity - EXACTLY what a
+            // player's client does when dead. The respawn (timer, far spawn point, hp restore, the
+            // teleport) is owned entirely by respawn_tick, the ONE shared path for players and bots.
+            // The brain decides nothing here; it's just an input source going quiet.
+            let bin = w.bot_input
+            let mut zz = 0
+            while zz < 24 { f32_store(bin, zz, 0.0); zz = zz + 1 }
+            f32_store(bin, 6, dt)
+            net_set_bot_input(ei2, bin)
         }
         ei2 = ei2 + 1
     }
@@ -1280,6 +1282,8 @@ fn server_main() -> i64 {
     net_spawn_input_slot(17)       // input[17..19] = respawn point -> SERVER overwrites it (authoritative)
     net_impulse_input_slot(14)     // input[14..16] = blast knockback -> SERVER originates it (a client
                                    // can't withhold its own shove; remotes get blasted by every blast)
+    net_respawn_trigger_slot(8)    // input[8] = respawn request -> SERVER forces it (net_force_respawn)
+                                   // so WHEN every actor respawns is server-owned, the same for all
     net_sim(|state, input| {
         sim::sim_step(state, input, sim::default_cfg())
         0
@@ -1315,6 +1319,7 @@ fn server_main() -> i64 {
             projectiles_tick(w, 0.016)
             grenade_tick(w, 0.016)
             deaths_tick(w)
+            respawn_tick(w, 0.016)   // ONE shared respawn for players AND bots (after deaths arm the timer)
             loot_tick(w, 0.016)
             pickups_tick(w, 0.016)
             round_tick(w, 0.016)
