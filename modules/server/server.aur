@@ -98,14 +98,20 @@ fn sync_clients(w: world::World) -> i64 {
             // in deaths_tick), so the server - not the client - owns WHEN you come back.
             if w.actors[slot].hp <= 0.0 {
                 smart_respawn(w, slot, pid, claimed)
-                if w.brains[slot].resp > 0.0 { w.brains[slot].resp = w.brains[slot].resp - 0.016 }
+                if w.brains[slot].resp > 0.0 {
+                    w.brains[slot].resp = w.brains[slot].resp - 0.016
+                } else { if w.death_done[slot] == 1 {
+                    // SERVER-AUTHORITATIVE auto-respawn the instant the shared 3s timer elapses -
+                    // the EXACT same path a bot takes (bots_tick). The player no longer asks to come
+                    // back; the host owns WHEN (the timer) and WHERE (smart_respawn above) and just
+                    // restores hp here. The client still predicts its own respawn for responsiveness,
+                    // but this is the authority - it can't respawn early and a forged signal does nothing.
+                    respawn_actor(w, slot)
+                } }
             }
-            // Respawn: honour the client's request (++meta 3) ONLY after the server timer elapses.
-            let rc = net_player_meta(pid, 3) as i64
-            if rc != w.cresp_seen[slot] and w.brains[slot].resp <= 0.0 {
-                w.cresp_seen[slot] = rc
-                respawn_actor(w, slot)   // shared restore - identical to a bot's respawn
-            }
+            // Keep the respawn-ack echo (meta 9) current so the client's prediction reconciles. The
+            // server NO LONGER gates respawn on the client's ++meta3 - it owns the timer above.
+            w.cresp_seen[slot] = net_player_meta(pid, 3) as i64
             // HEAL HANDSHAKE: a client signals a shield-pop by ++ its meta 5; the host owns the result
             // (spend one carried cell for +25 shield). Without this the client could collect cells but
             // never actually convert them - the "shield disappears / can't pop it" bug.
