@@ -776,9 +776,14 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     f32_store(state, 2, phys3d_z(player))
     let landed = phys3d_grounded(player) == 1
     f32_store(state, 7, landed as f64)
-    // Zero downward velocity on landing (use both the post-move grounded and the
-    // start-of-tick down-ray so an edge/step mismatch can't leak a plunge).
-    if landed or grounded {
+    // Zero downward velocity ONLY on real contact (the post-move grounded flag). Do NOT also
+    // zero it on the loose start-of-tick down-ray (`grounded`, which reaches 0.3m below the
+    // capsule): that stopped the fall ~0.3m up and let gravity creep you down at a few mm/tick
+    // (the "land above the floor and slowly glide down" bug, which also kept state[7] false so
+    // footsteps went silent). The controller's snap_to_ground (0.3m) glues you on flat ground +
+    // small steps, so contact stays solid without the loose ray; a genuine fall now keeps full
+    // gravity speed and lands cleanly in a tick or two.
+    if landed {
         if vy < 0.0 { f32_store(state, 5, 0.0) }
     }
     // CEILING: if we were moving UP meaningfully but rose far LESS than we should have, we
