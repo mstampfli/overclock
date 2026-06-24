@@ -47,7 +47,7 @@ struct ClientState {
     net_mode: i64, net_started: bool, lobby_full: bool, join_addr: str, addr_len: i64,
 
     // Hit feedback + HUD framebuffer size.
-    hit_t: f64, hxp: f64, hyp: f64, hzp: f64, hitmark: f64, killmark: f64, fbw: i64, fbh: i64,
+    hit_t: f64, hxp: f64, hyp: f64, hzp: f64, hitmark: f64, killmark: f64, fbw: i64, fbh: i64, fps_sm: f64,
     // First-person arms animation state: base-clip + upper-overlay-clip latches (mirrors the
     // per-actor astate/ushoot, but for the local FP mannequin), a decaying recoil timer + a
     // 1-frame "just fired" pulse that restarts the recoil clip on every shot.
@@ -161,7 +161,7 @@ fn new_client_state() -> ClientState {
         ch_size: 0, ch_gap: 0, ch_thick: 0, ch_dot: 0, ch_r: 0, ch_g: 0, ch_b: 0, active_preset: 0,
         settings: [0.0; 100],
         net_mode: 0, net_started: false, lobby_full: false, join_addr: "", addr_len: 0,
-        hit_t: 0.0, hxp: 0.0, hyp: 0.0, hzp: 0.0, hitmark: 0.0, killmark: 0.0, fbw: 0, fbh: 0,
+        hit_t: 0.0, hxp: 0.0, hyp: 0.0, hzp: 0.0, hitmark: 0.0, killmark: 0.0, fbw: 0, fbh: 0, fps_sm: 60.0,
         fp_astate: 0 - 99, fp_ushoot: 0 - 1, fp_shot: 0.0, fp_rpulse: 0,
         fp_back: 0.32, fp_eye: 1.55, fp_lift: 0.0 - 0.09, fp_scale: 0.85, fp_pitchf: 1.0,
         w_hox: [0.0; 3], w_hoy: [0.0; 3], w_hoz: [0.0; 3], w_hyaw: [0.0; 3], w_hpit: [0.0; 3], w_hrol: [0.0; 3], w_hsc: [1.0; 3],
@@ -888,6 +888,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         // so the numerator is ~0 and the speed reads 0 (idle pose) regardless.
         let mut safedt = dt
         if safedt < 0.0001 { safedt = 0.0001 }
+        // Smoothed FPS for the on-screen readout (EMA so the number is readable, not jittery).
+        cs.fps_sm = cs.fps_sm + (1.0 / safedt - cs.fps_sm) * 0.1
 
         // Mouse look (skipped while paused so the released cursor doesn't swing the view).
         if paused == false {
@@ -2989,6 +2991,13 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         // BUILD STAMP (bright green, top-left): confirms which binary is actually running.
         // If this text is missing or says an older tag, you are running a STALE exe.
         draw_text(12, 12, "BUILD NETV2-22 host==guest + bot shield-AI", 18, 65280)
+        // Live FPS (top-right), colour-coded so perf is visible at a glance: green >55, amber 30-55,
+        // red <30. The engine also logs avg fps + the chosen GPU to stderr once per second.
+        let mut fpsc = 65280
+        if cs.fps_sm < 55.0 { fpsc = 255 * 65536 + 200 * 256 + 40 }
+        if cs.fps_sm < 30.0 { fpsc = 255 * 65536 + 60 * 256 + 60 }
+        draw_text(cs.fbw - 104, 12, "FPS", 18, fpsc)
+        draw_int(cs.fbw - 58, 12, cs.fps_sm as i64, 22, fpsc)
         // GUEST join/disconnect banner: "joining" until the host inits our character, and a clear
         // "disconnected" -> back to the menu if the host vanishes (net_connected goes false).
         if cs.net_mode == 2 {
