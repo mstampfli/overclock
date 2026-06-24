@@ -2647,9 +2647,10 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let fp_x = cam_x + uxv * voff + lfx * cs.fp_back
             let fp_y = cam_y + uyv * voff + lfy * cs.fp_back
             let fp_z = cam_z + uzv * voff + lfz * cs.fp_back
-            // Orient to the look (the known-good floating-viewmodel convention); fp_face/fp_pitchf flip
-            // the horizontal/vertical sign if the mannequin's axes read inverted.
-            let fp_yaw = atan2(lfx, lfz) + env.actor_yaw_off + cs.fp_face
+            // Orient to the look. The mannequin's yaw reads MIRRORED, so NEGATE the look yaw (an
+            // offset via fp_face only rotates it, it does not reverse the turn direction). fp_pitchf
+            // flips the vertical tilt sign.
+            let fp_yaw = (0.0 - atan2(lfx, lfz)) + env.actor_yaw_off + cs.fp_face
             let fp_pitch = (0.0 - cs.fp_lpit) * cs.fp_pitchf
             let fp_sc = env.actor_scale * cs.fp_scale
             let healing = cs.actors[5].heal > 0.0
