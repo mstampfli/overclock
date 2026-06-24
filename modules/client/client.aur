@@ -1139,6 +1139,12 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 let mut shk = impact * 0.008
                 if shk > 0.085 { shk = 0.085 }
                 if shk > cs.shake { cs.shake = shk }
+                // Touchdown thud: a firmer footstep on landing, louder the harder you fell.
+                let mut lg = 48 + (impact * 9.0) as i64
+                if lg > 115 { lg = 115 }
+                play_sound_handle(env.snd_step[cs.astep_i[env.pl_i] % 6], lg)
+                cs.astep_i[env.pl_i] = cs.astep_i[env.pl_i] + 1
+                cs.astep[env.pl_i] = 0.0   // reset the stride accumulator so the next walk step doesn't double up
             }
         }
         cs.prev_vy = vy_now
