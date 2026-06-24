@@ -21,7 +21,8 @@ reload.wav
 
 music_synthwave.wav
   Looping dark-synthwave background bed. Decoded from the OGG, downmixed to one
-  channel, high-passed + loudness-normalized (the loop seam is left intact).
+  channel, high-passed, presence/treble-lifted (it read muffled in mono) +
+  loudness-normalized (the loop seam is left intact).
   Source : https://opengameart.org/content/synthwave-house-loop
   License: CC0 1.0 (public domain, no rights reserved)
 
