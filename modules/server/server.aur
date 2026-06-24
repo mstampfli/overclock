@@ -162,8 +162,15 @@ fn sync_clients(w: world::World) -> i64 {
             if w.actors[slot].hdl < 0 {
                 w.actors[slot].hdl = phys3d_add_character(0.0, 0.9, 0.0, 0.6, 0.3)
             }
-            // Track the client's authoritative position (re-simmed by net_update) with its body.
-            phys3d_set_pos(w.actors[slot].hdl, net_player_x(pid), net_player_y(pid), net_player_z(pid))
+            // Track the client's authoritative position (re-simmed by net_update) with its body -
+            // UNLESS it's dead: then park the collider out of the world so the corpse can't be shot
+            // or block bullets (no hitmarkers on a body). Other clients still render the corpse from
+            // this client's own broadcast position, which freezes at its death spot.
+            if w.actors[slot].hp <= 0.0 {
+                phys3d_set_pos(w.actors[slot].hdl, net_player_x(pid), 0.0 - 50.0, net_player_z(pid))
+            } else {
+                phys3d_set_pos(w.actors[slot].hdl, net_player_x(pid), net_player_y(pid), net_player_z(pid))
+            }
             // Replicate the host-owned hp/shield/cells + scoreboard to the client.
             net_set_player_meta(pid, 0, w.actors[slot].hp)
             net_set_player_meta(pid, 1, w.actors[slot].sh)
@@ -414,10 +421,16 @@ fn deaths_tick(w: world::World) -> i64 {
             w.actors[dv].hp = 0.0
             w.actors[dv].sh = 0.0
             w.adeaths[dv] = w.adeaths[dv] + 1
-            // Loot at the body: a health pickup + an ammo box always, plus a shield cell if it
-            // was carrying one (so the kill returns the resource to the arena).
+            // FREEZE the corpse exactly where it fell: record the death spot (the body renders here
+            // while its collider is parked out of the world) and kill its velocity so it can't coast
+            // forward a step after dying. Same for bots and clients - one place, one behaviour.
             let dbx = phys3d_x(w.actors[dv].hdl)
+            let dby = phys3d_y(w.actors[dv].hdl)
             let dbz = phys3d_z(w.actors[dv].hdl)
+            w.death_x[dv] = dbx
+            w.death_y[dv] = dby
+            w.death_z[dv] = dbz
+            phys3d_set_vel(w.actors[dv].hdl, 0.0, 0.0, 0.0)
             spawn_drop(w, dbx, dbz, 0.0)
             spawn_drop(w, dbx - 0.6, dbz, 2.0)
             if w.actors[dv].cells > 0 { spawn_drop(w, dbx + 0.6, dbz, 1.0) }
@@ -1102,10 +1115,10 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             if tdist > 18.0 { bcfg[2] = 12.5 }
             sim::sim_step(w.bot_state[ei2], bin, bcfg)
         } else {
-            // DEAD: leave the body where it FELL (do not park it underground) so its death
-            // animation is visible to clients - exactly like a downed remote player, whose body
-            // also stays at its death spot. reset_bot_state() teleports it to spawn on respawn.
-            // (Combat only targets/moves live actors (hp>0), so the resting corpse is inert.)
+            // DEAD: park the COLLIDER out of the world so the corpse can't be shot or block bullets
+            // (no hitmarkers on a body, no bullet-absorbing corpse). The body still RENDERS at the
+            // death spot - broadcast_bots sends w.death_* for a dead bot, not this parked position.
+            phys3d_set_pos(h, w.death_x[ei2], 0.0 - 50.0, w.death_z[ei2])
             w.brains[ei2].resp = w.brains[ei2].resp - dt
             if w.brains[ei2].resp <= 0.0 and w.death_done[ei2] == 1 {
                 respawn_actor(w, ei2)   // shared restore - identical to a client's respawn
@@ -1159,7 +1172,21 @@ fn broadcast_bots(w: world::World) -> i64 {
     let mut b2 = 0
     while b2 < w.round.bots {
         let h = w.actors[b2].hdl
-        net_set_bot(b2, phys3d_x(h), phys3d_y(h), phys3d_z(h), w.brains[b2].face)
+        // A live bot broadcasts its body position; a DEAD bot broadcasts its frozen death spot (its
+        // collider is parked underground so it can't be shot), so the corpse renders where it fell.
+        let mut bbx = phys3d_x(h)
+        let mut bby = phys3d_y(h)
+        let mut bbz = phys3d_z(h)
+        if w.actors[b2].hp <= 0.0 {
+            bbx = w.death_x[b2]
+            bby = w.death_y[b2]
+            bbz = w.death_z[b2]
+        }
+        // Broadcast the bot's facing in the SAME convention a human client sends (raw look-yaw, =
+        // pi - draw_face), so the client renders bots and players with ONE formula - no pid<1000
+        // special case. (A human sends look-yaw; the renderer faces pi - look-yaw. A bot faces
+        // draw_face, so it sends pi - draw_face, and pi - (pi - draw_face) = draw_face.)
+        net_set_bot(b2, bbx, bby, bbz, 3.14159 - w.brains[b2].face)
         net_set_bot_name(b2, srv_bot_name(b2))   // so guests see the bot's real name in feed/scoreboard
         net_set_bot_meta(b2, 0, w.actors[b2].hp)
         net_set_bot_meta(b2, 1, w.actors[b2].sh)

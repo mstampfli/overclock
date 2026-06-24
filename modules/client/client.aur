@@ -2453,14 +2453,11 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 cs.actors[ai].gay = net_player_meta(pid, 13)
                 cs.actors[ai].gaz = net_player_meta(pid, 14)
                 cs.actors[ai].gat = net_player_meta(pid, 15)
-                let mut eyaw = net_player_yaw(pid)
-                // HUMAN remotes broadcast their raw LOOK-cs.yaw. The renderer faces (sin cs.yaw, cos cs.yaw)
-                // (glam from_euler YXZ, model local forward +Z - confirmed by bots, drawn with
-                // face=atan2(dx,dz)). The player's look forward is (sin eyaw, -cos eyaw), so the
-                // correct draw-cs.yaw is PI - eyaw (makes sin/cos match the look dir). NOT eyaw+PI,
-                // which X-flips (looking east renders facing west). Bots (pid>=1000) already
-                // broadcast draw-space `face`, so leave them.
-                if pid < 1000 { eyaw = 3.14159 - eyaw }
+                // ONE facing formula for EVERY actor - no bot/player distinction. Everyone (humans
+                // AND bots) now broadcasts raw look-yaw; the renderer faces (sin, cos), and the look
+                // forward is (sin, -cos), so the draw-yaw is pi - look-yaw. (The server converts a
+                // bot's draw-face to look-yaw before broadcasting, so this works uniformly.)
+                let eyaw = 3.14159 - net_player_yaw(pid)
                 // GUEST displays the host's replicated hp/shield. HOST OWNS this client's hp/
                 // shield (managed in the survivability block above), so it stays host-owned here.
                 if cs.net_mode == 2 { cs.actors[ai].hp = rhp; cs.actors[ai].sh = net_player_meta(pid, 1) }
