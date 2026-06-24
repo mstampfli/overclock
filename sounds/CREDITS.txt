@@ -57,3 +57,15 @@ ambience.wav
   seam is left intact.
   Source : https://opengameart.org/content/50-cc0-sci-fi-sfx
   License: CC0 1.0 (public domain, no rights reserved)
+
+swing.wav / slash.wav / throw.wav
+  Katana swoosh, slash connect and grenade-throw whoosh, from the "Swishes Sound
+  Pack" (swish air sounds), downmixed to one channel, silence-trimmed + normalized.
+  Source : https://opengameart.org/content/swishes-sound-pack
+  License: CC0 1.0 (public domain, no rights reserved)
+
+grapple.wav
+  Grapple-fire launch. The "shoot_01" sound from the CC0 sci-fi set, downmixed
+  to one channel, trimmed + normalized.
+  Source : https://opengameart.org/content/50-cc0-sci-fi-sfx
+  License: CC0 1.0 (public domain, no rights reserved)

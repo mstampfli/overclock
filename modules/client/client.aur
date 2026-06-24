@@ -264,6 +264,11 @@ struct ClientEnv {
     snd_overclock: i64,
     // Looping arena ambience bed (subtle, plays under the music).
     snd_ambience: i64,
+    // Your own action SFX (centered): katana swoosh / slash connect / grapple fire / grenade throw.
+    snd_swing: i64,
+    snd_slash: i64,
+    snd_grapple: i64,
+    snd_throw: i64,
     // First-person arms: a dedicated mannequin instance glued to the camera, with the weapon
     // bone-attached to the hand joint (29) - same skeleton/offsets as the third-person hold.
     // The body is shifted BACK so the head/torso sit behind the near plane and only the arms
@@ -1212,7 +1217,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         if mkey > 0 and cs.melee_prev == 0 and cs.melee_cd <= 0.0 and cs.dead == false {
             cs.melee_cd = env.melee_cooldown
             cs.g_melee_ctr = cs.g_melee_ctr + 1   // tell the host to apply an authoritative swing (meta 17)
-            play_noise(60, 16)   // swing swoosh
+            play_sound_handle(env.snd_swing, 85)   // real katana swoosh
             // Arc/cone sweep - a katana SLASH, not a needle. Hit EVERY actor within reach and
             // inside the ~120-deg swing arc, with a line-of-sight check so walls block it.
             // HOST: the slash is authoritative, so it also cleaves remote clients (slots past env.pl_i),
@@ -1243,7 +1248,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         cs.brains[mvk].pop = 0.2
                         cs.hitmark = 0.2
                         cs.shake = 0.4
-                        play_sound(0 - 18, 105, 0)   // heavy slash thud
+                        play_sound_handle(env.snd_slash, 95)   // real slash connect
                         let mhx = phys3d_x(cs.actors[mvk].hdl as i64)
                         let mhy = phys3d_y(cs.actors[mvk].hdl as i64) + 0.5
                         let mhz = phys3d_z(cs.actors[mvk].hdl as i64)
@@ -1311,7 +1316,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     cs.grapple_on = true
                     cs.g_time = 0.0
                     cs.g_lx = px; cs.g_ly = py; cs.g_lz = pz
-                    play_sound(0 - 6, 55, 0)   // grapple-fire thunk
+                    play_sound_handle(env.snd_grapple, 80)   // real grapple-fire launch
                 }
             }
         }
@@ -1340,7 +1345,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             cs.nade_cd = env.nade_cooldown
             cs.nade_acc = 0.0
             cs.nade_grace = env.nade_fuse + 0.7   // this throw's server grenade is ours until ~fuse+RTT - hide its fx copy
-            play_sound(0 - 14, 90, 0)   // soft throw pop
+            play_sound_handle(env.snd_throw, 85)   // real grenade-throw whoosh
             // GUEST: send the LAUNCH INTENT (origin + throw velocity). The host re-simulates the
             // arc itself to decide where it detonates - we never tell it the result. We still fly
             // + detonate our own copy locally as prediction.
