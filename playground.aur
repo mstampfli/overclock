@@ -194,11 +194,13 @@ fn main() {
     fhide = 45
     while fhide <= 52 { r3d_hide_joint(fp_arms, fhide); fhide = fhide + 1 }
     // FP rig framing (live-tunable as cs.fp_* via the P tuner).
-    cs.fp_back = 0.22          // forward offset of the rig (smaller = arms sit closer to the cam)
-    cs.fp_ox = 0.12            // lateral (screen-right) shift, so the weapon sits to the side not dead-centre
-    cs.fp_eye = 1.55
+    // The weapon now lands at a fixed CAMERA-SPACE spot (the hand bone is cancelled out): right by
+    // fp_ox, down by -fp_lift, forward by fp_back. So it stays put on screen at any view angle.
+    cs.fp_back = 0.30          // forward distance of the weapon from the cam (smaller = closer)
+    cs.fp_ox = 0.16            // screen-right of the weapon (so it sits to the side, not dead-centre)
+    cs.fp_eye = 1.55           // (unused now: placement cancels the real hand bone instead of this)
     cs.fp_face = 3.14159       // FACING offset (front/back): pi = arms face away (you see the backs); 0 = face you. Turn DIRECTION is the negated yaw above, independent of this.
-    cs.fp_lift = 0.0 - 0.09     // drop the arms a bit lower in view
+    cs.fp_lift = 0.0 - 0.22     // weapon vertical in cam space (negative = below the cam)
     cs.fp_scale = 0.85          // arms (+ rifle/launcher) a bit smaller
     cs.fp_pitchf = 1.0          // pitch tilt direction (-eff_pitch); set -1 to invert the up/down tilt
     cs.fp_dead = 0.0            // 0 = HARD screen-lock (no lag); raise it for a hold-then-recenter deadzone
@@ -212,7 +214,7 @@ fn main() {
     }
     cs.w_hsc[0] = rifle_scale_tp   // 0.18
     cs.w_hsc[1] = lnch_scale_tp    // 0.495
-    cs.w_hsc[2] = 0.118            // deagle ~ its prior on-screen size (0.10 / 0.85); tune in-game
+    cs.w_hsc[2] = 0.20             // deagle ~1.7x bigger (was 0.118); tune in-game
     // Downloaded CC0 MANNEQUIN + 46-clip animation library (Quaternius Universal Animation
     // Library, glTF mirror). One model instance PER actor so each animates independently
     // (idle / run / jump from its real motion). Any actor whose load fails (-1) falls back to

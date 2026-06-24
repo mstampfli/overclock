@@ -2633,22 +2633,6 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let fp_yaw = (0.0 - cs.fp_lyaw) + env.actor_yaw_off + cs.fp_face
             let fp_pitch = (0.0 - cs.fp_lpit) * cs.fp_pitchf
             let fp_sc = env.actor_scale * cs.fp_scale
-            // RIGID camera attachment (the "box bolted to the cam"): offset the root in the MODEL's OWN
-            // rotated frame R(fp_yaw, fp_pitch), so the camera-down offset CANCELS the skeleton's
-            // shoulder-height bone offset. The arms then sit at a near-fixed spot and pitch WITH the
-            // view as one rigid unit, instead of the body swinging forward/down when you look down.
-            let sp = sin(fp_pitch)
-            let cp = cos(fp_pitch)
-            let syw = sin(fp_yaw)
-            let cyw = cos(fp_yaw)
-            let voff = cs.fp_lift - cs.fp_eye
-            // Lateral shift along the CAMERA right vector (screen-right), so the weapon can sit to the
-            // side instead of dead-centre. forward=(sin,cos) -> right=(cos,-sin) of the look yaw.
-            let crx = cos(cs.fp_lyaw) * cs.fp_ox
-            let crz = (0.0 - sin(cs.fp_lyaw)) * cs.fp_ox
-            let fp_x = cam_x + (sp * syw) * voff + (cp * syw) * cs.fp_back + crx
-            let fp_y = cam_y + cp * voff + (0.0 - sp) * cs.fp_back
-            let fp_z = cam_z + (sp * cyw) * voff + (cp * cyw) * cs.fp_back + crz
             let healing = cs.actors[5].heal > 0.0
             let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
             // Base layer: a quiet looping idle (legs are out of view; this just keeps the rig live).
@@ -2677,6 +2661,40 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 cs.fp_ushoot = 0 - 1
             } } }
             r3d_anim_update(env.fp_arms, dt)
+            // ANGLE-STABLE PLACEMENT: cancel the hand bone's actual model-space position (read from the
+            // now-posed skeleton) so the HAND - where the weapon attaches - lands at a fixed CAMERA-space
+            // spot regardless of yaw/pitch. Root = cam + camera-frame framing - R(fp_yaw,fp_pitch)*(hand).
+            let hpx = r3d_joint_pos(env.fp_arms, env.hand_joint, 0) * fp_sc
+            let hpy = r3d_joint_pos(env.fp_arms, env.hand_joint, 1) * fp_sc
+            let hpz = r3d_joint_pos(env.fp_arms, env.hand_joint, 2) * fp_sc
+            let sp = sin(fp_pitch)
+            let cp = cos(fp_pitch)
+            let syw = sin(fp_yaw)
+            let cyw = cos(fp_yaw)
+            // R(fp_yaw,fp_pitch) * hand  (YXZ: Rx then Ry)
+            let ax = hpx
+            let ay = hpy * cp - hpz * sp
+            let az = hpy * sp + hpz * cp
+            let rhx = ax * cyw + az * syw
+            let rhy = ay
+            let rhz = (0.0 - ax) * syw + az * cyw
+            // Camera basis at the lagged look, for the screen-locked framing of the weapon spot.
+            let lcp = cos(cs.fp_lpit)
+            let cfx = lcp * sin(cs.fp_lyaw)
+            let cfy = sin(cs.fp_lpit)
+            let cfz = lcp * cos(cs.fp_lyaw)
+            let crx = cos(cs.fp_lyaw)
+            let crz = 0.0 - sin(cs.fp_lyaw)
+            let cux = 0.0 - cfy * sin(cs.fp_lyaw)
+            let cuy = lcp
+            let cuz = 0.0 - cfy * cos(cs.fp_lyaw)
+            // Weapon spot in camera space: right * fp_ox, up * fp_lift (down if negative), forward * fp_back.
+            let frx = crx * cs.fp_ox + cux * cs.fp_lift + cfx * cs.fp_back
+            let fry = cuy * cs.fp_lift + cfy * cs.fp_back
+            let frz = crz * cs.fp_ox + cuz * cs.fp_lift + cfz * cs.fp_back
+            let fp_x = cam_x + frx - rhx
+            let fp_y = cam_y + fry - rhy
+            let fp_z = cam_z + frz - rhz
             // Draw the arms, then the held item bone-attached to the hand joint (29). During a shield
             // channel the gun is stowed for the energy cube; while meleeing it is the katana; else the gun.
             r3d_draw(env.fp_arms, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc)
