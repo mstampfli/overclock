@@ -38,3 +38,15 @@ hit.wav / headshot.wav / kill.wav
   high-passed + normalized.
   Source : https://opengameart.org/content/interface-sounds  (kenney.nl)
   License: CC0 1.0 (public domain, no rights reserved)
+
+pickup_health.wav / pickup_shield.wav / pickup_ammo.wav
+  Pickup chimes (health / shield cell / ammo). From Kenney's "Interface Sounds"
+  (pluck / bong / drop), downmixed to one channel, high-passed + normalized.
+  Source : https://opengameart.org/content/interface-sounds  (kenney.nl)
+  License: CC0 1.0 (public domain, no rights reserved)
+
+overclock.wav
+  The overclock activation surge. The "teleport" sound from a CC0 sci-fi SFX
+  set, downmixed to one channel + normalized.
+  Source : https://opengameart.org/content/50-cc0-sci-fi-sfx
+  License: CC0 1.0 (public domain, no rights reserved)

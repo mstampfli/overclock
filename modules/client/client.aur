@@ -252,6 +252,11 @@ struct ClientEnv {
     snd_hit: i64,
     snd_headshot: i64,
     snd_kill: i64,
+    // Pickup chimes + the overclock activation surge (all centered UI feedback).
+    snd_pick_health: i64,
+    snd_pick_shield: i64,
+    snd_pick_ammo: i64,
+    snd_overclock: i64,
     geo_n: i64,
     ground_vis: i64,
     gun_dmg: f64,
@@ -1019,13 +1024,13 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     // SERVER-DRIVEN pickup sounds: the host owns collection, so play the sound when my
                     // replicated hp/cells (or local ammo refill) goes UP. Reliable, vs the old local-
                     // prediction sound that raced the host's collect + usually lost (= "no sound").
-                    if newhp > cs.g_hp_prev + 0.5 and cs.g_hp_prev > 0.5 and cs.dead == false and cs.prev_dead == false { play_sound(7, 80, 0) }   // health pad
+                    if newhp > cs.g_hp_prev + 0.5 and cs.g_hp_prev > 0.5 and cs.dead == false and cs.prev_dead == false { play_sound_handle(env.snd_pick_health, 90) }   // health pad
                     cs.g_hp_prev = newhp
                     cs.actors[env.pl_i].hp = newhp
                 }
                 cs.actors[env.pl_i].sh = net_player_meta(amy, 1)
                 let cells_now = net_player_meta(amy, 4) as i64
-                if cells_now > cs.g_pk_cells and cs.dead == false and cs.prev_dead == false { play_sound(14, 90, 0) }   // shield cell
+                if cells_now > cs.g_pk_cells and cs.dead == false and cs.prev_dead == false { play_sound_handle(env.snd_pick_shield, 95) }   // shield cell
                 cs.g_pk_cells = cells_now
                 cs.actors[env.pl_i].cells = cells_now
                 // SERVER-CONFIRMED ammo pickups: the host owns collection and ++ meta 18. We PREDICT a
@@ -1039,7 +1044,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     cs.actors[env.pl_i].res[cwp2] = cs.actors[env.pl_i].res[cwp2] + env.res_refill[cwp2] * (ammo_srv - cs.g_ammo_applied)
                     if cs.actors[env.pl_i].res[cwp2] > env.res_max[cwp2] { cs.actors[env.pl_i].res[cwp2] = env.res_max[cwp2] }
                     cs.g_ammo_applied = ammo_srv
-                    play_sound(10, 80, 0)
+                    play_sound_handle(env.snd_pick_ammo, 90)
                 }
             }
         }
@@ -1907,7 +1912,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                                 } else {
                                     // Ammo: refill the EQUIPPED weapon's reserve. On a guest this is PREDICTION;
                                     // we count it (cs.g_ammo_applied) so the server-confirm reconcile cs.won't double it.
-                                    if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.pkcd[fp] = env.pk_respawn; if mine == 1 { play_sound(10, 80, 0); cs.g_ammo_applied = cs.g_ammo_applied + 1 } }
+                                    if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.pkcd[fp] = env.pk_respawn; if mine == 1 { play_sound_handle(env.snd_pick_ammo, 90); cs.g_ammo_applied = cs.g_ammo_applied + 1 } }
                             } }
                         }
                     }
@@ -1924,7 +1929,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             } else { if cs.droptype[gp] < 1.5 {
                                     if cs.actors[ci].cells < env.max_cells { cs.actors[ci].cells = cs.actors[ci].cells + 1; cs.droplife[gp] = 0.0; }
                                 } else {
-                                    if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.droplife[gp] = 0.0; if mine == 1 { play_sound(10, 80, 0) } }
+                                    if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.droplife[gp] = 0.0; if mine == 1 { play_sound_handle(env.snd_pick_ammo, 90) } }
                             } }
                         }
                     }
@@ -2054,9 +2059,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             cs.g_cd = 0.0
             cs.nade_cd = 0.0
             cs.actors[5].sh = env.psh_max + 25.0
-            play_sound(7, 90, 0)
-            play_sound(14, 150, 0)
-            play_sound(21, 220, 0)
+            play_sound_handle(env.snd_overclock, 130)   // real power-up surge
         }
         if cs.oc_active {
             cs.oc_timer = cs.oc_timer - dt
