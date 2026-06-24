@@ -194,7 +194,8 @@ fn main() {
     fhide = 45
     while fhide <= 52 { r3d_hide_joint(fp_arms, fhide); fhide = fhide + 1 }
     // FP rig framing (live-tunable as cs.fp_* via the P tuner).
-    cs.fp_back = 0.42          // anchor further behind the camera = hands ride CLOSER to the cam
+    cs.fp_back = 0.22          // forward offset of the rig (smaller = arms sit closer to the cam)
+    cs.fp_ox = 0.12            // lateral (screen-right) shift, so the weapon sits to the side not dead-centre
     cs.fp_eye = 1.55
     cs.fp_face = 3.14159       // FACING offset (front/back): pi = arms face away (you see the backs); 0 = face you. Turn DIRECTION is the negated yaw above, independent of this.
     cs.fp_lift = 0.0 - 0.09     // drop the arms a bit lower in view

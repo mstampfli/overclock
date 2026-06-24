@@ -61,7 +61,7 @@ struct ClientState {
     // Screen-lock deadzone: the arms track a LAGGED yaw/pitch that holds while the camera stays
     // within fp_dead, then SMOOTHLY follows + recenters (the fp_eng_* latches gate that follow so a
     // small jitter does not move them, but a real move catches all the way up).
-    fp_lyaw: f64, fp_lpit: f64, fp_dead: f64, fp_eng_y: i64, fp_eng_p: i64, fp_face: f64,
+    fp_lyaw: f64, fp_lpit: f64, fp_dead: f64, fp_eng_y: i64, fp_eng_p: i64, fp_face: f64, fp_ox: f64,
 
     // Score.
     kills: i64, deaths: i64,
@@ -166,7 +166,7 @@ fn new_client_state() -> ClientState {
         fp_back: 0.32, fp_eye: 1.55, fp_lift: 0.0 - 0.09, fp_scale: 0.85, fp_pitchf: 1.0,
         w_hox: [0.0; 3], w_hoy: [0.0; 3], w_hoz: [0.0; 3], w_hyaw: [0.0; 3], w_hpit: [0.0; 3], w_hrol: [0.0; 3], w_hsc: [1.0; 3],
         fp_tune: 0, fp_tsel: 0, fp_tprev: 0, fp_ocp: 0,
-        fp_lyaw: 0.0, fp_lpit: 0.0, fp_dead: 0.0, fp_eng_y: 0, fp_eng_p: 0, fp_face: 3.14159,
+        fp_lyaw: 0.0, fp_lpit: 0.0, fp_dead: 0.0, fp_eng_y: 0, fp_eng_p: 0, fp_face: 3.14159, fp_ox: 0.12,
         kills: 0, deaths: 0,
         apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9],
         g_resp_ctr: 0.0, g_heal_ctr: 0.0, g_hp_prev: 100.0, g_pk_cells: 0, g_pk_res: 60,
@@ -2642,9 +2642,13 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let syw = sin(fp_yaw)
             let cyw = cos(fp_yaw)
             let voff = cs.fp_lift - cs.fp_eye
-            let fp_x = cam_x + (sp * syw) * voff + (cp * syw) * cs.fp_back
+            // Lateral shift along the CAMERA right vector (screen-right), so the weapon can sit to the
+            // side instead of dead-centre. forward=(sin,cos) -> right=(cos,-sin) of the look yaw.
+            let crx = cos(cs.fp_lyaw) * cs.fp_ox
+            let crz = (0.0 - sin(cs.fp_lyaw)) * cs.fp_ox
+            let fp_x = cam_x + (sp * syw) * voff + (cp * syw) * cs.fp_back + crx
             let fp_y = cam_y + cp * voff + (0.0 - sp) * cs.fp_back
-            let fp_z = cam_z + (sp * cyw) * voff + (cp * cyw) * cs.fp_back
+            let fp_z = cam_z + (sp * cyw) * voff + (cp * cyw) * cs.fp_back + crz
             let healing = cs.actors[5].heal > 0.0
             let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
             // Base layer: a quiet looping idle (legs are out of view; this just keeps the rig live).
@@ -2701,7 +2705,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         cs.fp_tprev = fpt
         if cs.fp_tune > 0 {
             let odn = key_down(54)
-            if odn > 0 and cs.fp_ocp == 0 { cs.fp_tsel = cs.fp_tsel + 1; if cs.fp_tsel > 13 { cs.fp_tsel = 0 } }
+            if odn > 0 and cs.fp_ocp == 0 { cs.fp_tsel = cs.fp_tsel + 1; if cs.fp_tsel > 14 { cs.fp_tsel = 0 } }
             cs.fp_ocp = odn
             let mut st = 0.0
             if key_down(48) > 0 { st = 1.0 }
@@ -2728,6 +2732,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             if sel == 11 { cs.w_hsc[wt] = cs.w_hsc[wt] + d }
             if sel == 12 { cs.fp_dead = cs.fp_dead + d }
             if sel == 13 { cs.fp_face = cs.fp_face + d }
+            if sel == 14 { cs.fp_ox = cs.fp_ox + d }
             let gold = 255 * 65536 + 200 * 256 + 60
             let white = 230 * 65536 + 230 * 256 + 230
             let yel = 255 * 65536 + 255 * 256 + 90
@@ -2750,6 +2755,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             draw_text(20, 202, "dead", 14, white); draw_int(90, 202, (cs.fp_dead * 1000.0) as i64, 14, white)
             draw_text(180, 202, "face", 14, white); draw_int(250, 202, (cs.fp_face * 1000.0) as i64, 14, white)
             draw_text(360, 202, "pf", 14, white); draw_int(410, 202, (cs.fp_pitchf * 1000.0) as i64, 14, white)
+            draw_text(500, 202, "ox(14)", 14, white); draw_int(600, 202, (cs.fp_ox * 1000.0) as i64, 14, white)
         }
 
         // Impact env.spark for a few frames after the player's shot (the tracer line itself is
