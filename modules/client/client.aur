@@ -2728,30 +2728,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             if sel == 12 { cs.fp_dead = cs.fp_dead + d }
             if sel == 13 { cs.fp_face = cs.fp_face + d }
             if sel == 14 { cs.fp_ox = cs.fp_ox + d }
-            let gold = 255 * 65536 + 200 * 256 + 60
-            let white = 230 * 65536 + 230 * 256 + 230
-            let yel = 255 * 65536 + 255 * 256 + 90
-            draw_text(20, 88, "FP TUNER   P exit   O next field   I/K adjust", 16, gold)
-            draw_text(20, 112, "sel", 16, white); draw_int(70, 112, sel, 16, yel)
-            draw_text(120, 112, "0bk 1eye 2lift 3scl 4pf 5x 6y 7z 8yaw 9pit 10rol 11hsc 12dead 13face", 13, white)
-            draw_text(20, 134, "wpn(0R/1L/2D)", 16, white); draw_int(220, 134, wt, 16, yel)
-            draw_text(20, 158, "back", 14, white); draw_int(90, 158, (cs.fp_back * 1000.0) as i64, 14, white)
-            draw_text(160, 158, "eye", 14, white); draw_int(220, 158, (cs.fp_eye * 1000.0) as i64, 14, white)
-            draw_text(300, 158, "lift", 14, white); draw_int(360, 158, (cs.fp_lift * 1000.0) as i64, 14, white)
-            draw_text(440, 158, "scl", 14, white); draw_int(500, 158, (cs.fp_scale * 1000.0) as i64, 14, white)
-            draw_text(580, 158, "pf", 14, white); draw_int(630, 158, (cs.fp_pitchf * 1000.0) as i64, 14, white)
-            draw_text(20, 180, "hand x", 14, white); draw_int(110, 180, (cs.w_hox[wt] * 1000.0) as i64, 14, white)
-            draw_text(190, 180, "y", 14, white); draw_int(220, 180, (cs.w_hoy[wt] * 1000.0) as i64, 14, white)
-            draw_text(300, 180, "z", 14, white); draw_int(330, 180, (cs.w_hoz[wt] * 1000.0) as i64, 14, white)
-            draw_text(410, 180, "yaw", 14, white); draw_int(470, 180, (cs.w_hyaw[wt] * 1000.0) as i64, 14, white)
-            draw_text(560, 180, "pit", 14, white); draw_int(620, 180, (cs.w_hpit[wt] * 1000.0) as i64, 14, white)
-            draw_text(710, 180, "rol", 14, white); draw_int(770, 180, (cs.w_hrol[wt] * 1000.0) as i64, 14, white)
-            draw_text(860, 180, "hsc", 14, white); draw_int(920, 180, (cs.w_hsc[wt] * 1000.0) as i64, 14, white)
-            draw_text(20, 202, "dead", 14, white); draw_int(90, 202, (cs.fp_dead * 1000.0) as i64, 14, white)
-            draw_text(180, 202, "face", 14, white); draw_int(250, 202, (cs.fp_face * 1000.0) as i64, 14, white)
-            draw_text(360, 202, "pf", 14, white); draw_int(410, 202, (cs.fp_pitchf * 1000.0) as i64, 14, white)
-            draw_text(500, 202, "ox(14)", 14, white); draw_int(600, 202, (cs.fp_ox * 1000.0) as i64, 14, white)
         }
+        // (FP tuner HUD is drawn LATE - below, after the main HUD - so it isn't overdrawn.)
 
         // Impact env.spark for a few frames after the player's shot (the tracer line itself is
         // now drawn by the unified tracer ring below, so it isn't drawn twice).
@@ -3393,6 +3371,35 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 clienthud::draw_centered("QUIT TO TITLE", cx - 110, ply + 202, 220, 42, 24, col_white)
             }
         }
+        // ===== FP ARMS TUNER HUD (drawn here, AFTER the main HUD, so it is not overdrawn) =====
+        if cs.fp_tune > 0 {
+            let sel = cs.fp_tsel
+            let wt = cs.actors[5].wpn
+            let gold = 255 * 65536 + 200 * 256 + 60
+            let white = 230 * 65536 + 230 * 256 + 230
+            let yel = 255 * 65536 + 255 * 256 + 90
+            draw_text(20, 88, "FP TUNER   P exit   O next field   I/K adjust", 16, gold)
+            draw_text(20, 112, "sel", 16, white); draw_int(70, 112, sel, 16, yel)
+            draw_text(120, 112, "0bk 1eye 2lift 3scl 4pf 5x 6y 7z 8yaw 9pit 10rol 11hsc 12dead 13face 14ox", 13, yel)
+            draw_text(20, 134, "wpn(0R/1L/2D)", 16, white); draw_int(220, 134, wt, 16, yel)
+            draw_text(20, 158, "back", 14, white); draw_int(90, 158, (cs.fp_back * 1000.0) as i64, 14, white)
+            draw_text(160, 158, "eye", 14, white); draw_int(220, 158, (cs.fp_eye * 1000.0) as i64, 14, white)
+            draw_text(300, 158, "lift", 14, white); draw_int(360, 158, (cs.fp_lift * 1000.0) as i64, 14, white)
+            draw_text(440, 158, "scl", 14, white); draw_int(500, 158, (cs.fp_scale * 1000.0) as i64, 14, white)
+            draw_text(580, 158, "pf", 14, white); draw_int(630, 158, (cs.fp_pitchf * 1000.0) as i64, 14, white)
+            draw_text(20, 180, "hand x", 14, white); draw_int(110, 180, (cs.w_hox[wt] * 1000.0) as i64, 14, white)
+            draw_text(190, 180, "y", 14, white); draw_int(220, 180, (cs.w_hoy[wt] * 1000.0) as i64, 14, white)
+            draw_text(300, 180, "z", 14, white); draw_int(330, 180, (cs.w_hoz[wt] * 1000.0) as i64, 14, white)
+            draw_text(410, 180, "yaw", 14, white); draw_int(470, 180, (cs.w_hyaw[wt] * 1000.0) as i64, 14, white)
+            draw_text(560, 180, "pit", 14, white); draw_int(620, 180, (cs.w_hpit[wt] * 1000.0) as i64, 14, white)
+            draw_text(710, 180, "rol", 14, white); draw_int(770, 180, (cs.w_hrol[wt] * 1000.0) as i64, 14, white)
+            draw_text(860, 180, "hsc", 14, white); draw_int(920, 180, (cs.w_hsc[wt] * 1000.0) as i64, 14, white)
+            draw_text(20, 202, "dead", 14, white); draw_int(90, 202, (cs.fp_dead * 1000.0) as i64, 14, white)
+            draw_text(180, 202, "face", 14, white); draw_int(250, 202, (cs.fp_face * 1000.0) as i64, 14, white)
+            draw_text(360, 202, "pf", 14, white); draw_int(410, 202, (cs.fp_pitchf * 1000.0) as i64, 14, white)
+            draw_text(500, 202, "ox", 14, white); draw_int(560, 202, (cs.fp_ox * 1000.0) as i64, 14, white)
+        }
+
         // ===== CLIP / ANIM INSPECTOR (toggle T) =====
         // A dummy mannequin ~3m in front loops a chosen clip so you can identify animations (e.g. find
         // a slide/crouch clip to wire up). T toggles it + flips bots passive (they freeze + hold fire);
