@@ -31,3 +31,10 @@ step0.wav .. step5.wav
   normalized. Laid out [L1,L2,L3,R1,R2,R3] so the game alternates feet.
   Source : https://opengameart.org/content/fantozzis-footsteps-grasssand-stone
   License: CC0 1.0 (public domain, no rights reserved)
+
+hit.wav / headshot.wav / kill.wav
+  Combat feedback: hitmarker tick, headshot ding, kill confirm. From Kenney's
+  "Interface Sounds" (tick / glass / confirmation), downmixed to one channel,
+  high-passed + normalized.
+  Source : https://opengameart.org/content/interface-sounds  (kenney.nl)
+  License: CC0 1.0 (public domain, no rights reserved)

@@ -248,6 +248,10 @@ struct ClientEnv {
     snd_music: i64,
     // Six stone footstep variants, laid out [L1,L2,L3,R1,R2,R3] for L/R alternation.
     snd_step: [i64; 6],
+    // Combat feedback (centered, non-spatial): hitmarker tick / headshot ding / kill confirm.
+    snd_hit: i64,
+    snd_headshot: i64,
+    snd_kill: i64,
     geo_n: i64,
     ground_vis: i64,
     gun_dmg: f64,
@@ -1053,8 +1057,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 if kpid == net_my_id() {
                     cs.killmark = 0.35
                     if cs.round_over == false { cs.kills = cs.kills + 1 }
-                    play_sound(12, 110, 0)
-                    play_sound(7, 110, 0)
+                    play_sound_handle(env.snd_kill, 105)   // real kill confirm
                 }
                 kvi = kvi + 1
             }
@@ -1810,14 +1813,14 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                                     } else {
                                         if hrel > 0.6 { dmg = dmg * 2.0; headshot = 1 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
                                     }
-                                    if headshot == 1 and mine == 1 { play_sound(12, 90, 0) }   // headshot ding
+                                    if headshot == 1 and mine == 1 { play_sound_handle(env.snd_headshot, 95) }   // real headshot ding
                                     if cs.actors[vk].sh > 0.0 {
                                         if cs.actors[vk].sh >= dmg { cs.actors[vk].sh = cs.actors[vk].sh - dmg; dmg = 0.0 }
                                         else { dmg = dmg - cs.actors[vk].sh; cs.actors[vk].sh = 0.0 }
                                     }
                                     cs.actors[vk].hp = cs.actors[vk].hp - dmg
                                     if vk < env.bot_n { cs.brains[vk].pop = 0.1 }
-                                    if mine == 1 { cs.hitmark = 0.18; play_noise(45, 14) }
+                                    if mine == 1 { cs.hitmark = 0.18; if headshot == 0 { play_sound_handle(env.snd_hit, 90) } }   // real hitmarker tick (headshot has its own ding)
                                     if vk == env.pl_i and cs.pinvuln <= 0.0 and cs.dead == false {
                                         cs.dmg_timer = 0.0; cs.hurt_flash = 0.6; cs.shake = 0.085
                                         play_sound(0 - 18, 70, 0)
@@ -1973,8 +1976,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             if cs.oc_meter > 100.0 { cs.oc_meter = 100.0 }
                             cs.oc_gain_t = 0.0
                         }
-                        play_sound(12, 110, 0)
-                        play_sound(7, 110, 0)
+                        play_sound_handle(env.snd_kill, 105)   // real kill confirm
                     }
                 }
             }
@@ -2892,7 +2894,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             if hs != cs.g_hit_seq {
                 cs.g_hit_seq = hs
                 let shv = net_hit_player()
-                if shv >= 0 and shv < 2000 and cs.hitmark <= 0.0 { cs.hitmark = 0.18; play_noise(45, 14) }
+                if shv >= 0 and shv < 2000 and cs.hitmark <= 0.0 { cs.hitmark = 0.18; play_sound_handle(env.snd_hit, 90) }
             }
         }
 
