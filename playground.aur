@@ -194,12 +194,12 @@ fn main() {
     fhide = 45
     while fhide <= 52 { r3d_hide_joint(fp_arms, fhide); fhide = fhide + 1 }
     // FP rig framing (live-tunable as cs.fp_* via the P tuner).
-    cs.fp_back = 0.22          // smaller = arms sit closer to the body/camera
+    cs.fp_back = 0.42          // anchor further behind the camera = hands ride CLOSER to the cam
     cs.fp_eye = 1.55
-    cs.fp_face = 3.14159       // yaw offset so the mannequin faces AWAY (you see the backs of the arms); 0 = toward
+    cs.fp_face = 0.0           // yaw offset: 0 = the floating-viewmodel reference orientation; 3.14159 to flip facing
     cs.fp_lift = 0.0 - 0.09     // drop the arms a bit lower in view
     cs.fp_scale = 0.85          // arms (+ rifle/launcher) a bit smaller
-    cs.fp_pitchf = 1.0          // pitch follow + direction (rig pivots at the torso); set -1 to invert up/down
+    cs.fp_pitchf = 0.0 - 1.0    // pitch follow + direction (rig pivots at the torso); +1 to invert up/down
     cs.fp_dead = 0.025          // deadzone (rad): arms hold, then smoothly recenter past this small angle
     // Per-weapon FP hand pose (0 rifle / 1 launcher / 2 deagle): start each gun from the rifle's
     // tuned grip, then seat the launcher + deagle separately in-game (the deagle's grip differs).
