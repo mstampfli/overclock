@@ -72,6 +72,9 @@ struct ClientState {
 
     // Scoreboard + kill feed.
     akills: [i64; 9], adeaths: [i64; 9], last_hit: [i64; 9], death_done: [i64; 9],
+    // Per-actor "was alive last frame" latch, so a spatialized death cue fires exactly once on a
+    // real alive->dead transition (not on a slot that is simply seen dead on its first frame).
+    aalive: [i64; 9],
     kr_oc: [f64; 9], kr_mark: [f64; 9],
     kf_killer: [i64; 6], kf_victim: [i64; 6], kf_time: [f64; 6],
     kf_killer_pid: [i64; 6], kf_victim_pid: [i64; 6], kf_cur: i64,
@@ -165,6 +168,7 @@ fn new_client_state() -> ClientState {
         g_ammo_applied: 0, g_hit_seq: 0, g_hurt: 0, dbg_lc: 0, dbg_fb: 0, dbg_dead: 0,
         vig_hp: 100.0, g_resp_wait: 0, g_resp_wait_t: 0.0, g_joined: 0, g_disc_t: 0.0,
         akills: [0; 9], adeaths: [0; 9], last_hit: [0; 9], death_done: [0; 9],
+        aalive: [0; 9],
         kr_oc: [0.0; 9], kr_mark: [0.0; 9],
         kf_killer: [0; 6], kf_victim: [0; 6], kf_time: [0.0; 6],
         kf_killer_pid: [0 - 1; 6], kf_victim_pid: [0 - 1; 6], kf_cur: 0,
@@ -2430,6 +2434,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 // DEAD: keep the body where it fell, playing the death clip (4) ONCE and holding the
                 // last frame, until this actor respawns. Park only the COLLIDER so it can't block.
                 if r_alive == false {
+                    // Spatialized death impact, once, when a bot/remote that WAS alive drops near you.
+                    if cs.aalive[ai] == 1 { play_sound_handle_at(env.snd_death, 90, ex, ey, ez); cs.aalive[ai] = 0 }
                     phys3d_set_pos(cs.actors[ai].hdl, 0.0, 0.0 - 50.0, 0.0)
                     if cs.actor_models[ai] >= 0 {
                         if cs.astate[ai] != 4 { r3d_anim_play(cs.actor_models[ai], 4, 0, 1.0, 0.12); r3d_anim_stop_upper(cs.actor_models[ai], 0.12); cs.astate[ai] = 4; cs.ushoot[ai] = 0 - 1 }
@@ -2440,6 +2446,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     }
                 }
                 if r_alive {
+                    cs.aalive[ai] = 1   // mark alive so the death cue can fire on the next drop
                     phys3d_set_pos(cs.actors[ai].hdl, ex, ey, ez)
                     if cs.actor_models[ai] >= 0 {
                         let rvx = ex - cs.aprevx[ai]
