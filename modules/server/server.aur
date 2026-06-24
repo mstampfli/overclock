@@ -107,11 +107,13 @@ fn sync_clients(w: world::World) -> i64 {
                     // restores hp here. The client still predicts its own respawn for responsiveness,
                     // but this is the authority - it can't respawn early and a forged signal does nothing.
                     respawn_actor(w, slot)
+                    // ACK ONLY NOW (hp is restored): meta 9 catches up to the client's respawn counter
+                    // so its g_resp_wait clears AFTER full hp lands. Setting it every frame (the old bug)
+                    // cleared the wait early -> the client reconciled to the still-0 hp and INSTANTLY
+                    // re-died on respawn. The ack must mean "your hp is back", not "I saw your request".
+                    w.cresp_seen[slot] = net_player_meta(pid, 3) as i64
                 } }
             }
-            // Keep the respawn-ack echo (meta 9) current so the client's prediction reconciles. The
-            // server NO LONGER gates respawn on the client's ++meta3 - it owns the timer above.
-            w.cresp_seen[slot] = net_player_meta(pid, 3) as i64
             // HEAL HANDSHAKE: a client signals a shield-pop by ++ its meta 5; the host owns the result
             // (spend one carried cell for +25 shield). Without this the client could collect cells but
             // never actually convert them - the "shield disappears / can't pop it" bug.
@@ -517,8 +519,16 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                 if dl > 0.1 {
                     spawn_rocket(w, bsx, bsy, bsz, ddx / dl, ddy / dl, ddz / dl, ci)
                     w.actors[ci].mag[1] = w.actors[ci].mag[1] - 1
-                    if w.actors[ci].mag[1] <= 0 and w.actors[ci].res[1] > 0 { w.actors[ci].mag[1] = 1; w.actors[ci].res[1] = w.actors[ci].res[1] - 1 }
-                    w.actors[ci].fcd = 0.5
+                    // AUTHORITATIVE reload: emptying the tube costs a real RELOAD before the next
+                    // rocket - no instant refill (that let bots chain rockets back-to-back). The long
+                    // fcd IS the reload gate, server-owned, so a bot can't fire two without reloading.
+                    if w.actors[ci].mag[1] <= 0 and w.actors[ci].res[1] > 0 {
+                        w.actors[ci].mag[1] = 1
+                        w.actors[ci].res[1] = w.actors[ci].res[1] - 1
+                        w.actors[ci].fcd = 1.8
+                    } else {
+                        w.actors[ci].fcd = 0.5
+                    }
                     launched = 1
                 }
             }
@@ -1098,9 +1108,19 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                         myaw = myaw + 1.3 * vsign
                     }
                 }
-                f32_store(bin, 2, myaw)                            // yaw: toward goal (steered around walls when seeking)
-                f32_store(bin, 0, adv)                            // forward: advance / hold / retreat
-                f32_store(bin, 1, juke)                           // strafe: lateral juke
+                // FACE the enemy like a player (input yaw = aim direction), then re-express the
+                // goal-ward movement (adv along myaw + juke sideways) IN THAT AIM FRAME, so the bot
+                // still goes exactly where it was going but now LOOKS where it shoots instead of
+                // facing its travel heading. aim sim-yaw = pi - brains.face (face = the smoothed
+                // draw-space facing toward the target). Forward=(sin y,-cos y), right=(cos y, sin y),
+                // so the world move decomposes by delta = myaw - aim.
+                let aimyaw = 3.14159 - w.brains[ei2].face
+                let dlt = myaw - aimyaw
+                let cdl = cos(dlt)
+                let sdl = sin(dlt)
+                f32_store(bin, 2, aimyaw)                          // yaw: FACE the target (player-style)
+                f32_store(bin, 0, adv * cdl - juke * sdl)         // forward, rotated into the aim frame
+                f32_store(bin, 1, adv * sdl + juke * cdl)         // strafe, rotated into the aim frame
             }
             if want_jump == 1 { f32_store(bin, 3, 1.0) }
             if want_slide == 1 { f32_store(bin, 4, 1.0) }   // slide-hop (one-frame edge; sim starts the slide)
