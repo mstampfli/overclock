@@ -24,3 +24,10 @@ music_synthwave.wav
   channel, high-passed + loudness-normalized (the loop seam is left intact).
   Source : https://opengameart.org/content/synthwave-house-loop
   License: CC0 1.0 (public domain, no rights reserved)
+
+step0.wav .. step5.wav
+  Stone/concrete footsteps (3 left + 3 right), from Fantozzi's Footsteps. The
+  FLAC stone set, downmixed to one channel, silence-trimmed, high-passed +
+  normalized. Laid out [L1,L2,L3,R1,R2,R3] so the game alternates feet.
+  Source : https://opengameart.org/content/fantozzis-footsteps-grasssand-stone
+  License: CC0 1.0 (public domain, no rights reserved)

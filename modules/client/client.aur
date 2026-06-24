@@ -18,6 +18,9 @@ struct ClientState {
     // Per-actor render/animation state (parallel to actors[]).
     actor_models: [i64; 9], astate: [i64; 9], aprevx: [f64; 9], aprevz: [f64; 9],
     ashoot: [f64; 9], ushoot: [i64; 9], aspd: [f64; 9], astate_t: [f64; 9],
+    // Footsteps: per-actor distance accumulator (m since last step) + a step counter
+    // (drives L/R foot alternation + sample-variant rotation). Index env.pl_i = local.
+    astep: [f64; 9], astep_i: [i64; 9],
     arshot: [i64; 9], aslide: [f64; 9],
     ajump: [f64; 9], aidle_t: [f64; 9], ayaw: [f64; 9],
 
@@ -127,6 +130,7 @@ fn new_client_state() -> ClientState {
         kat_hand_ox: 0.0, kat_hand_oy: 0.0, kat_hand_oz: 0.0, kat_hand_oyaw: 0.0, kat_hand_opitch: 0.0, kat_hand_oroll: 0.0,
         actor_models: [0; 9], astate: [0; 9], aprevx: [0.0; 9], aprevz: [0.0; 9],
         ashoot: [0.0; 9], ushoot: [0; 9], aspd: [0.0; 9], astate_t: [0.0; 9],
+        astep: [0.0; 9], astep_i: [0; 9],
         arshot: [0; 9], aslide: [0.0; 9],
         ajump: [0.0; 9], aidle_t: [0.0; 9], ayaw: [0.0; 9],
         gcx: [0.0; 30], gcy: [0.0; 30], gcz: [0.0; 30], ghx: [0.0; 30], ghy: [0.0; 30], ghz: [0.0; 30], gmesh: [0; 30],
@@ -242,6 +246,8 @@ struct ClientEnv {
     snd_explosion: i64,
     snd_reload: i64,
     snd_music: i64,
+    // Six stone footstep variants, laid out [L1,L2,L3,R1,R2,R3] for L/R alternation.
+    snd_step: [i64; 6],
     geo_n: i64,
     ground_vis: i64,
     gun_dmg: f64,
@@ -1546,6 +1552,21 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         let pvx_s = net_local_state(4)
         let pvz_s = net_local_state(6)
         let pspd = sqrt(pvx_s * pvx_s + pvz_s * pvz_s)
+        // Local footsteps: same distance-cadence as remotes but CENTERED (you are the listener)
+        // and quieter, so your own boots sit under the action. Suppressed while sliding/dead.
+        let l_ground = net_local_state(7)
+        let l_sliding = net_local_state(12) > 0.5
+        if cs.dead == false and l_ground > 0.5 and l_sliding == false and pspd > 0.9 {
+            cs.astep[env.pl_i] = cs.astep[env.pl_i] + pspd * dt
+            if cs.astep[env.pl_i] >= 1.75 {
+                cs.astep[env.pl_i] = cs.astep[env.pl_i] - 1.75
+                let lsidx = (cs.astep_i[env.pl_i] % 2) * 3 + (cs.astep_i[env.pl_i] / 2) % 3
+                play_sound_handle(env.snd_step[lsidx], 40)
+                cs.astep_i[env.pl_i] = cs.astep_i[env.pl_i] + 1
+            }
+        } else {
+            cs.astep[env.pl_i] = 0.0
+        }
         // ===== UNIFIED COMBAT: ONE fire path for EVERY actor - the bots AND the player.
         // Each actor's INTENT is computed here (the player from input + crosshair; a bot
         // from its AI target-pick + aim spread), then the EXACT SAME reload + ammo + shot
@@ -2429,6 +2450,20 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             if rwarp > 1.8 { rwarp = 1.8 }
                             r3d_anim_blend(cs.actor_models[ai], env.anim_idle, env.anim_run, mw, rwarp, 0.14)
                             cs.astate[ai] = 0 - 2
+                        }
+                        // Footsteps (spatialized): accumulate ground distance and plant a step every
+                        // stride, so the cadence tracks speed and stays foot-synced. Grounded + moving +
+                        // not sliding only. L/R feet alternate, cycling 3 variants each, for no repeats.
+                        if rground > 0.5 and rsliding == false and rspd > 0.9 {
+                            cs.astep[ai] = cs.astep[ai] + rspd * dt
+                            if cs.astep[ai] >= 1.75 {
+                                cs.astep[ai] = cs.astep[ai] - 1.75
+                                let sidx = (cs.astep_i[ai] % 2) * 3 + (cs.astep_i[ai] / 2) % 3
+                                play_sound_handle_at(env.snd_step[sidx], 62, ex, ey, ez)
+                                cs.astep_i[ai] = cs.astep_i[ai] + 1
+                            }
+                        } else {
+                            cs.astep[ai] = 0.0
                         }
                         // Upper-body overlay: the katana SWING (clip 41) while this remote is meleeing
                         // (replicated meta 8), else the held weapon pose. Reuses the existing overlay.
