@@ -2626,34 +2626,25 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 if adpt < cs.fp_dead * 0.15 { cs.fp_eng_p = 0 }
                 if cs.fp_eng_p == 1 { cs.fp_lpit = cs.fp_lpit + dpt * cf }
             }
-            // CAMERA-SPACE VIEWMODEL: the arms are RIGIDLY attached to the (deadzone-lagged) view, so
-            // they MOVE and rotate with it - look up and they ride UP at the bottom of the screen, not
-            // just tilt in place. Build the look basis (right, up, forward) from the lagged yaw/pitch.
-            let lcp = cos(cs.fp_lpit)
-            let lfx = lcp * sin(cs.fp_lyaw)
-            let lfy = sin(cs.fp_lpit)
-            let lfz = lcp * cos(cs.fp_lyaw)
-            let lfh = sqrt(lfx * lfx + lfz * lfz)
-            let mut rxn = 1.0
-            let mut rzn = 0.0
-            if lfh > 0.001 { rxn = 0.0 - lfz / lfh; rzn = lfx / lfh }   // right (horizontal)
-            let uxv = 0.0 - rzn * lfy
-            let uyv = lfh
-            let uzv = rxn * lfy                                          // up = right x forward
-            // Root = camera + a camera-space offset: DOWN by fp_eye (the skeleton's shoulder height)
-            // plus fp_lift, FORWARD by fp_back. So the shoulders sit just under the cam and the arms
-            // reach into the lower view, riding it as you look around.
-            let voff = cs.fp_lift - cs.fp_eye
-            let fp_x = cam_x + uxv * voff + lfx * cs.fp_back
-            let fp_y = cam_y + uyv * voff + lfy * cs.fp_back
-            let fp_z = cam_z + uzv * voff + lfz * cs.fp_back
-            // Orient to the look. Two INDEPENDENT controls: the SIGN of the yaw term sets the turn
-            // DIRECTION (negated here = the corrected horizontal), and the constant fp_face offset sets
-            // FACING (front/back). Negating alone flipped both (faced you); fp_face = pi adds the facing
-            // back, so you get the corrected rotation AND face away. fp_pitchf flips the vertical tilt.
-            let fp_yaw = (0.0 - atan2(lfx, lfz)) + env.actor_yaw_off + cs.fp_face
+            // Orientation. Two INDEPENDENT controls: the SIGN of the yaw term is the turn DIRECTION
+            // (negated = the corrected horizontal), and the constant fp_face offset is the FACING
+            // (front/back). Negating alone flipped both (faced you); fp_face = pi adds the facing back,
+            // so you get the corrected rotation AND face away. fp_pitchf flips the vertical tilt.
+            let fp_yaw = (0.0 - cs.fp_lyaw) + env.actor_yaw_off + cs.fp_face
             let fp_pitch = (0.0 - cs.fp_lpit) * cs.fp_pitchf
             let fp_sc = env.actor_scale * cs.fp_scale
+            // RIGID camera attachment (the "box bolted to the cam"): offset the root in the MODEL's OWN
+            // rotated frame R(fp_yaw, fp_pitch), so the camera-down offset CANCELS the skeleton's
+            // shoulder-height bone offset. The arms then sit at a near-fixed spot and pitch WITH the
+            // view as one rigid unit, instead of the body swinging forward/down when you look down.
+            let sp = sin(fp_pitch)
+            let cp = cos(fp_pitch)
+            let syw = sin(fp_yaw)
+            let cyw = cos(fp_yaw)
+            let voff = cs.fp_lift - cs.fp_eye
+            let fp_x = cam_x + (sp * syw) * voff + (cp * syw) * cs.fp_back
+            let fp_y = cam_y + cp * voff + (0.0 - sp) * cs.fp_back
+            let fp_z = cam_z + (sp * cyw) * voff + (cp * cyw) * cs.fp_back
             let healing = cs.actors[5].heal > 0.0
             let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
             // Base layer: a quiet looping idle (legs are out of view; this just keeps the rig live).
