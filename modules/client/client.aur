@@ -2661,17 +2661,27 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 cs.fp_ushoot = 0 - 1
             } } }
             r3d_anim_update(env.fp_arms, dt)
-            // RIGID camera attachment - one box bolted to the cam. The root offset is in the MODEL's OWN
-            // rotated frame R(fp_yaw, fp_pitch) (fp_ox right / voff down / fp_back forward), so the whole
-            // rig - arms AND the weapon to the side - moves and rotates together with the view as a unit.
+            // VERTICAL = a9de707's model-frame up/down RIDE (kept exactly - this felt good).
+            // HORIZONTAL = lock the HAND to a fixed screen spot (right fp_ox, forward fp_back) so the
+            // weapon stays on the right instead of swinging with yaw: cancel the hand bone's horizontal
+            // world offset (its model-space pos rotated into the world by R(fp_yaw, fp_pitch)).
             let sp = sin(fp_pitch)
             let cp = cos(fp_pitch)
             let syw = sin(fp_yaw)
             let cyw = cos(fp_yaw)
             let voff = cs.fp_lift - cs.fp_eye
-            let fp_x = cam_x + cyw * cs.fp_ox + (sp * syw) * voff + (cp * syw) * cs.fp_back
             let fp_y = cam_y + cp * voff + (0.0 - sp) * cs.fp_back
-            let fp_z = cam_z + (0.0 - syw) * cs.fp_ox + (sp * cyw) * voff + (cp * cyw) * cs.fp_back
+            let hpx = r3d_joint_pos(env.fp_arms, env.hand_joint, 0) * fp_sc
+            let hpy = r3d_joint_pos(env.fp_arms, env.hand_joint, 1) * fp_sc
+            let hpz = r3d_joint_pos(env.fp_arms, env.hand_joint, 2) * fp_sc
+            let ax = hpx
+            let az = hpy * sp + hpz * cp
+            let rhx = ax * cyw + az * syw
+            let rhz = (0.0 - ax) * syw + az * cyw
+            let frx = cos(cs.fp_lyaw) * cs.fp_ox + sin(cs.fp_lyaw) * cs.fp_back
+            let frz = (0.0 - sin(cs.fp_lyaw)) * cs.fp_ox + cos(cs.fp_lyaw) * cs.fp_back
+            let fp_x = cam_x + frx - rhx
+            let fp_z = cam_z + frz - rhz
             // Draw the arms, then the held item bone-attached to the hand joint (29). During a shield
             // channel the gun is stowed for the energy cube; while meleeing it is the katana; else the gun.
             r3d_draw(env.fp_arms, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc)

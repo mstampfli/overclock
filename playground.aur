@@ -197,8 +197,8 @@ fn main() {
     // Rig offset in the MODEL's own frame (one rigid box bolted to the cam): fp_ox right, voff
     // (= fp_lift - fp_eye) down, fp_back forward. fp_eye cancels the shoulder height so the arms sit
     // just under the cam; fp_ox slides the whole rig (arms + weapon) to the side.
-    cs.fp_back = 0.20          // forward offset (smaller = closer to the cam)
-    cs.fp_ox = 0.16            // lateral shift right (so the weapon + arms sit to the side)
+    cs.fp_back = 0.22          // forward offset (smaller = closer to the cam)
+    cs.fp_ox = 0.12            // lateral (screen-right) shift
     cs.fp_eye = 1.55           // shoulder-height cancel (keeps the arms just under the cam)
     cs.fp_face = 3.14159       // FACING offset (front/back): pi = arms face away (you see the backs); 0 = face you. Turn DIRECTION is the negated yaw above, independent of this.
     cs.fp_lift = 0.0 - 0.09     // small extra down nudge on top of the shoulder-cancel
