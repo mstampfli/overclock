@@ -257,6 +257,8 @@ struct ClientEnv {
     snd_pick_shield: i64,
     snd_pick_ammo: i64,
     snd_overclock: i64,
+    // Looping arena ambience bed (subtle, plays under the music).
+    snd_ambience: i64,
     geo_n: i64,
     ground_vis: i64,
     gun_dmg: f64,

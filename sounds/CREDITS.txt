@@ -50,3 +50,10 @@ overclock.wav
   set, downmixed to one channel + normalized.
   Source : https://opengameart.org/content/50-cc0-sci-fi-sfx
   License: CC0 1.0 (public domain, no rights reserved)
+
+ambience.wav
+  Looping arena ambience bed (low sci-fi room tone). The "loop_ambient_01" loop
+  from the same CC0 sci-fi set, downmixed to one channel + normalized; the loop
+  seam is left intact.
+  Source : https://opengameart.org/content/50-cc0-sci-fi-sfx
+  License: CC0 1.0 (public domain, no rights reserved)
