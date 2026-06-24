@@ -2710,6 +2710,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let fp_z = cam_z + syw * cs.fp_ox + (sp * cyw) * voff + (cp * cyw) * cs.fp_back
             // Draw the arms, then the held item bone-attached to the hand joint (29). During a shield
             // channel the gun is stowed for the energy cube; while meleeing it is the katana; else the gun.
+            // Flag as VIEWMODEL: the arms + weapon are then skipped in the shadow cascades and SSAO
+            // prepass, so the first-person arms cast no world shadow and don't darken AO at the camera.
+            r3d_viewmodel(1)
             r3d_draw(env.fp_arms, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc)
             if healing {
                 r3d_draw_on_joint(env.shieldcube_vis, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc, cs.hand_ox, cs.hand_oy + 0.18, cs.hand_oz, cs.hand_oyaw, cs.hand_opitch, cs.hand_oroll, 1.6)
@@ -2725,6 +2728,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 if wi == 1 { wm = env.vm_launcher }
                 r3d_draw_on_joint(wm, env.fp_arms, env.hand_joint, fp_x, fp_y, fp_z, fp_yaw, fp_pitch, 0.0, fp_sc, cs.w_hox[wi], cs.w_hoy[wi], cs.w_hoz[wi], cs.w_hyaw[wi], cs.w_hpit[wi], cs.w_hrol[wi], cs.w_hsc[wi])
             } }
+            r3d_viewmodel(0)
         }
 
         // ===== FP ARMS TUNER (toggle P) =====
