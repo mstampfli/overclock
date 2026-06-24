@@ -223,6 +223,19 @@ fn ptint(pid: i64, ch: i64, strength: f64) -> f64 {
     return ((pcchan(pid, ch) as f64) / 255.0 - base[ch]) * strength
 }
 
+// Solid filled rectangle (scrollbars / panels).
+fn fill_rect(x: i64, y: i64, w: i64, h: i64, r: i64, g: i64, b: i64) {
+    let mut yy = 0
+    while yy < h {
+        let mut xx = 0
+        while xx < w {
+            pixel(x + xx, y + yy, r, g, b)
+            xx = xx + 1
+        }
+        yy = yy + 1
+    }
+}
+
 // A settings slider bar: neon fill over a dark track. Returns 1 if the cursor is over
 // it (so the caller can let a click set the value directly).
 fn draw_bar(x: i64, y: i64, w: i64, h: i64, frac: f64, mx: i64, my: i64) -> i64 {

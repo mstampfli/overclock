@@ -124,7 +124,7 @@ fn main() {
     let snd_reload = load_sound("sounds/reload.wav")
     let snd_reload_pistol = load_sound("sounds/reload_pistol.wav")       // deagle (handgun) reload
     let snd_reload_launcher = load_sound("sounds/reload_launcher.wav")   // launcher (heavy mechanical) reload
-    let snd_music = load_sound("sounds/music_synthwave.wav")   // looping dark-synthwave bed (CC0)
+    let snd_music = load_sound("sounds/music_synthwave.wav")   // 80s seamless dark-synthwave loop (generated)
     // Stone footsteps, laid out [L1,L2,L3,R1,R2,R3] for L/R alternation + variant rotation (CC0).
     let snd_step = [ load_sound("sounds/step0.wav"), load_sound("sounds/step1.wav"), load_sound("sounds/step2.wav"), load_sound("sounds/step3.wav"), load_sound("sounds/step4.wav"), load_sound("sounds/step5.wav") ]
     // Combat feedback (CC0 Kenney interface SFX): hitmarker tick / headshot ding / kill confirm.

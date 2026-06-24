@@ -126,7 +126,7 @@ struct ClientState {
     dropx: [f64; 6], dropy: [f64; 6], dropz: [f64; 6], droptype: [f64; 6], droplife: [f64; 6], dropcur: i64,
 
     // Menu / screen flow.
-    screen: i64, set_back: i64, do_reset: bool, menu_t: f64, mprev: i64, rebind: i64, rebind_armed: i64, esc_prev: i64,
+    screen: i64, set_back: i64, do_reset: bool, menu_t: f64, mprev: i64, rebind: i64, rebind_armed: i64, esc_prev: i64, set_scroll: f64,
 
     // CLIP/anim inspector ("tune mode", toggle T): a dummy mannequin in front looping a chosen clip.
     preview_model: i64, tune_mode: i64, tune_clip: i64, tune_weapon: i64, tune_play: i64, tune_tp: i64, tune_np: i64, tune_mp: i64,
@@ -195,7 +195,7 @@ fn new_client_state() -> ClientState {
         ppx: [0.0; 28], ppy: [0.0; 28], ppz: [0.0; 28], pvx: [0.0; 28], pvy: [0.0; 28], pvz: [0.0; 28],
         plife: [0.0; 28], pcur: 0,
         dropx: [0.0; 6], dropy: [0.0; 6], dropz: [0.0; 6], droptype: [0.0; 6], droplife: [0.0; 6], dropcur: 0,
-        screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1,
+        screen: 0, set_back: 0, do_reset: true, menu_t: 0.0, mprev: 0, rebind: 0 - 1, rebind_armed: 0, esc_prev: 1, set_scroll: 0.0,
         preview_model: 0, tune_mode: 0, tune_clip: 9, tune_weapon: 0, tune_play: 0 - 1, tune_tp: 0, tune_np: 0, tune_mp: 0,
         sl_thigh: 0.0 - 1.03, sl_shin: 0.0 - 0.01, sl_hip: 0.0 - 0.80, sl_drop: 0.0 - 0.90, tune_sel: 0, tune_cp: 0,
         sl_lthx: 0.0 - 0.57, sl_lthy: 0.0 - 0.10, sl_lthz: 0.0 - 0.05, sl_lshx: 0.0 - 0.10, sl_lshy: 0.0 - 0.05, sl_lshz: 0.01
@@ -424,16 +424,43 @@ fn settings_panel(cs: ClientState, env: ClientEnv, mx: i64, my: i64, clicked: i6
     if clienthud::menu_btn(cl + 440, 184, 34, 30, mx, my) == 1 { if clicked == 1 { cs.music_vol = cs.music_vol + 1; if cs.music_vol > 100 { cs.music_vol = 100 } music_volume(cs.music_vol); cs.settings[19] = cs.music_vol as f64; save_settings(cs.settings) } }
     clienthud::draw_centered("+", cl + 440, 184, 34, 30, 22, wht)
     draw_int(cl + 486, 188, cs.music_vol, 22, gold)
-    draw_text(cl, 226, "Keybinds - click a box, then press a key", 18, gold)
+    draw_text(cl, 226, "Keybinds - click a box, then press a key (scroll)", 18, gold)
+    // Scrollable keybind viewport: the bind list can be taller than a short window, so clip it
+    // between the header and the display/BACK footer and let the mouse wheel scroll it - rows
+    // never cram into the buttons anymore. Only rows fully inside the viewport are drawn/clickable.
+    let vp_top = 248
+    let mut vp_bot = cs.fbh - 130
+    if vp_bot < vp_top + 28 { vp_bot = vp_top + 28 }
+    let row_h = 26
+    let vp_h = vp_bot - vp_top
+    let total = env.act_n * row_h
+    let mut max_scroll = total - vp_h
+    if max_scroll < 0 { max_scroll = 0 }
+    // Wheel scroll (only when the list overflows). Wheel up = toward the top.
+    if max_scroll > 0 { cs.set_scroll = cs.set_scroll - mouse_scroll() * 38.0 }
+    if cs.set_scroll < 0.0 { cs.set_scroll = 0.0 }
+    if cs.set_scroll > max_scroll as f64 { cs.set_scroll = max_scroll as f64 }
+    let soff = cs.set_scroll as i64
     let mut ki = 0
     while ki < env.act_n {
-        let ry = 250 + ki * 26
-        clienthud::draw_action_name(ki, cl + 10, ry + 4, wht)
-        let mut kc = gold
-        if cs.rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
-        if clienthud::menu_btn(cl + 220, ry, 90, 24, mx, my) == 1 { if clicked == 1 { cs.rebind = ki; cs.rebind_armed = 0 } }
-        clienthud::draw_centered(clienthud::key_name(cs.bind_code[ki] as i64), cl + 220, ry, 90, 24, 18, kc)
+        let ry = vp_top + ki * row_h - soff
+        if ry >= vp_top and ry + 24 <= vp_bot {
+            clienthud::draw_action_name(ki, cl + 10, ry + 4, wht)
+            let mut kc = gold
+            if cs.rebind == ki { kc = 255 * 65536 + 90 * 256 + 90 }
+            if clienthud::menu_btn(cl + 220, ry, 90, 24, mx, my) == 1 { if clicked == 1 { cs.rebind = ki; cs.rebind_armed = 0 } }
+            clienthud::draw_centered(clienthud::key_name(cs.bind_code[ki] as i64), cl + 220, ry, 90, 24, 18, kc)
+        }
         ki = ki + 1
+    }
+    // Scrollbar (track + thumb) on the right of the bind column, only when scrollable.
+    if max_scroll > 0 {
+        let sb_x = cl + 322
+        clienthud::fill_rect(sb_x, vp_top, 4, vp_h, 55, 58, 70)
+        let mut th = (vp_h * vp_h) / total
+        if th < 24 { th = 24 }
+        let thumb_y = vp_top + (soff * (vp_h - th)) / max_scroll
+        clienthud::fill_rect(sb_x, thumb_y, 4, th, 255, 200, 60)
     }
     if cs.rebind > (0 - 1) {
         if mouse_button(0) < 1 and mouse_button(1) < 1 and mouse_button(2) < 1 and mouse_button(3) < 1 and mouse_button(4) < 1 { cs.rebind_armed = 1 }
@@ -555,7 +582,7 @@ fn run_menu(cs: ClientState, env: ClientEnv) {
             let bc = cx   // button centre x (buttons are centred on cx, width 220)
             if clienthud::menu_btn(bx, cy - 30, 220, 48, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_lobby; cs.lobby_focus = 0 } }
             clienthud::draw_centered("PLAY", bx, cy - 30, 220, 48, 28, wht)
-            if clienthud::menu_btn(bx, cy + 34, 220, 48, mx, my) == 1 { if clicked == 1 { cs.set_back = env.s_title; cs.screen = env.s_settings } }
+            if clienthud::menu_btn(bx, cy + 34, 220, 48, mx, my) == 1 { if clicked == 1 { cs.set_back = env.s_title; cs.screen = env.s_settings; cs.set_scroll = 0.0 } }
             clienthud::draw_centered("SETTINGS", bx, cy + 34, 220, 48, 28, wht)
             if clienthud::menu_btn(bx, cy + 98, 220, 48, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_quit } }
             clienthud::draw_centered("QUIT", bx, cy + 98, 220, 48, 28, wht)
@@ -566,7 +593,7 @@ fn run_menu(cs: ClientState, env: ClientEnv) {
                 let bc = cx
                 if clienthud::menu_btn(bx, cy - 30, 220, 48, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_game } }
                 draw_text(bc - text_width("RESUME", 28) / 2, cy - 30 + 8, "RESUME", 28, wht)
-                if clienthud::menu_btn(bx, cy + 34, 220, 48, mx, my) == 1 { if clicked == 1 { cs.set_back = env.s_pause; cs.screen = env.s_settings } }
+                if clienthud::menu_btn(bx, cy + 34, 220, 48, mx, my) == 1 { if clicked == 1 { cs.set_back = env.s_pause; cs.screen = env.s_settings; cs.set_scroll = 0.0 } }
                 draw_text(bc - text_width("SETTINGS", 28) / 2, cy + 34 + 8, "SETTINGS", 28, wht)
                 if clienthud::menu_btn(bx, cy + 98, 220, 48, mx, my) == 1 { if clicked == 1 { cs.screen = env.s_title } }
                 draw_text(bc - text_width("QUIT TO TITLE", 26) / 2, cy + 98 + 9, "QUIT TO TITLE", 26, wht)
@@ -1192,12 +1219,16 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         // next to a wall this is always false, so the camera just does the small
         // strafe tilt and never snaps - no more glitch.
         let wallrunning = net_local_state(23) > 0.5
-        let mut roll_target = strafe * 0.05
+        // Small stylistic view-tilt when strafing (lean into the strafe), gently lerped so it eases
+        // in/out rather than snapping. Wallrunning overrides it with a hard bank toward the wall.
+        let mut roll_target = strafe * 0.06
+        let mut roll_lerp = 0.09
         if wallrunning {
             let side = net_local_state(14) * cos(cs.yaw) + net_local_state(15) * sin(cs.yaw)
             roll_target = side * 0.28
+            roll_lerp = 0.15
         }
-        cs.roll = cs.roll + (roll_target - cs.roll) * 0.15
+        cs.roll = cs.roll + (roll_target - cs.roll) * roll_lerp
         cs.lean = cs.lean + ((fwd * 0.03) - cs.lean) * 0.12
         // Recline the view back a touch while sliding (cs.lean back into the slide).
         let mut stilt_t = 0.0
