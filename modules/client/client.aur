@@ -2510,11 +2510,13 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         let r_melee = net_player_meta(pid, 8) > 0.5
                         let r_recoil = cs.ashoot[ai] > 0.0
                         if r_reload {
-                            if cs.ushoot[ai] != 22 { r3d_anim_play_upper(cs.actor_models[ai], 22, 1, 1.0, 0.12, env.upper_mask_root); cs.ushoot[ai] = 22 }
+                            // Reload START edge (ushoot crossing into 22): also play the reload SOUND,
+                            // spatialized at the remote - a tactical cue that a nearby enemy is reloading.
+                            if cs.ushoot[ai] != 22 { r3d_anim_play_upper(cs.actor_models[ai], 22, 1, 1.0, 0.12, env.upper_mask_root); play_sound_handle_at(env.snd_reload, 85, ex, ey, ez); cs.ushoot[ai] = 22 }
                         } else { if r_melee {
                             // Blend INTO the swing (0.18s overlay crossfade) and skip the clip's 0.15s
                             // wind-up so the slash reads immediately. Blend OUT is the aim branch below.
-                            if cs.ushoot[ai] != env.kat_swing_clip { r3d_anim_play_upper(cs.actor_models[ai], env.kat_swing_clip, 1, 1.7, 0.18, env.upper_mask_root); r3d_anim_seek_upper(cs.actor_models[ai], 0.15); cs.ushoot[ai] = env.kat_swing_clip }
+                            if cs.ushoot[ai] != env.kat_swing_clip { r3d_anim_play_upper(cs.actor_models[ai], env.kat_swing_clip, 1, 1.7, 0.18, env.upper_mask_root); r3d_anim_seek_upper(cs.actor_models[ai], 0.15); play_sound_handle_at(env.snd_swing, 80, ex, ey, ez); cs.ushoot[ai] = env.kat_swing_clip }
                         } else { if r_recoil {
                             // Per-SHOT recoil: each incoming round (arshot pulse) RESTARTS clip 23 from
                             // frame 0 (play once, fast), so the kick lines up with every shot, any weapon.
