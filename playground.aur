@@ -194,13 +194,14 @@ fn main() {
     fhide = 45
     while fhide <= 52 { r3d_hide_joint(fp_arms, fhide); fhide = fhide + 1 }
     // FP rig framing (live-tunable as cs.fp_* via the P tuner).
-    // The weapon now lands at a fixed CAMERA-SPACE spot (the hand bone is cancelled out): right by
-    // fp_ox, down by -fp_lift, forward by fp_back. So it stays put on screen at any view angle.
-    cs.fp_back = 0.30          // forward distance of the weapon from the cam (smaller = closer)
-    cs.fp_ox = 0.16            // screen-right of the weapon (so it sits to the side, not dead-centre)
-    cs.fp_eye = 1.55           // (unused now: placement cancels the real hand bone instead of this)
+    // Rig offset in the MODEL's own frame (one rigid box bolted to the cam): fp_ox right, voff
+    // (= fp_lift - fp_eye) down, fp_back forward. fp_eye cancels the shoulder height so the arms sit
+    // just under the cam; fp_ox slides the whole rig (arms + weapon) to the side.
+    cs.fp_back = 0.20          // forward offset (smaller = closer to the cam)
+    cs.fp_ox = 0.16            // lateral shift right (so the weapon + arms sit to the side)
+    cs.fp_eye = 1.55           // shoulder-height cancel (keeps the arms just under the cam)
     cs.fp_face = 3.14159       // FACING offset (front/back): pi = arms face away (you see the backs); 0 = face you. Turn DIRECTION is the negated yaw above, independent of this.
-    cs.fp_lift = 0.0 - 0.22     // weapon vertical in cam space (negative = below the cam)
+    cs.fp_lift = 0.0 - 0.09     // small extra down nudge on top of the shoulder-cancel
     cs.fp_scale = 0.85          // arms (+ rifle/launcher) a bit smaller
     cs.fp_pitchf = 1.0          // pitch tilt direction (-eff_pitch); set -1 to invert the up/down tilt
     cs.fp_dead = 0.0            // 0 = HARD screen-lock (no lag); raise it for a hold-then-recenter deadzone
@@ -214,7 +215,8 @@ fn main() {
     }
     cs.w_hsc[0] = rifle_scale_tp   // 0.18
     cs.w_hsc[1] = lnch_scale_tp    // 0.495
-    cs.w_hsc[2] = 0.20             // deagle ~1.7x bigger (was 0.118); tune in-game
+    cs.w_hsc[2] = 0.165           // deagle ~1.4x (was 0.118)
+    cs.w_hoz[2] = cs.hand_oz + 0.06   // nudge the deagle forward along the arm (tune field 7 w/ deagle equipped)
     // Downloaded CC0 MANNEQUIN + 46-clip animation library (Quaternius Universal Animation
     // Library, glTF mirror). One model instance PER actor so each animates independently
     // (idle / run / jump from its real motion). Any actor whose load fails (-1) falls back to
