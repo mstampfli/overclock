@@ -49,8 +49,9 @@ struct ClientState {
     // Hit feedback + HUD framebuffer size.
     hit_t: f64, hxp: f64, hyp: f64, hzp: f64, hitmark: f64, killmark: f64, fbw: i64, fbh: i64,
     // First-person arms animation state: base-clip + upper-overlay-clip latches (mirrors the
-    // per-actor astate/ushoot, but for the local FP mannequin) + a per-shot recoil pulse.
-    fp_astate: i64, fp_ushoot: i64, fp_shot: f64, fp_pwpn: i64,
+    // per-actor astate/ushoot, but for the local FP mannequin), a decaying recoil timer + a
+    // 1-frame "just fired" pulse that restarts the recoil clip on every shot.
+    fp_astate: i64, fp_ushoot: i64, fp_shot: f64, fp_rpulse: i64,
 
     // Score.
     kills: i64, deaths: i64,
@@ -148,7 +149,7 @@ fn new_client_state() -> ClientState {
         settings: [0.0; 100],
         net_mode: 0, net_started: false, lobby_full: false, join_addr: "", addr_len: 0,
         hit_t: 0.0, hxp: 0.0, hyp: 0.0, hzp: 0.0, hitmark: 0.0, killmark: 0.0, fbw: 0, fbh: 0,
-        fp_astate: 0 - 99, fp_ushoot: 0 - 1, fp_shot: 0.0, fp_pwpn: 0 - 1,
+        fp_astate: 0 - 99, fp_ushoot: 0 - 1, fp_shot: 0.0, fp_rpulse: 0,
         kills: 0, deaths: 0,
         apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9],
         g_resp_ctr: 0.0, g_heal_ctr: 0.0, g_hp_prev: 100.0, g_pk_cells: 0, g_pk_res: 60,
@@ -1783,6 +1784,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     cs.actors[ci].mag[wp] = cs.actors[ci].mag[wp] - 1
                     if cs.actors[ci].mag[wp] <= 0 and cs.actors[ci].res[wp] > 0 { cs.actors[ci].rl = env.reload_w[wp]; cs.actors[ci].rlw = wp; if mine == 1 { play_sound_handle(env.snd_reload, 120) } }
                     if ci != env.pl_i { cs.ashoot[ci] = 0.6 }   // hold the shoot overlay across brief fire gaps
+                    if ci == env.pl_i { cs.fp_shot = 0.30; cs.fp_rpulse = 1 }   // local FP recoil: kick the arms, restart clip 23
                     let ox = sox + ax * 0.6
                     let oy = soy + ay * 0.6
                     let oz = soz + az * 0.6
@@ -2571,18 +2573,35 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
             // Base layer: a quiet looping idle (legs are out of view; this just keeps the rig live).
             if cs.fp_astate != env.anim_idle { r3d_anim_play(env.fp_arms, env.anim_idle, 1, 1.0, 0.12); cs.fp_astate = env.anim_idle }
-            // Upper overlay: aim look up/down - a weighted blend of clips 18 (down) / 19 (mid) /
-            // 20 (up) by the LOCAL eff_pitch (the same value the remotes read via replicated meta 19).
-            // Flip the (eff_pitch +/- ...) sign if it reads inverted in-game.
-            let mut pw = (eff_pitch + 0.9) / 1.8
-            if pw < 0.0 { pw = 0.0 }
-            if pw > 1.0 { pw = 1.0 }
-            let mut ca = 18
-            let mut cb = 19
-            let mut bw = pw * 2.0
-            if pw > 0.5 { ca = 19; cb = 20; bw = (pw - 0.5) * 2.0 }
-            r3d_anim_aim_upper(env.fp_arms, ca, cb, bw, 1.0, 0.18, env.upper_mask_root)
-            cs.fp_ushoot = 0 - 1
+            // Recoil timer (per shot, set at the shot site) decays here.
+            cs.fp_shot = cs.fp_shot - dt
+            if cs.fp_shot < 0.0 { cs.fp_shot = 0.0 }
+            // Upper-body overlay, SAME priority + clips as the third-person overlay, but driven by
+            // LOCAL state: reload (clip 22) > katana swing (41) > per-shot recoil (23, played fast,
+            // restarted each shot) > aim look up/down (clips 18 down / 19 mid / 20 up by eff_pitch).
+            let r_reload = cs.actors[5].rl > 0.0
+            if r_reload {
+                if cs.fp_ushoot != 22 { r3d_anim_play_upper(env.fp_arms, 22, 1, 1.0, 0.12, env.upper_mask_root); cs.fp_ushoot = 22 }
+            } else { if katana_on {
+                // Blend INTO the swing and skip its 0.15s wind-up so the slash reads immediately.
+                if cs.fp_ushoot != env.kat_swing_clip { r3d_anim_play_upper(env.fp_arms, env.kat_swing_clip, 1, 1.7, 0.18, env.upper_mask_root); r3d_anim_seek_upper(env.fp_arms, 0.15); cs.fp_ushoot = env.kat_swing_clip }
+            } else { if cs.fp_shot > 0.0 {
+                // Each shot RESTARTS clip 23 from frame 0 (play once, fast), so the kick lines up with
+                // every round for any weapon - the first-person mirror of the third-person recoil.
+                if cs.fp_rpulse == 1 or cs.fp_ushoot != 23 { r3d_anim_play_upper(env.fp_arms, 23, 0, 2.6, 0.03, env.upper_mask_root); cs.fp_ushoot = 23 }
+                cs.fp_rpulse = 0
+            } else {
+                // Flip the (eff_pitch +/- ...) sign if it reads inverted in-game.
+                let mut pw = (eff_pitch + 0.9) / 1.8
+                if pw < 0.0 { pw = 0.0 }
+                if pw > 1.0 { pw = 1.0 }
+                let mut ca = 18
+                let mut cb = 19
+                let mut bw = pw * 2.0
+                if pw > 0.5 { ca = 19; cb = 20; bw = (pw - 0.5) * 2.0 }
+                r3d_anim_aim_upper(env.fp_arms, ca, cb, bw, 1.0, 0.18, env.upper_mask_root)
+                cs.fp_ushoot = 0 - 1
+            } } }
             r3d_anim_update(env.fp_arms, dt)
             // Draw the arms, then the held item bone-attached to the hand joint (29). During a shield
             // channel the gun is stowed for the energy cube; while meleeing it is the katana; else the gun.
