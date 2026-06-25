@@ -229,23 +229,24 @@ fn round_tick(w: world::World, dt: f64) -> i64 {
         if w.round.over_t <= 0.0 {
             w.round.timer = w.round.len
             w.round.over = 0
+            // Fresh round: respawn EVERY actor the ONE shared way - players and bots identically.
+            // respawn_actor restores hp/shield/ammo, smart_respawn picks a fresh spawn, net_force_respawn
+            // makes the netcode teleport them to it. No bot-specific reset_bot_state, no hand-set state.
+            let mut claimed = [0; 8]
             let mut z = 0
             while z < 9 {
                 w.akills[z] = 0
                 w.adeaths[z] = 0
-                w.actors[z].hp = 100.0
-                w.actors[z].sh = 0.0
-                w.death_done[z] = 0
-                w.last_hit[z] = 0 - 1
+                let is_bot = z < w.round.bots
+                let is_client = z >= 6 and w.apid[z] != 9999
+                if is_bot or is_client {
+                    respawn_actor(w, z)
+                    let mut aid = 1000 + z
+                    if is_client { aid = w.apid[z] }
+                    smart_respawn(w, z, aid, claimed)
+                    net_force_respawn(aid)
+                }
                 z = z + 1
-            }
-            let mut bi = 0
-            while bi < w.round.bots {
-                reset_bot_state(w, bi, w.esx[bi], w.esz[bi])
-                w.brains[bi].vy = 0.0
-                w.actors[bi].mag[0] = 30
-                w.actors[bi].res[0] = 60
-                bi = bi + 1
             }
         }
     }
@@ -842,19 +843,6 @@ fn projectiles_tick(w: world::World, dt: f64) -> i64 {
 // Bot AI MOVEMENT (ported from the playground bot loop, adapted to the server: the "enemy" is the
 // nearest connected CLIENT or other bot, read over the net / physics). Hunt + standoff ring + juke
 // + gravity + jump + knockback decay + collide-and-slide. Goals (pickups), grapple layer on later.
-// Reset a bot's sim state blob to a clean spawn at (x,z): zero everything, set position, and keep
-// its existing physics character (slot 21 = handle+1, so sim_step reuses it instead of lazily making
-// a new one). Snaps the body there too. Used on spawn, respawn, and round reset.
-fn reset_bot_state(w: world::World, bi: i64, x: f64, z: f64) {
-    let st = w.bot_state[bi]
-    let mut k = 0
-    while k < 32 { f32_store(st, k, 0.0); k = k + 1 }
-    f32_store(st, 0, x)
-    f32_store(st, 1, 0.9)
-    f32_store(st, 2, z)
-    f32_store(st, 21, (w.actors[bi].hdl + 1) as f64)
-    phys3d_set_pos(w.actors[bi].hdl, x, 0.9, z)
-}
 
 fn bots_tick(w: world::World, dt: f64) -> i64 {
     w.etime = w.etime + dt
@@ -1270,8 +1258,11 @@ fn server_main() -> i64 {
         w.actors[bi].res[0] = 60
         w.actors[bi].res[1] = 2
         w.brains[bi].aim = 0.05
-        w.bot_state[bi] = f32_blob(32)   // this bot's persistent sim state (STATE_MAX floats)
-        reset_bot_state(w, bi, anchx[bi], anchz[bi])
+        // Do NOT pre-fill bot_state here. It's allocated + HANDED TO THE NETCODE (net_set_bot_state,
+        // sharing this body's handle) lazily on the first bots_tick, seeded from the anchor position
+        // the body was just created at. Pre-filling it made bot_state non-zero, which SKIPPED that
+        // lazy handoff - so the netcode simmed a separate body and the server's view of the bot stayed
+        // frozen at its anchor (bots shot from spawn / walked one stuck direction).
         bi = bi + 1
     }
     arena::build_crates(w.crates)   // 12 loose dynamic crates (authoritative)
