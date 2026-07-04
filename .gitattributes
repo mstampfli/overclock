@@ -1,0 +1,31 @@
+# Line-ending policy: all text is stored and checked out as LF, so a Windows
+# editor that saves CRLF no longer produces whole-file churn in diffs. Binary
+# assets are left byte-exact (never line-ending converted).
+
+* text=auto eol=lf
+
+# Text formats we edit (explicit for clarity).
+*.aur   text eol=lf
+*.toml  text eol=lf
+*.lock  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.py    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Binary assets: never touch bytes or line endings.
+*.wav   binary
+*.glb   binary
+*.gltf  binary
+*.bin   binary
+*.ttf   binary
+*.otf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ogg   binary
+*.mp3   binary
+*.ppm   binary
+*.exe   binary
+*.zip   binary
