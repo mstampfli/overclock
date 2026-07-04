@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: ../aurora/target/release/${{ matrix.aurorac }} build playground.aur -o ${{ matrix.bin }}
 
-      # Bundle the binary with the runtime assets it loads (models + the fallback font). tar.gz works
+      # Bundle the binary with the runtime assets it loads. tar.gz works
       # on every modern OS (Windows 10+ ships tar).
       - name: Package
         working-directory: overclock
@@ -75,7 +75,7 @@ jobs:
           pkg="overclock-${{ matrix.name }}"
           mkdir -p "$pkg"
           cp "${{ matrix.bin }}" "$pkg/"
-          cp -r models fonts "$pkg/"
+          cp -r models fonts sounds "$pkg/"
           tar -czf "$pkg.tar.gz" "$pkg"
           ls -la "$pkg.tar.gz"
 
