@@ -1,0 +1,59 @@
+// Shared combat action parity: bot slots and player slots must resolve the same action primitives.
+// The only allowed difference is who/generated/sent the intent, not what the action does once applied.
+fn same_actor_weapon_state(actors: [world::Actor; 9], a: i64, b: i64) -> i64 {
+    if actors[a].wpn != actors[b].wpn { return 0 }
+    if actors[a].mag[0] != actors[b].mag[0] { return 0 }
+    if actors[a].mag[1] != actors[b].mag[1] { return 0 }
+    if actors[a].mag[2] != actors[b].mag[2] { return 0 }
+    if actors[a].res[0] != actors[b].res[0] { return 0 }
+    if actors[a].res[1] != actors[b].res[1] { return 0 }
+    if actors[a].res[2] != actors[b].res[2] { return 0 }
+    if actors[a].rl != actors[b].rl { return 0 }
+    if actors[a].rlw != actors[b].rlw { return 0 }
+    if actors[a].fcd != actors[b].fcd { return 0 }
+    1
+}
+
+fn main() {
+    let mut actors = [ world::Actor { hdl: 0 - 1, hp: 100.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: combat::default_mag(), res: combat::default_reserve(), rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ]
+
+    actors[0].cells = 1
+    actors[6].cells = 1
+    combat::apply_shield_cell(actors, 0)
+    combat::apply_shield_cell(actors, 6)
+    let shield_same = (actors[0].cells == actors[6].cells and actors[0].sh == actors[6].sh) as i64
+
+    combat::select_weapon(actors, 0, 2)
+    combat::select_weapon(actors, 6, 2)
+    let select_same = same_actor_weapon_state(actors, 0, 6)
+
+    actors[0].fcd = 0.0
+    actors[6].fcd = 0.0
+    combat::consume_shot(actors, 0, 2, 1.0)
+    combat::consume_shot(actors, 6, 2, 1.0)
+    let shot_same = same_actor_weapon_state(actors, 0, 6)
+
+    actors[0].mag[2] = 0
+    actors[6].mag[2] = 0
+    actors[0].res[2] = 7
+    actors[6].res[2] = 7
+    actors[0].rl = 0.01
+    actors[6].rl = 0.01
+    actors[0].rlw = 2
+    actors[6].rlw = 2
+    combat::tick_weapon(actors, 0, 0.02)
+    combat::tick_weapon(actors, 6, 0.02)
+    let reload_same = same_actor_weapon_state(actors, 0, 6)
+
+    actors[0].res[0] = 0
+    actors[6].res[0] = 0
+    actors[0].wpn = 0
+    actors[6].wpn = 0
+    combat::refill_equipped_ammo(actors, 0)
+    combat::refill_equipped_ammo(actors, 6)
+    let refill_same = same_actor_weapon_state(actors, 0, 6)
+
+    let ok = shield_same == 1 and select_same == 1 and shot_same == 1 and reload_same == 1 and refill_same == 1
+    println("shield=" + str(shield_same) + " select=" + str(select_same) + " shot=" + str(shot_same) + " reload=" + str(reload_same) + " refill=" + str(refill_same))
+    println("RESULT action-parity=" + str(ok as i64) + " (expect 1)")
+}

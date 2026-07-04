@@ -100,7 +100,7 @@ struct ClientState {
     nfuse: f64, nade_cd: f64, nade_prev: i64, nade_acc: f64, nade_grace: f64,
 
     // Melee.
-    melee_cd: f64, melee_prev: i64, g_melee_ctr: i64,
+    melee_cd: f64, melee_prev: i64, g_melee_ctr: i64, g_fire_ctr: i64,
 
     // Explosion visuals + the client's pending blast impulse echo.
     boom_t: f64, boom_int: f64, boomx: f64, boomy: f64, boomz: f64,
@@ -183,7 +183,7 @@ fn new_client_state() -> ClientState {
         grapple_on: false, gx: 0.0, gy: 0.0, gz: 0.0, g_cd: 0.0, g_time: 0.0, g_prev: 0, g_lx: 0.0, g_ly: 0.0, g_lz: 0.0,
         nade_live: false, grx: 0.0, gry: 0.0, grz: 0.0, grvx: 0.0, grvy: 0.0, grvz: 0.0,
         nfuse: 0.0, nade_cd: 0.0, nade_prev: 0, nade_acc: 0.0, nade_grace: 0.0,
-        melee_cd: 0.0, melee_prev: 0, g_melee_ctr: 0,
+        melee_cd: 0.0, melee_prev: 0, g_melee_ctr: 0, g_fire_ctr: 0,
         boom_t: 0.0, boom_int: 1.0, boomx: 0.0, boomy: 0.0, boomz: 0.0,
         explode: false, ex_x: 0.0, ex_y: 0.0, ex_z: 0.0, ex_int: 1.0, ex_src: 0.0,
         blast_ix: 0.0, blast_iy: 0.0, blast_iz: 0.0,
@@ -924,7 +924,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         let mut oc_mult = 1.0
         if cs.oc_active { oc_mult = 1.35 }
         // Overclock perk: unlimited reserve mags (keep the reserve topped up each frame).
-        if cs.oc_active { cs.actors[5].res[0] = env.res_max[0]; cs.actors[5].res[1] = env.res_max[1]; cs.actors[5].res[2] = env.res_max[2] }
+        if cs.oc_active { cs.actors[5].res[0] = combat::weapon_res_max(0); cs.actors[5].res[1] = combat::weapon_res_max(1); cs.actors[5].res[2] = combat::weapon_res_max(2) }
         if cs.actors[5].heal > 0.0 { oc_mult = 0.5 }
         // Grapple anchor + active flag (set last frame after aiming; 1-frame lag fine).
         let mut g_flag = 0.0
@@ -976,7 +976,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         net_set_meta(7, cs.adeaths[env.pl_i])
         // Melee swing flag (slot 8): so OTHERS see my third-person katana swing (clip 41).
         let mut sw_m = 0.0
-        if cs.melee_cd > env.melee_cooldown - 0.35 { sw_m = 1.0 }
+        if cs.melee_cd > combat::melee_cooldown() - 0.35 { sw_m = 1.0 }
         net_set_meta(8, sw_m)
         net_set_meta(17, cs.g_melee_ctr as f64)   // host applies authoritative katana damage on each ++ (server melee)
         // Shield-up flag (slot 16): 1 while mid shield-apply channel, so OTHERS see me holding the
@@ -993,6 +993,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         let mut pause_m = 0.0
         if paused { pause_m = 1.0 }
         net_set_meta(21, pause_m)
+        net_set_meta(22, (cs.actors[5].wpn) as f64)
+        net_set_meta(23, (cs.g_fire_ctr) as f64)
         // Grapple anchor (12/13/14) + rope timer (15) so OTHERS draw my grapple rope.
         net_set_meta(12, cs.actors[5].gax)
         net_set_meta(13, cs.actors[5].gay)
@@ -1118,8 +1120,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 let ammo_srv = net_player_meta(amy, 18) as i64
                 if ammo_srv > cs.g_ammo_applied and cs.dead == false and cs.prev_dead == false {
                     let cwp2 = cs.actors[env.pl_i].wpn
-                    cs.actors[env.pl_i].res[cwp2] = cs.actors[env.pl_i].res[cwp2] + env.res_refill[cwp2] * (ammo_srv - cs.g_ammo_applied)
-                    if cs.actors[env.pl_i].res[cwp2] > env.res_max[cwp2] { cs.actors[env.pl_i].res[cwp2] = env.res_max[cwp2] }
+                    cs.actors[env.pl_i].res[cwp2] = cs.actors[env.pl_i].res[cwp2] + combat::weapon_res_refill(cwp2) * (ammo_srv - cs.g_ammo_applied)
+                    if cs.actors[env.pl_i].res[cwp2] > combat::weapon_res_max(cwp2) { cs.actors[env.pl_i].res[cwp2] = combat::weapon_res_max(cwp2) }
                     cs.g_ammo_applied = ammo_srv
                     play_sound_handle(env.snd_pick_ammo, 90)
                 }
@@ -1281,7 +1283,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         if cs.melee_cd < 0.0 { cs.melee_cd = 0.0 }
         let mkey = input_down(env.act_melee)
         if mkey > 0 and cs.melee_prev == 0 and cs.melee_cd <= 0.0 and cs.dead == false {
-            cs.melee_cd = env.melee_cooldown
+            cs.melee_cd = combat::melee_cooldown()
             cs.g_melee_ctr = cs.g_melee_ctr + 1   // tell the host to apply an authoritative swing (meta 17)
             play_sound_handle(env.snd_swing, 85)   // real katana swoosh
             // Arc/cone sweep - a katana SLASH, not a needle. Hit EVERY actor within reach and
@@ -1301,7 +1303,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     let mdz = mbz - pz
                     let mdd = sqrt(mdx * mdx + mdy * mdy + mdz * mdz)
                     let mut in_arc = 0
-                    if mdd > 0.001 and mdd < env.melee_range {
+                    if mdd > 0.001 and mdd < combat::melee_range() {
                         if (mdx * fx + mdy * fy + mdz * fz) / mdd > 0.5 {
                             let mlos = phys3d_raycast_ex(cs.actors[5].hdl as i64, px, eye, pz, mdx / mdd, mdy / mdd, mdz / mdd, mdd + 0.4)
                             if mlos < 0 or mlos == (cs.actors[mvk].hdl as i64) { in_arc = 1 }
@@ -1310,7 +1312,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     if in_arc == 1 {
                         // Katana BYPASSES shield - straight to green health, so you can kill
                         // someone who still has their shield up (high-risk close-combat reward).
-                        cs.actors[mvk].hp = cs.actors[mvk].hp - env.melee_dmg
+                        combat::apply_hit(cs.actors, mvk, combat::melee_dmg(), 0.0, 1)
                         cs.brains[mvk].pop = 0.2
                         cs.hitmark = 0.2
                         cs.shake = 0.4
@@ -1332,9 +1334,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         }
                         // Katana shove: knock the target back along the swing (decays via the
                         // shared knockback channel bots already use for blasts/grapple-leaps).
-                        cs.brains[mvk].kx = fx * 14.0
+                        cs.brains[mvk].kx = fx * combat::blast_player_kb()
                         cs.brains[mvk].ky = 6.0
-                        cs.brains[mvk].kz = fz * 14.0
+                        cs.brains[mvk].kz = fz * combat::blast_player_kb()
                         // Record the killer + the player-kill reward context; the unified
                         // per-frame death sweep runs ALL the death consequences once.
                         cs.last_hit[mvk] = env.pl_i
@@ -1445,7 +1447,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     cs.ex_x = cs.grx
                     cs.ex_y = cs.gry
                     cs.ex_z = cs.grz
-                    cs.ex_int = env.nade_intensity
+                    cs.ex_int = combat::grenade_intensity()
                     cs.ex_src = 0.0
                 }
             }
@@ -1497,7 +1499,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         cs.ex_x = phys3d_hit_x()
                         cs.ex_y = phys3d_hit_y()
                         cs.ex_z = phys3d_hit_z()
-                        cs.ex_int = env.rocket_intensity
+                        cs.ex_int = combat::rocket_intensity()
                         cs.ex_src = cs.prjsrc[prj]
                         cs.prjlife[prj] = 0.0
                     } else {
@@ -1519,8 +1521,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         if cs.explode {
             cs.explode = false
             let gi = cs.ex_int
-            let rad = env.nade_radius * gi    // damage radius
-            let krad = env.nade_kb_radius * gi  // knockback reach
+            let rad = combat::blast_radius() * gi    // damage radius
+            let krad = combat::blast_kb_radius() * gi  // knockback reach
             // (Host authority for a guest's blast is driven by the LAUNCH intent sent at fire/
             // throw time - NOT by reporting this predicted result. The radial damage below is
             // pure local PREDICTION on a guest, corrected by the host's replicated bot hp.)
@@ -1548,12 +1550,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     let bdz = phys3d_z(ghh) - cs.ex_z
                     let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
                     if bdd < rad {
-                        let mut edmg = env.nade_dmg * gi * (1.0 - 0.30 * bdd / rad)
-                        if cs.actors[ej].sh > 0.0 {
-                            if cs.actors[ej].sh >= edmg { cs.actors[ej].sh = cs.actors[ej].sh - edmg; edmg = 0.0 }
-                            else { edmg = edmg - cs.actors[ej].sh; cs.actors[ej].sh = 0.0 }
-                        }
-                        cs.actors[ej].hp = cs.actors[ej].hp - edmg
+                        let edmg = combat::blast_dmg() * gi * (1.0 - 0.30 * bdd / rad)
+                        combat::apply_hit_zoned(cs.actors, ej, edmg, edmg, edmg, 0.7, 0)
                         cs.brains[ej].pop = 0.15
                         // Record the killer for the unified death sweep. cs.ex_src<0.5 = the
                         // player's blast (credits score/OC/kill-feed - explosive cs.kills now
@@ -1589,12 +1587,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let pbz = pz - cs.ex_z
             let pbd = sqrt(pbx * pbx + pby * pby + pbz * pbz)
             if pbd < rad and cs.pinvuln <= 0.0 and cs.dead == false {
-                let mut sd = env.nade_dmg * gi * (1.0 - 0.30 * pbd / rad) * 0.5
-                if cs.actors[5].sh > 0.0 {
-                    if cs.actors[5].sh >= sd { cs.actors[5].sh = cs.actors[5].sh - sd; sd = 0.0 }
-                    else { sd = sd - cs.actors[5].sh; cs.actors[5].sh = 0.0 }
-                }
-                cs.actors[5].hp = cs.actors[5].hp - sd
+                let sd = combat::blast_dmg() * gi * (1.0 - 0.30 * pbd / rad) * 0.5
+                combat::apply_hit_zoned(cs.actors, env.pl_i, sd, sd, sd, 0.7, 0)
                 cs.dmg_timer = 0.0
                 cs.hurt_flash = 0.6
                 // Killer attribution for the unified death sweep: a bot's rocket
@@ -1602,7 +1596,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 if cs.ex_src < 0.5 { cs.last_hit[env.pl_i] = env.pl_i } else { cs.last_hit[env.pl_i] = 0 - 1 }
             }
             if pbd < krad and pbd > 0.01 and cs.dead == false {
-                let pf = env.player_kb * gi * (1.0 - pbd / krad)
+                let pf = combat::blast_player_kb() * gi * (1.0 - pbd / krad)
                 cs.blast_ix = pbx / pbd * pf
                 cs.blast_iz = pbz / pbd * pf
                 cs.blast_iy = 5.0 + pf * 0.5
@@ -1675,27 +1669,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             // dummies stay harmless.
             if cs.actors[ci].hp > 0.0 and ci == env.pl_i {
                 // Reload tick (pull reserve -> mag) - identical for everyone.
-                if cs.actors[ci].rl > 0.0 {
-                    cs.actors[ci].rl = cs.actors[ci].rl - dt
-                    if cs.actors[ci].rl <= 0.0 {
-                        cs.actors[ci].rl = 0.0
-                        let rw = cs.actors[ci].rlw
-                        let mut tkr = env.mag_size_w[rw] - cs.actors[ci].mag[rw]
-                        if tkr > cs.actors[ci].res[rw] { tkr = cs.actors[ci].res[rw] }
-                        cs.actors[ci].mag[rw] = cs.actors[ci].mag[rw] + tkr
-                        cs.actors[ci].res[rw] = cs.actors[ci].res[rw] - tkr
-                    }
-                }
-                // Auto-reload when the equipped weapon is empty but has reserve - so picking
-                // up ammo while dry refills you without needing a manual reload.
-                let awp = cs.actors[ci].wpn
-                if cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[awp] <= 0 and cs.actors[ci].res[awp] > 0 {
-                    let mut acrl = env.reload_w[awp]
-                    if ci == env.pl_i and cs.oc_active { acrl = env.reload_w[awp] * 0.4 }
-                    cs.actors[ci].rl = acrl
-                    cs.actors[ci].rlw = awp
-                }
-                cs.actors[ci].fcd = cs.actors[ci].fcd - dt
+                let mut rscale = 1.0
+                if ci == env.pl_i and cs.oc_active { rscale = 0.4 }
+                combat::tick_weapon_scaled(cs.actors, ci, dt, rscale)
                 // Floor a touch BELOW 0 (not at 0) so the fire timer can carry its overshoot into the
                 // next shot - keeps the average fire rate exact and catches up after a slow frame, instead
                 // of discarding the remainder and drifting (which made sustained fire stutter every few shots).
@@ -1714,9 +1690,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     mine = 1
                     sox = px; soy = eye; soz = pz
                     ax = fx; ay = fy; az = fz
-                    let mut crl = env.reload_w[cs.actors[ci].wpn]
-                    if cs.oc_active { crl = env.reload_w[cs.actors[ci].wpn] * 0.4 }
-                    if input_down(env.act_reload) > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[cs.actors[ci].wpn] < env.mag_size_w[cs.actors[ci].wpn] and cs.actors[ci].res[cs.actors[ci].wpn] > 0 and cs.dead == false { cs.actors[ci].rl = crl; cs.actors[ci].rlw = cs.actors[ci].wpn; play_sound_handle(reload_snd(env, cs.actors[ci].wpn), 120) }
+                    let mut crl = combat::weapon_reload_time(cs.actors[ci].wpn)
+                    if cs.oc_active { crl = combat::weapon_reload_time(cs.actors[ci].wpn) * 0.4 }
+                    if input_down(env.act_reload) > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].mag[cs.actors[ci].wpn] < combat::weapon_mag_size(cs.actors[ci].wpn) and cs.actors[ci].res[cs.actors[ci].wpn] > 0 and cs.dead == false { cs.actors[ci].rl = crl; cs.actors[ci].rlw = cs.actors[ci].wpn; play_sound_handle(reload_snd(env, cs.actors[ci].wpn), 120) }
                     // Fire intent: rifle/launcher are full-auto (fire while held). The Desert Eagle is
                     // SINGLE-FIRE: it only fires on a fresh press (rising edge), gated further by its own
                     // long cooldown below. cs.fire_held tracks the button across frames for the edge.
@@ -1813,7 +1789,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                                 // re-armed rl to the full reload time every frame the mag was
                                 // empty, so the timer never hit 0 - the mag never refilled and the
                                 // bot chased with an empty gun forever (the real "not reloading" bug).
-                                if cs.actors[ci].rl <= 0.0 and cs.actors[ci].res[bw] > 0 { cs.actors[ci].rl = env.reload_w[bw]; cs.actors[ci].rlw = bw }
+                                if cs.actors[ci].rl <= 0.0 and cs.actors[ci].res[bw] > 0 { cs.actors[ci].rl = combat::weapon_reload_time(bw); cs.actors[ci].rlw = bw }
                                 want = 0
                             }
                             // Never fire the launcher point-blank (the rocket would catch the
@@ -1839,9 +1815,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     cs.actors[ci].heal = cs.actors[ci].heal + dt
                     if cs.actors[ci].heal >= env.heal_channel {
                         cs.actors[ci].heal = 0.0
-                        cs.actors[ci].cells = cs.actors[ci].cells - 1
-                        cs.actors[ci].sh = cs.actors[ci].sh + env.cell_shield
-                        if cs.actors[ci].sh > cs.actors[ci].shmax { cs.actors[ci].sh = cs.actors[ci].shmax }
+                        combat::apply_shield_cell(cs.actors, ci)
                         // GUEST: signal the host to spend a cell + add shield (it owns the result;
                         // the local change above is just prediction it reconciles).
                         if ci == env.pl_i { cs.g_heal_ctr = cs.g_heal_ctr + 1.0 }
@@ -1851,9 +1825,11 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 }
                 // ---- THE SHOT (identical mechanics for everyone) ----
                 let wp = cs.actors[ci].wpn
-                if want > 0 and cs.actors[ci].mag[wp] > 0 and cs.actors[ci].rl <= 0.0 and cs.actors[ci].heal <= 0.0 and cs.actors[ci].fcd <= 0.0 {
-                    cs.actors[ci].mag[wp] = cs.actors[ci].mag[wp] - 1
-                    if cs.actors[ci].mag[wp] <= 0 and cs.actors[ci].res[wp] > 0 { cs.actors[ci].rl = env.reload_w[wp]; cs.actors[ci].rlw = wp; if mine == 1 { play_sound_handle(reload_snd(env, wp), 120) } }
+                let mut local_fire_scale = 1.0
+                if mine == 1 and cs.oc_active { local_fire_scale = 0.55 }
+                if want > 0 and combat::consume_shot(cs.actors, ci, wp, local_fire_scale) == 1 {
+                    if cs.actors[ci].rl > 0.0 and mine == 1 { play_sound_handle(reload_snd(env, wp), 120) }
+                    if mine == 1 and cs.net_started { cs.g_fire_ctr = cs.g_fire_ctr + 1 }
                     if ci != env.pl_i { cs.ashoot[ci] = 0.6 }   // hold the shoot overlay across brief fire gaps
                     if ci == env.pl_i { cs.fp_shot = 0.30; cs.fp_rpulse = 1 }   // local FP recoil: kick the arms, restart clip 23
                     let ox = sox + ax * 0.6
@@ -1896,22 +1872,15 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             while vk < env.nactors {
                                 if vk != ci and hb == (cs.actors[vk].hdl as i64) and cs.actors[vk].hp > 0.0 {
                                     let hrel = hY - phys3d_y(cs.actors[vk].hdl as i64)
-                                    let mut dmg = env.gun_dmg
                                     let mut headshot = 0
                                     // Hit-location zoning. Rifle: head 2x, low legs 0.65x, torso 1x.
                                     // Desert Eagle (wp 2): EXPLICIT per-zone - 120 head / 40 body / 25 legs.
                                     if wp == 2 {
-                                        dmg = env.deagle_body
-                                        if hrel > 0.6 { dmg = env.deagle_head; headshot = 1 } else { if hrel < (0.0 - 0.4) { dmg = env.deagle_leg } }
+                                        headshot = combat::apply_hit_zoned(cs.actors, vk, combat::deagle_body_dmg(), combat::deagle_leg_dmg(), combat::deagle_head_dmg(), hrel, 0)
                                     } else {
-                                        if hrel > 0.6 { dmg = dmg * 2.0; headshot = 1 } else { if hrel < (0.0 - 0.4) { dmg = dmg * 0.65 } }
+                                        headshot = combat::apply_hit(cs.actors, vk, combat::rifle_dmg(), hrel, 0)
                                     }
                                     if headshot == 1 and mine == 1 { play_sound_handle(env.snd_headshot, 95) }   // real headshot ding
-                                    if cs.actors[vk].sh > 0.0 {
-                                        if cs.actors[vk].sh >= dmg { cs.actors[vk].sh = cs.actors[vk].sh - dmg; dmg = 0.0 }
-                                        else { dmg = dmg - cs.actors[vk].sh; cs.actors[vk].sh = 0.0 }
-                                    }
-                                    cs.actors[vk].hp = cs.actors[vk].hp - dmg
                                     if vk < env.bot_n { cs.brains[vk].pop = 0.1 }
                                     if mine == 1 { cs.hitmark = 0.18; if headshot == 0 { play_sound_handle(env.snd_hit, 90) } }   // real hitmarker tick (headshot has its own ding)
                                     if vk == env.pl_i and cs.pinvuln <= 0.0 and cs.dead == false {
@@ -1964,8 +1933,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         // authoritative travel-time rocket with the same sim::rocket_step; we suppress the
                         // host's fx copy of OUR rocket below so we see one - our prediction - not two.
                         cs.prjx[cs.prjcur] = ox; cs.prjy[cs.prjcur] = oy; cs.prjz[cs.prjcur] = oz
-                        cs.prjvx[cs.prjcur] = ax * env.proj_speed; cs.prjvy[cs.prjcur] = ay * env.proj_speed; cs.prjvz[cs.prjcur] = az * env.proj_speed
-                        cs.prjlife[cs.prjcur] = env.proj_life
+                        cs.prjvx[cs.prjcur] = ax * combat::proj_speed(); cs.prjvy[cs.prjcur] = ay * combat::proj_speed(); cs.prjvz[cs.prjcur] = az * combat::proj_speed()
+                        cs.prjlife[cs.prjcur] = combat::proj_life()
                         let mut psrc = 1.0
                         if mine == 1 { psrc = 0.0 }
                         cs.prjsrc[cs.prjcur] = psrc
@@ -1977,9 +1946,6 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         // GUEST: send the rocket LAUNCH INTENT so the host applies authoritative damage.
                         if mine == 1 { net_projectile_intent(0, ox, oy, oz, ax, ay, az) }
                     }
-                    let mut fw = env.fire_w[wp]
-                    if mine == 1 and cs.oc_active { fw = fw * 0.55 }
-                    cs.actors[ci].fcd = cs.actors[ci].fcd + fw   // ADD the interval (carry overshoot), don't reset
                 }
                 // ---- PICKUPS (folded in, one path): every actor collects fixed spots AND
                 // enemy drops it walks over - health pad -> full heal, shield cell -> inventory,
@@ -2000,7 +1966,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                                 } else {
                                     // Ammo: refill the EQUIPPED weapon's reserve. On a guest this is PREDICTION;
                                     // we count it (cs.g_ammo_applied) so the server-confirm reconcile cs.won't double it.
-                                    if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.pkcd[fp] = env.pk_respawn; if mine == 1 { play_sound_handle(env.snd_pick_ammo, 90); cs.g_ammo_applied = cs.g_ammo_applied + 1 } }
+                                    if combat::refill_equipped_ammo(cs.actors, ci) == 1 { cs.pkcd[fp] = env.pk_respawn; if mine == 1 { play_sound_handle(env.snd_pick_ammo, 90); cs.g_ammo_applied = cs.g_ammo_applied + 1 } }
                             } }
                         }
                     }
@@ -2017,7 +1983,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                             } else { if cs.droptype[gp] < 1.5 {
                                     if cs.actors[ci].cells < env.max_cells { cs.actors[ci].cells = cs.actors[ci].cells + 1; cs.droplife[gp] = 0.0; }
                                 } else {
-                                    if cs.actors[ci].res[cwp] < env.res_max[cwp] { cs.actors[ci].res[cwp] = cs.actors[ci].res[cwp] + env.res_refill[cwp]; if cs.actors[ci].res[cwp] > env.res_max[cwp] { cs.actors[ci].res[cwp] = env.res_max[cwp] } cs.droplife[gp] = 0.0; if mine == 1 { play_sound_handle(env.snd_pick_ammo, 90) } }
+                                    if combat::refill_equipped_ammo(cs.actors, ci) == 1 { cs.droplife[gp] = 0.0; if mine == 1 { play_sound_handle(env.snd_pick_ammo, 90) } }
                             } }
                         }
                     }
@@ -2113,7 +2079,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 cs.death_done[env.pl_i] = 0; cs.last_hit[env.pl_i] = 0 - 1   // re-arm the death sweep
                 cs.actors[5].hp = env.php_max
                 cs.actors[5].sh = 0.0   // respawn SHIELDLESS - shields are scarce; find/loot cells
-                cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1; cs.actors[5].mag[2] = 7; cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2; cs.actors[5].res[2] = 21   // ammo back to start
+                cs.actors[5].mag[0] = combat::weapon_default_mag(0); cs.actors[5].mag[1] = combat::weapon_default_mag(1); cs.actors[5].mag[2] = combat::weapon_default_mag(2); cs.actors[5].res[0] = combat::weapon_default_reserve(0); cs.actors[5].res[1] = combat::weapon_default_reserve(1); cs.actors[5].res[2] = combat::weapon_default_reserve(2)   // ammo back to start
                 cs.actors[5].rl = 0.0
                 cs.pinvuln = 0.0   // no spawn protection after respawn (server owns hp; cs.pinvuln only desynced prediction)
                 cs.respawn_req = 1.0
@@ -2225,8 +2191,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     cs.actors[5].cells = 0
                     cs.actors[5].heal = 0.0
                     cs.actors[5].wpn = 0
-                    cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1; cs.actors[5].mag[2] = 7
-                    cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2; cs.actors[5].res[2] = 21
+                    cs.actors[5].mag[0] = combat::weapon_default_mag(0); cs.actors[5].mag[1] = combat::weapon_default_mag(1); cs.actors[5].mag[2] = combat::weapon_default_mag(2)
+                    cs.actors[5].res[0] = combat::weapon_default_reserve(0); cs.actors[5].res[1] = combat::weapon_default_reserve(1); cs.actors[5].res[2] = combat::weapon_default_reserve(2)
                     cs.actors[5].rl = 0.0
                     cs.dead = false
                     cs.respawn_req = 1.0
@@ -2242,8 +2208,8 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                         cs.actors[rb].hp = env.enemy_hp_max
                         if rb >= cs.bot_count { cs.actors[rb].hp = 0.0; cs.brains[rb].resp = 1000000.0 }
                         cs.actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
-                        cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]; cs.actors[rb].mag[2] = env.mag_size_w[2]
-                        cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2; cs.actors[rb].res[2] = 21
+                        cs.actors[rb].mag[0] = combat::weapon_default_mag(0); cs.actors[rb].mag[1] = combat::weapon_default_mag(1); cs.actors[rb].mag[2] = combat::weapon_default_mag(2)
+                        cs.actors[rb].res[0] = combat::weapon_default_reserve(0); cs.actors[rb].res[1] = combat::weapon_default_reserve(1); cs.actors[rb].res[2] = combat::weapon_default_reserve(2)
                         cs.actors[rb].rl = 0.0
                         cs.actors[rb].wpn = 0
                         cs.actors[rb].cells = 0
@@ -2664,7 +2630,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
             let fp_pitch = (0.0 - cs.fp_lpit) * cs.fp_pitchf
             let fp_sc = env.actor_scale * cs.fp_scale
             let healing = cs.actors[5].heal > 0.0
-            let katana_on = cs.melee_cd > env.melee_cooldown - 0.35
+            let katana_on = cs.melee_cd > combat::melee_cooldown() - 0.35
             // Base layer: a quiet looping idle (legs are out of view; this just keeps the rig live).
             if cs.fp_astate != env.anim_idle { r3d_anim_play(env.fp_arms, env.anim_idle, 1, 1.0, 0.12); cs.fp_astate = env.anim_idle }
             // Recoil timer (per shot, set at the shot site) decays here.
@@ -3326,7 +3292,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         draw_text(cs.fbw - 96, cs.fbh - 50, "/", 26, col_white)
         draw_int(cs.fbw - 78, cs.fbh - 50, cs.actors[5].res[cs.actors[5].wpn], 26, 150 * 65536 + 150 * 256 + 160)
         if cs.actors[5].rl > 0.0 {
-            let rw = ((1.0 - cs.actors[5].rl / env.reload_w[cs.actors[5].wpn]) * 110.0) as i64
+            let rw = ((1.0 - cs.actors[5].rl / combat::weapon_reload_time(cs.actors[5].wpn)) * 110.0) as i64
             let mut rb3 = 0
             while rb3 < rw {
                 pixel(cs.fbw - 150 + rb3, cs.fbh - 14, 255, 200, 60)
@@ -3544,8 +3510,8 @@ fn reset_round(cs: ClientState, env: ClientEnv) {
         cs.respawn_req = 1.0
         cs.actors[5].wpn = 0
         cs.prev_weapon = 0
-        cs.actors[5].mag[0] = 30; cs.actors[5].mag[1] = 1; cs.actors[5].mag[2] = 7
-        cs.actors[5].res[0] = 60; cs.actors[5].res[1] = 2; cs.actors[5].res[2] = 21
+        cs.actors[5].mag[0] = combat::weapon_default_mag(0); cs.actors[5].mag[1] = combat::weapon_default_mag(1); cs.actors[5].mag[2] = combat::weapon_default_mag(2)
+        cs.actors[5].res[0] = combat::weapon_default_reserve(0); cs.actors[5].res[1] = combat::weapon_default_reserve(1); cs.actors[5].res[2] = combat::weapon_default_reserve(2)
         cs.actors[5].rl = 0.0
         cs.oc_meter = 0.0
         cs.oc_active = false
@@ -3578,8 +3544,8 @@ fn reset_round(cs: ClientState, env: ClientEnv) {
             cs.actors[rb].hp = env.enemy_hp_max
             if rb >= cs.bot_count { cs.actors[rb].hp = 0.0; cs.brains[rb].resp = 1000000.0 }   // inactive bot
             cs.actors[rb].sh = 0.0   // no starting shield: bots must find cells and pop their own
-            cs.actors[rb].mag[0] = env.mag_size_w[0]; cs.actors[rb].mag[1] = env.mag_size_w[1]; cs.actors[rb].mag[2] = env.mag_size_w[2]
-            cs.actors[rb].res[0] = 60; cs.actors[rb].res[1] = 2; cs.actors[rb].res[2] = 21
+            cs.actors[rb].mag[0] = combat::weapon_default_mag(0); cs.actors[rb].mag[1] = combat::weapon_default_mag(1); cs.actors[rb].mag[2] = combat::weapon_default_mag(2)
+            cs.actors[rb].res[0] = combat::weapon_default_reserve(0); cs.actors[rb].res[1] = combat::weapon_default_reserve(1); cs.actors[rb].res[2] = combat::weapon_default_reserve(2)
             cs.actors[rb].rl = 0.0
             cs.actors[rb].wpn = 0
             cs.actors[rb].cells = 0

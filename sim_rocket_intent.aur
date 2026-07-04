@@ -11,12 +11,14 @@ fn main() {
     net_join("127.0.0.1", 45123)
     net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
     net_spawn_at(0.0, 0.9, 45.0)
+    net_set_meta(22, 1.0)   // select launcher; server applies the same swap gate as the real client
     let mut t = 0
     while t < 40 { net_send_input([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
     // Fire ONE rocket intent straight UP from the spawn (open air - it keeps flying).
     let ex = net_local_x()
     let ey = net_local_y() + 0.7
     let ez = net_local_z()
+    net_set_meta(23, 1.0)
     net_projectile_intent(0, ex, ey, ez, 0.0, 1.0, 0.0)
     let mut seen_flying = 0
     t = 0

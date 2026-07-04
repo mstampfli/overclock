@@ -1,0 +1,16 @@
+// Fire-token authority: a client fire counter is consumed by the server even if no hit event exists.
+// This proves misses spend server ammo/cooldown; later hit/projectile resolution can only use tokens
+// already authorized by consume_actor_shot.
+fn main() {
+    let mut w = world::new_world()
+    w.round.bots = 0
+    w.apid[6] = 1
+    server::respawn_actor(w, 6)
+    server::authorize_client_fire(w, 6, 1, 0)
+    let spent = (w.actors[6].mag[0] == 29) as i64
+    let token = (w.shot0_ok[6] == 1) as i64
+    let took = server::take_shot_token(w, 6, 0)
+    let empty_after = (w.shot0_ok[6] == 0) as i64
+    println("mag0=" + str(w.actors[6].mag[0]) + " token0=" + str(w.shot0_ok[6]) + " took=" + str(took))
+    println("RESULT fire-counter-spends-ammo=" + str((spent == 1 and token == 1 and took == 1 and empty_after == 1) as i64) + " (expect 1)")
+}

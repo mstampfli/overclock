@@ -55,14 +55,18 @@ fn respawn_actor(w: world::World, slot: i64) {
     w.actors[slot].cells = 0
     w.death_done[slot] = 0
     w.last_hit[slot] = 0 - 1
-    // Fresh loadout. The server owns a bot's ammo (its AI fires from these); for a player this is
-    // harmless - the client owns + predicts its own and the host never broadcasts mag/res. Shared
-    // either way, so the respawn has NO per-actor-type branch.
-    w.actors[slot].mag[0] = 30
-    w.actors[slot].mag[1] = 1
-    w.actors[slot].res[0] = 60
-    w.actors[slot].res[1] = 2
+    // Fresh loadout. The server owns ammo for every actor; clients predict their local HUD, but the
+    // host validates/consumes the same mags when their net fire/projectile intent arrives.
+    w.actors[slot].wpn = 0
+    w.actors[slot].mag[0] = combat::weapon_default_mag(0)
+    w.actors[slot].mag[1] = combat::weapon_default_mag(1)
+    w.actors[slot].mag[2] = combat::weapon_default_mag(2)
+    w.actors[slot].res[0] = combat::weapon_default_reserve(0)
+    w.actors[slot].res[1] = combat::weapon_default_reserve(1)
+    w.actors[slot].res[2] = combat::weapon_default_reserve(2)
     w.actors[slot].rl = 0.0
+    w.actors[slot].rlw = 0
+    w.actors[slot].fcd = 0.0
     w.actors[slot].heal = 0.0
 }
 
@@ -91,6 +95,7 @@ fn respawn_tick(w: world::World, dt: f64) -> i64 {
                 w.brains[s].resp = w.brains[s].resp - dt   // WHEN: count the shared death timer down
             } else { if w.death_done[s] == 1 {
                 respawn_actor(w, s)                        // restore hp/shield/ammo (shared)
+                if is_bot { net_set_bot_alive(s, 1) }       // bot body re-enters the net sim before teleport
                 net_force_respawn(aid)                     // server teleports it to the chosen point
                 w.cresp_seen[s] = net_player_meta(aid, 3) as i64   // ack (replicated as meta 9; no-op for a bot)
             } }
@@ -115,17 +120,19 @@ fn sync_clients(w: world::World) -> i64 {
             // First time this slot holds this client: reset its survivability.
             if w.cpid_h[slot] != pid {
                 w.cpid_h[slot] = pid
-                w.actors[slot].hp = 100.0
-                w.actors[slot].sh = 0.0
                 w.actors[slot].shmax = 50.0
-                w.actors[slot].cells = 0
-                w.death_done[slot] = 0
-                w.last_hit[slot] = 0 - 1
+                respawn_actor(w, slot)
                 w.cresp_seen[slot] = net_player_meta(pid, 3) as i64
                 w.cheal_seen[slot] = net_player_meta(pid, 5) as i64
                 w.cmelee_seen[slot] = net_player_meta(pid, 17) as i64
+                w.cfire_seen[slot] = net_player_meta(pid, 23) as i64
                 w.ammo_evt[slot] = 0
             }
+            let mwp = net_player_meta(pid, 22) as i64
+            select_actor_weapon(w, slot, mwp)
+            let mut ocm = 0
+            if net_player_meta(pid, 2) > 0.5 { ocm = 1 }
+            authorize_client_fire(w, slot, net_player_meta(pid, 23) as i64, ocm)
             // RESPAWN is handled in respawn_tick now - ONE shared path for players and bots, run after
             // deaths_tick. It restores this client's hp + updates cresp_seen; the meta-9 ack replicated
             // below then clears the client's respawn wait once its hp is actually back.
@@ -135,11 +142,7 @@ fn sync_clients(w: world::World) -> i64 {
             let hc = net_player_meta(pid, 5) as i64
             if hc != w.cheal_seen[slot] {
                 w.cheal_seen[slot] = hc
-                if w.actors[slot].cells > 0 and w.actors[slot].sh < w.actors[slot].shmax {
-                    w.actors[slot].cells = w.actors[slot].cells - 1
-                    w.actors[slot].sh = w.actors[slot].sh + 25.0
-                    if w.actors[slot].sh > w.actors[slot].shmax { w.actors[slot].sh = w.actors[slot].shmax }
-                }
+                apply_shield_cell(w, slot)
             }
             // MELEE HANDSHAKE: a client signals a katana swing by ++ its meta 17. The host owns the
             // result - a ~120-deg arc from the client's authoritative position + look yaw; every enemy
@@ -166,9 +169,11 @@ fn sync_clients(w: world::World) -> i64 {
                 while mt < 9 {
                     let menemy = (mt < w.round.bots) or (mt >= 6 and w.apid[mt] != 9999)
                     if mt != slot and menemy and w.actors[mt].hp > 0.0 {
-                        // Shared arc test + hit (the SAME code the client predicts the swing with).
-                        if combat::in_melee_arc(w.actors, mt, mpx, mpy, mpz, mfx, mfy, mfz, 2.8, w.actors[slot].hdl) == 1 {
-                            combat::melee_hit(w.actors, w.brains, w.last_hit, mt, slot, mhx, mhz, 75.0)
+                        // Shared arc test + authoritative hit; movement shove is queued as bot/player
+                        // sim input below, never as a bot-only Brain velocity.
+                        if combat::in_melee_arc(w.actors, mt, mpx, mpy, mpz, mfx, mfy, mfz, combat::melee_range(), w.actors[slot].hdl) == 1 {
+                            apply_authoritative_hit(w, mt, slot, combat::melee_dmg(), 0.0, 1, 0.2)
+                            push_actor_impulse(w, mt, mhx * combat::blast_player_kb(), 6.0, mhz * combat::blast_player_kb())
                         }
                     }
                     mt = mt + 1
@@ -244,6 +249,7 @@ fn round_tick(w: world::World, dt: f64) -> i64 {
                     let mut aid = 1000 + z
                     if is_client { aid = w.apid[z] }
                     smart_respawn(w, z, aid, claimed)
+                    if is_bot { net_set_bot_alive(z, 1) }
                     net_force_respawn(aid)
                 }
                 z = z + 1
@@ -300,8 +306,7 @@ fn loot_tick(w: world::World, dt: f64) -> i64 {
                             if ty < 1.5 {
                                 if w.actors[a].cells < 4 { w.actors[a].cells = w.actors[a].cells + 1; w.droplife[d] = 0.0 }
                             } else {
-                                w.actors[a].res[0] = w.actors[a].res[0] + 30
-                                w.droplife[d] = 0.0
+                                if refill_actor_equipped_ammo(w, a) == 1 { w.droplife[d] = 0.0 }
                             }
                         }
                     }
@@ -345,12 +350,7 @@ fn pickups_tick(w: world::World, dt: f64) -> i64 {
                             if ty < 1.5 {
                                 if w.actors[a].cells < 4 { w.actors[a].cells = w.actors[a].cells + 1; w.pkcd[k] = pk_respawn }
                             } else {
-                                w.actors[a].res[0] = w.actors[a].res[0] + 30   // a fresh rifle reserve
-                                w.actors[a].res[1] = w.actors[a].res[1] + 2    // + a couple of rockets
-                                w.pkcd[k] = pk_respawn
-                                // CLIENT slots (6..8): ++ the authoritative ammo-pickup counter so the
-                                // client confirms the pickup (refill + sound), server-owned not predicted-and-lost.
-                                if a >= 6 { w.ammo_evt[a] = w.ammo_evt[a] + 1 }
+                                if refill_actor_equipped_ammo(w, a) == 1 { w.pkcd[k] = pk_respawn }
                             }
                         }
                     }
@@ -426,6 +426,131 @@ fn slot_netid(w: world::World, slot: i64) -> i64 {
     w.apid[slot]
 }
 
+fn queue_bot_impulse(w: world::World, slot: i64, ix: f64, iy: f64, iz: f64) {
+    if slot >= 0 and slot < 9 {
+        w.bot_ix[slot] = w.bot_ix[slot] + ix
+        w.bot_iy[slot] = w.bot_iy[slot] + iy
+        w.bot_iz[slot] = w.bot_iz[slot] + iz
+    }
+}
+
+fn push_actor_impulse(w: world::World, slot: i64, ix: f64, iy: f64, iz: f64) {
+    if slot < w.round.bots {
+        queue_bot_impulse(w, slot, ix, iy, iz)
+    } else {
+        if slot >= 6 and w.apid[slot] != 9999 {
+            net_push_impulse(w.apid[slot], ix, iy, iz)
+        }
+    }
+}
+
+fn apply_shield_cell(w: world::World, slot: i64) -> i64 {
+    combat::apply_shield_cell(w.actors, slot)
+}
+
+fn apply_authoritative_hit(w: world::World, victim: i64, attacker: i64, base: f64, hrel: f64, bypass: i64, pop: f64) -> i64 {
+    let head = combat::apply_hit(w.actors, victim, base, hrel, bypass)
+    w.brains[victim].pop = pop
+    if attacker >= 0 { w.last_hit[victim] = attacker }
+    head
+}
+
+fn apply_authoritative_zoned_hit(w: world::World, victim: i64, attacker: i64, body: f64, leg: f64, head_dmg: f64, hrel: f64, bypass: i64, pop: f64) -> i64 {
+    let head = combat::apply_hit_zoned(w.actors, victim, body, leg, head_dmg, hrel, bypass)
+    w.brains[victim].pop = pop
+    if attacker >= 0 { w.last_hit[victim] = attacker }
+    head
+}
+
+fn weapon_mag_size(wpn: i64) -> i64 {
+    combat::weapon_mag_size(wpn)
+}
+
+fn weapon_reload_time(wpn: i64) -> f64 {
+    combat::weapon_reload_time(wpn)
+}
+
+fn weapon_fire_interval(wpn: i64) -> f64 {
+    combat::weapon_fire_interval(wpn)
+}
+
+fn weapon_res_max(wpn: i64) -> i64 {
+    combat::weapon_res_max(wpn)
+}
+
+fn weapon_res_refill(wpn: i64) -> i64 {
+    combat::weapon_res_refill(wpn)
+}
+
+fn tick_actor_weapon(w: world::World, slot: i64, dt: f64, reload_scale: f64) {
+    combat::tick_weapon_scaled(w.actors, slot, dt, reload_scale)
+}
+
+fn weapons_tick(w: world::World, dt: f64) -> i64 {
+    let mut slot = 0
+    while slot < 9 {
+        let live = (slot < w.round.bots) or (slot >= 6 and w.apid[slot] != 9999)
+        if live and w.actors[slot].hp > 0.0 {
+            let mut rscale = 1.0
+            if slot >= 6 and w.apid[slot] != 9999 and net_player_meta(w.apid[slot], 2) > 0.5 { rscale = 0.4 }
+            tick_actor_weapon(w, slot, dt, rscale)
+        }
+        slot = slot + 1
+    }
+    0
+}
+
+fn select_actor_weapon(w: world::World, slot: i64, wpn: i64) -> i64 {
+    combat::select_weapon(w.actors, slot, wpn)
+}
+
+fn consume_actor_shot(w: world::World, slot: i64, wpn: i64, fire_scale: f64) -> i64 {
+    combat::consume_shot(w.actors, slot, wpn, fire_scale)
+}
+
+fn refill_actor_equipped_ammo(w: world::World, slot: i64) -> i64 {
+    if combat::refill_equipped_ammo(w.actors, slot) == 1 {
+        if slot >= 6 { w.ammo_evt[slot] = w.ammo_evt[slot] + 1 }
+        return 1
+    }
+    0
+}
+
+fn grant_shot_token(w: world::World, slot: i64, wpn: i64) {
+    if wpn == 1 {
+        w.shot1_ok[slot] = w.shot1_ok[slot] + 1
+    } else {
+        if wpn == 2 { w.shot2_ok[slot] = w.shot2_ok[slot] + 1 }
+        else { w.shot0_ok[slot] = w.shot0_ok[slot] + 1 }
+    }
+}
+
+fn take_shot_token(w: world::World, slot: i64, wpn: i64) -> i64 {
+    if slot < 0 or slot >= 9 { return 0 }
+    if wpn == 1 {
+        if w.shot1_ok[slot] > 0 { w.shot1_ok[slot] = w.shot1_ok[slot] - 1; return 1 }
+    } else {
+        if wpn == 2 {
+            if w.shot2_ok[slot] > 0 { w.shot2_ok[slot] = w.shot2_ok[slot] - 1; return 1 }
+        } else {
+            if w.shot0_ok[slot] > 0 { w.shot0_ok[slot] = w.shot0_ok[slot] - 1; return 1 }
+        }
+    }
+    0
+}
+
+fn authorize_client_fire(w: world::World, slot: i64, ctr: i64, overclocked: i64) {
+    let mut guard = 0
+    while w.cfire_seen[slot] != ctr and guard < 16 {
+        w.cfire_seen[slot] = w.cfire_seen[slot] + 1
+        let mut fire_scale = 1.0
+        if overclocked == 1 { fire_scale = 0.55 }
+        let wpn = w.actors[slot].wpn
+        if consume_actor_shot(w, slot, wpn, fire_scale) == 1 { grant_shot_token(w, slot, wpn) }
+        guard = guard + 1
+    }
+}
+
 // DEATH SWEEP: once per life (death_done gates it), when an actor's hp hits 0, clear its shield,
 // count the death, credit the last damager (akills + a broadcast net_push_kill so every client's
 // scoreboard + kill feed updates), and start the bot respawn timer. Clients respawn themselves
@@ -439,16 +564,17 @@ fn deaths_tick(w: world::World) -> i64 {
             w.actors[dv].hp = 0.0
             w.actors[dv].sh = 0.0
             w.adeaths[dv] = w.adeaths[dv] + 1
-            // FREEZE the corpse exactly where it fell: record the death spot (the body renders here
-            // while its collider is parked out of the world) and kill its velocity so it can't coast
-            // forward a step after dying. Same for bots and clients - one place, one behaviour.
+            // FREEZE the corpse exactly where it fell: record the death spot (the body renders here).
+            // Bots leave the movement sim through net_set_bot_alive(0); client proxy colliders are
+            // velocity-killed locally because they are only server-side hit proxies, not net-sim actors.
             let dbx = phys3d_x(w.actors[dv].hdl)
             let dby = phys3d_y(w.actors[dv].hdl)
             let dbz = phys3d_z(w.actors[dv].hdl)
             w.death_x[dv] = dbx
             w.death_y[dv] = dby
             w.death_z[dv] = dbz
-            phys3d_set_vel(w.actors[dv].hdl, 0.0, 0.0, 0.0)
+            if dv < w.round.bots { net_set_bot_alive(dv, 0) }
+            else { if dv >= 6 { phys3d_set_vel(w.actors[dv].hdl, 0.0, 0.0, 0.0) } }
             spawn_drop(w, dbx, dbz, 0.0)
             spawn_drop(w, dbx - 0.6, dbz, 2.0)
             if w.actors[dv].cells > 0 { spawn_drop(w, dbx + 0.6, dbz, 1.0) }
@@ -477,22 +603,6 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
     let mut ci = 0
     while ci < nb {
         if w.actors[ci].hp > 0.0 {
-            // Reload tick (pull reserve -> mag), and auto-reload an empty rifle.
-            if w.actors[ci].rl > 0.0 {
-                w.actors[ci].rl = w.actors[ci].rl - dt
-                if w.actors[ci].rl <= 0.0 {
-                    w.actors[ci].rl = 0.0
-                    let mut tkr = 30 - w.actors[ci].mag[0]
-                    if tkr > w.actors[ci].res[0] { tkr = w.actors[ci].res[0] }
-                    w.actors[ci].mag[0] = w.actors[ci].mag[0] + tkr
-                    w.actors[ci].res[0] = w.actors[ci].res[0] - tkr
-                }
-            }
-            if w.actors[ci].rl <= 0.0 and w.actors[ci].mag[0] <= 0 and w.actors[ci].res[0] > 0 {
-                w.actors[ci].rl = 1.6
-            }
-            w.actors[ci].fcd = w.actors[ci].fcd - dt
-            if w.actors[ci].fcd < 0.0 { w.actors[ci].fcd = 0.0 }
             let h = w.actors[ci].hdl
             let bsx = phys3d_x(h)
             let bsy = phys3d_y(h) + 0.5
@@ -527,34 +637,25 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
             // window opens, lob a travel-time rocket (dodgeable) instead of the rifle. Consumes a
             // rocket (mag[1] reloads from res[1]) and takes the slow fire cooldown.
             let mut launched = 0
-            if passive == 0 and tgv >= 0 and w.actors[ci].fcd <= 0.0 and bestd > 25.0 and w.actors[ci].mag[1] > 0 and w.actors[ci].heal <= 0.0 and sin(w.etime * 0.7 + (ci as f64) * 1.9) > 0.9 {
+            if passive == 0 and tgv >= 0 and bestd > 25.0 and (w.actors[ci].mag[1] + w.actors[ci].res[1]) > 0 and sin(w.etime * 0.7 + (ci as f64) * 1.9) > 0.9 {
                 let ddx = tgx - bsx
                 let ddy = tgy - bsy
                 let ddz = tgz - bsz
                 let dl = sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
                 if dl > 0.1 {
-                    spawn_rocket(w, bsx, bsy, bsz, ddx / dl, ddy / dl, ddz / dl, ci)
-                    w.actors[ci].mag[1] = w.actors[ci].mag[1] - 1
-                    // AUTHORITATIVE reload: emptying the tube costs a real RELOAD before the next
-                    // rocket - no instant refill (that let bots chain rockets back-to-back). The long
-                    // fcd IS the reload gate, server-owned, so a bot can't fire two without reloading.
-                    if w.actors[ci].mag[1] <= 0 and w.actors[ci].res[1] > 0 {
-                        w.actors[ci].mag[1] = 1
-                        w.actors[ci].res[1] = w.actors[ci].res[1] - 1
-                        w.actors[ci].fcd = 1.8
-                    } else {
-                        w.actors[ci].fcd = 0.5
-                    }
                     launched = 1
+                    if consume_actor_shot(w, ci, 1, 1.0) == 1 {
+                        spawn_rocket(w, bsx, bsy, bsz, ddx / dl, ddy / dl, ddz / dl, ci)
+                    }
                 }
             }
             // Fire if armed + off cooldown + we have a target (and we didn't just launch a rocket).
-            if passive == 0 and launched == 0 and tgv >= 0 and w.actors[ci].fcd <= 0.0 and w.actors[ci].mag[0] > 0 and w.actors[ci].rl <= 0.0 and w.actors[ci].heal <= 0.0 {
+            if passive == 0 and launched == 0 and tgv >= 0 {
                 let ddx = tgx - bsx
                 let ddy = tgy - bsy
                 let ddz = tgz - bsz
                 let dl = sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
-                if dl > 0.1 {
+                if dl > 0.1 and consume_actor_shot(w, ci, 0, 1.0) == 1 {
                     let bnx = ddx / dl
                     let bny = ddy / dl
                     let bnz = ddz / dl
@@ -567,8 +668,6 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                     let ox = bsx + snx * 0.6
                     let oy = bsy + sny * 0.6
                     let oz = bsz + snz * 0.6
-                    w.actors[ci].mag[0] = w.actors[ci].mag[0] - 1
-                    w.actors[ci].fcd = 0.11
                     let hb = phys3d_raycast_ex(h, ox, oy, oz, snx, sny, snz, 120.0)
                     let mut tex = ox + snx * 120.0
                     let mut tey = oy + sny * 120.0
@@ -581,9 +680,7 @@ fn combat_tick(w: world::World, dt: f64) -> i64 {
                         while vk < 9 {
                             if vk != ci and hb == w.actors[vk].hdl and w.actors[vk].hp > 0.0 {
                                 let hrel = tey - phys3d_y(w.actors[vk].hdl)
-                                combat::apply_hit(w.actors, vk, 17.0, hrel, 0)   // gun_dmg, shield-then-hp + zoning
-                                if vk < nb { w.brains[vk].pop = 0.1 }
-                                w.last_hit[vk] = ci
+                                apply_authoritative_hit(w, vk, ci, combat::rifle_dmg(), hrel, 0, 0.1)   // gun_dmg, shield-then-hp + zoning
                             }
                             vk = vk + 1
                         }
@@ -614,6 +711,14 @@ fn client_shots_tick(w: world::World) -> i64 {
         let vic = net_server_hit_victim(sh)
         let shooter_pid = net_server_hit_shooter(sh)
         let hY = net_server_hit_y(sh)
+        let shot_wpn = net_server_hit_weapon(sh)
+        let mut sai = 0 - 1
+        let mut ra = 6
+        while ra < 9 {
+            if w.apid[ra] == shooter_pid { sai = ra }
+            ra = ra + 1
+        }
+        let shot_ok = take_shot_token(w, sai, shot_wpn)
         let mut vai = 0 - 1
         if vic >= 1000 {
             let bidx = vic - 1000
@@ -627,29 +732,21 @@ fn client_shots_tick(w: world::World) -> i64 {
                 }
             }
         }
-        if vai >= 0 and w.actors[vai].hp > 0.0 {
+        if shot_ok == 1 and vai >= 0 and w.actors[vai].hp > 0.0 {
             let hrel = hY - phys3d_y(w.actors[vai].hdl)
             // Authoritative damage by the weapon the client actually fired (round-tripped through
             // net_fire). Desert Eagle (2) = explicit per-zone 40/25/120; everything else = rifle.
-            if net_server_hit_weapon(sh) == 2 {
-                combat::apply_hit_zoned(w.actors, vai, 40.0, 25.0, 120.0, hrel, 0)
+            // Same server hit primitive as bots use after their AI has generated a shot.
+            if shot_wpn == 2 {
+                let head = apply_authoritative_zoned_hit(w, vai, sai, combat::deagle_body_dmg(), combat::deagle_leg_dmg(), combat::deagle_head_dmg(), hrel, 0, 0.1)
             } else {
-                combat::apply_hit(w.actors, vai, 17.0, hrel, 0)   // gun_dmg, shield-then-hp + zoning
+                let head = apply_authoritative_hit(w, vai, sai, combat::rifle_dmg(), hrel, 0, 0.1)   // gun_dmg, shield-then-hp + zoning
             }
-            if vai < 5 { w.brains[vai].pop = 0.1 }
-            // Credit the shooter (a client slot) so the death sweep counts the kill for them.
-            let mut sai = 0 - 1
-            let mut ra = 6
-            while ra < 9 {
-                if w.apid[ra] == shooter_pid { sai = ra }
-                ra = ra + 1
-            }
-            if sai >= 0 { w.last_hit[vai] = sai }
         } else {
             // CRATE hit (lag-comp victim id >= OBJ_ID_BASE 2000): the bullet shoves the box. The server
             // owns it, so the move replicates to every client (which snap their boxes to the broadcast).
             // Without this, shooting a box did nothing - client prediction can't move a server-owned box.
-            if vic >= 2000 {
+            if shot_ok == 1 and vic >= 2000 {
                 let ck = vic - 2000
                 if ck < 12 {
                     let ch = w.crates[ck]
@@ -679,29 +776,31 @@ fn client_shots_tick(w: world::World) -> i64 {
 // later bot) rockets/grenades. The visual (boom + sparks + sound) is the client's job via the boom
 // channel; this is the authoritative DAMAGE only.
 fn explode(w: world::World, dx: f64, dy: f64, dz: f64, gi: f64, src_slot: i64) -> i64 {
-    let erad = 5.0 * gi   // nade_radius (damage); knockback reach is wider (8m, matching the client)
+    let erad = combat::blast_radius() * gi   // nade_radius (damage); knockback reach is wider (8m, matching the client)
     let mut eej = 0
     while eej < 9 {
         let live = (eej < w.round.bots) or (eej >= 6 and w.apid[eej] != 9999)
         if live and w.actors[eej].hp > 0.0 {
-            // Shared blast math (same fn the client predicts with). Bots move from this brain
-            // shove (16 push / 8m reach); damage is 150 and authoritative for everyone.
-            combat::blast_hit(w.actors, w.brains, w.last_hit, eej, src_slot, dx, dy, dz, 150.0 * gi, erad, 16.0 * gi, 8.0 * gi)
-            // CLIENT slots move via the SIM, not the brain - so push an AUTHORITATIVE impulse the
-            // engine injects into their re-sim (input 14-16, the same blast_i the client predicts).
-            // Server-originated: a client can't withhold its shove, and a remote caught in someone
-            // else's blast gets knocked back too (the client's boom handler never self-knocked).
-            if eej >= 6 {
-                let h = w.actors[eej].hdl
-                let pbx = phys3d_x(h) - dx
-                let pby = phys3d_y(h) - dy
-                let pbz = phys3d_z(h) - dz
-                let pbd = sqrt(pbx * pbx + pby * pby + pbz * pbz)
-                let pkrad = 8.0 * gi   // nade_kb_radius
-                if pbd < pkrad and pbd > 0.01 {
-                    let pf = 14.0 * gi * (1.0 - pbd / pkrad)   // player_kb = 14
-                    net_push_impulse(w.apid[eej], pbx / pbd * pf, 5.0 + pf * 0.5, pbz / pbd * pf)
-                }
+            let h = w.actors[eej].hdl
+            let bdx = phys3d_x(h) - dx
+            let bdy = (phys3d_y(h) + 0.5) - dy
+            let bdz = phys3d_z(h) - dz
+            let bdd = sqrt(bdx * bdx + bdy * bdy + bdz * bdz)
+            if bdd < erad {
+                let mut dmg = combat::blast_dmg() * gi * (1.0 - 0.30 * bdd / erad)
+                if eej == src_slot { dmg = dmg * 0.5 }
+                apply_authoritative_hit(w, eej, src_slot, dmg, 0.0, 0, 0.15)
+            }
+            // Server-authored movement impulse is delivered through the actor's movement-input path:
+            // connected players get net_push_impulse, bots get the same impulse queued into slots 14-16.
+            let pbx = phys3d_x(h) - dx
+            let pby = phys3d_y(h) - dy
+            let pbz = phys3d_z(h) - dz
+            let pbd = sqrt(pbx * pbx + pby * pby + pbz * pbz)
+            let pkrad = combat::blast_kb_radius() * gi   // nade_kb_radius
+            if pbd < pkrad and pbd > 0.01 {
+                let pf = combat::blast_player_kb() * gi * (1.0 - pbd / pkrad)   // player_kb
+                push_actor_impulse(w, eej, pbx / pbd * pf, 5.0 + pf * 0.5, pbz / pbd * pf)
             }
         }
         eej = eej + 1
@@ -745,7 +844,7 @@ fn client_projectiles_tick(w: world::World) -> i64 {
                 // sim::rocket_step + detonates on impact), NOT an instant 120m hitscan. So the arc the
                 // shooter sees matches the host's, and remotes watch it fly. Same path as a bot rocket.
                 let pvl = sqrt(pvx * pvx + pvy * pvy + pvz * pvz)
-                if pvl > 0.001 {
+                if pvl > 0.001 and take_shot_token(w, psai, 1) == 1 {
                     spawn_rocket(w, pox, poy, poz, pvx / pvl, pvy / pvl, pvz / pvl, psai)
                 }
             } else {
@@ -802,10 +901,10 @@ fn spawn_rocket(w: world::World, ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz
             w.prjx[p] = ox + dx * 0.6
             w.prjy[p] = oy + dy * 0.6
             w.prjz[p] = oz + dz * 0.6
-            w.prjvx[p] = dx * 60.0   // proj_speed
-            w.prjvy[p] = dy * 60.0
-            w.prjvz[p] = dz * 60.0
-            w.prjlife[p] = 2.2       // proj_life
+            w.prjvx[p] = dx * combat::proj_speed()
+            w.prjvy[p] = dy * combat::proj_speed()
+            w.prjvz[p] = dz * combat::proj_speed()
+            w.prjlife[p] = combat::proj_life()
             w.prjsrc[p] = (src) as f64
             return 0
         }
@@ -842,7 +941,7 @@ fn projectiles_tick(w: world::World, dt: f64) -> i64 {
 
 // Bot AI MOVEMENT (ported from the playground bot loop, adapted to the server: the "enemy" is the
 // nearest connected CLIENT or other bot, read over the net / physics). Hunt + standoff ring + juke
-// + gravity + jump + knockback decay + collide-and-slide. Goals (pickups), grapple layer on later.
+// + gravity + jump + server-authored impulse input + collide-and-slide. Goals (pickups), grapple layer on later.
 
 fn bots_tick(w: world::World, dt: f64) -> i64 {
     w.etime = w.etime + dt
@@ -872,9 +971,6 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
         if w.brains[ei2].pop < 0.0 { w.brains[ei2].pop = 0.0 }
         w.actors[ei2].gat = w.actors[ei2].gat - dt     // grapple-rope draw timer decays toward 0
         if w.actors[ei2].gat < 0.0 { w.actors[ei2].gat = 0.0 }
-        w.brains[ei2].kx = w.brains[ei2].kx - w.brains[ei2].kx * 2.8 * dt
-        w.brains[ei2].ky = w.brains[ei2].ky - w.brains[ei2].ky * 2.8 * dt
-        w.brains[ei2].kz = w.brains[ei2].kz - w.brains[ei2].kz * 2.8 * dt
         if w.actors[ei2].hp > 0.0 {
             let bx0 = phys3d_x(h)
             let by0 = phys3d_y(h)
@@ -926,11 +1022,7 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                     if w.actors[ei2].heal >= 2.5 {
                         w.actors[ei2].heal = 0.0
                         channeling = 0
-                        if w.actors[ei2].cells > 0 {
-                            w.actors[ei2].cells = w.actors[ei2].cells - 1
-                            w.actors[ei2].sh = w.actors[ei2].sh + 25.0
-                            if w.actors[ei2].sh > w.actors[ei2].shmax { w.actors[ei2].sh = w.actors[ei2].shmax }
-                        }
+                        apply_shield_cell(w, ei2)
                     }
                 } else {
                     w.actors[ei2].heal = 0.0
@@ -1027,11 +1119,10 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                     w.brains[ei2].jcd = 0.5
                 }
             }
-            // GRAPPLE: far from a (non-pickup) target, a bot grapple-leaps to close the gap the way a
-            // player would - raycast toward the target, anchor on the surface it hits, and reel in (the
-            // leap rides the same knockback-velocity decay blasts use; the knock>4 gate below freezes
-            // steering so the launch reads). Skipped while seeking loot. Anchor + a 0.4s rope timer go
-            // out over meta 12-15 so every client draws the cyan rope, same as a human player's grapple.
+            // GRAPPLE: far from a (non-pickup) target, a bot fires the same movement grapple a player
+            // uses. The AI only chooses the anchor; the pull itself goes through sim_step slots 10-13.
+            // Skipped while seeking loot. Anchor + active rope timer go out over meta 12-15 so every
+            // client draws the cyan rope, same as a human player's grapple.
             // MOVEMENT TECH: bots move like skilled players. A per-bot etime phase (each on its own
             // rhythm) drives slide-hops while crossing open ground - slide to gather speed, then jump to
             // carry it (bunny-hop) - and a quick dash to juke mid-fight. All fed as one-frame edges below.
@@ -1061,14 +1152,11 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
                         let lz = phys3d_hit_z() - bz0
                         let ll = sqrt(lx * lx + ly * ly + lz * lz)
                         if ll > 3.0 {
-                            w.brains[ei2].kx = lx / ll * 22.0
-                            w.brains[ei2].ky = ly / ll * 16.0 + 4.0
-                            w.brains[ei2].kz = lz / ll * 22.0
                             w.brains[ei2].gcd = 3.5
                             w.actors[ei2].gax = bx0 + lx
                             w.actors[ei2].gay = by0 + 0.5 + ly
                             w.actors[ei2].gaz = bz0 + lz
-                            w.actors[ei2].gat = 0.4   // show the grapple rope briefly
+                            w.actors[ei2].gat = 0.7   // active grapple pull + visible rope
                         }
                     }
                 }
@@ -1077,8 +1165,8 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             w.brains[ei2].pz0 = bz0
             // ---- MOVE via the SAME sim::sim_step players use ----
             // The AI's desired direction becomes a yaw toward the goal + forward (advance/retreat) +
-            // strafe (juke). The blast/grapple impulse (brains.kx/ky/kz) feeds the sim's blast-knock
-            // channel (input 14-16), unifying knockback for bots and players. One-shot, then cleared.
+            // strafe (juke). Active grapple anchors feed sim_step's grapple slots (10-13), while
+            // blast/melee shove feeds the same input slots (14-16) players use.
             let bin = w.bot_input
             let mut zz = 0
             while zz < 24 { f32_store(bin, zz, 0.0); zz = zz + 1 }
@@ -1129,18 +1217,25 @@ fn bots_tick(w: world::World, dt: f64) -> i64 {
             if want_slide == 1 { f32_store(bin, 4, 1.0) }   // slide-hop (one-frame edge; sim starts the slide)
             if want_dash == 1 { f32_store(bin, 5, 1.0) }    // dash juke (one-frame edge)
             f32_store(bin, 6, dt)
-            // Knockback (blast/grapple) goes through the SAME server impulse channel a player's does
-            // - net_push_impulse keyed by the bot's net id (1000+i). The netcode's impulse override
-            // writes it into the sim input, so the AI never stuffs the knockback slots itself.
-            if w.brains[ei2].kx != 0.0 or w.brains[ei2].ky != 0.0 or w.brains[ei2].kz != 0.0 {
-                net_push_impulse(1000 + ei2, w.brains[ei2].kx, w.brains[ei2].ky, w.brains[ei2].kz)
+            if w.actors[ei2].gat > 0.0 {
+                f32_store(bin, 10, w.actors[ei2].gax)
+                f32_store(bin, 11, w.actors[ei2].gay)
+                f32_store(bin, 12, w.actors[ei2].gaz)
+                f32_store(bin, 13, 1.0)
             }
-            w.brains[ei2].kx = 0.0
-            w.brains[ei2].ky = 0.0
-            w.brains[ei2].kz = 0.0
+            // Knockback is server-authored but delivered like player movement input: slots 14-16
+            // are the exact blast impulse fields sim_step consumes before net_update advances it.
+            if w.bot_ix[ei2] != 0.0 or w.bot_iy[ei2] != 0.0 or w.bot_iz[ei2] != 0.0 {
+                f32_store(bin, 14, w.bot_ix[ei2])
+                f32_store(bin, 15, w.bot_iy[ei2])
+                f32_store(bin, 16, w.bot_iz[ei2])
+            }
+            w.bot_ix[ei2] = 0.0
+            w.bot_iy[ei2] = 0.0
+            w.bot_iz[ei2] = 0.0
             // Bots run a touch faster than base player ground speed (on top of the slide-hops/dashes
-            // above) and sprint when far, so they can cross the arena for ammo + enemies
-            // like the old direct-velocity bots did. Same sim_step, just bot-tuned ground speed.
+            // above) and sprint when far, so they can cross the arena for ammo + enemies.
+            // Same sim_step, just bot-tuned ground speed.
             // UNIFY: feed the AI's decision to the netcode as this bot's INPUT - net_update steps it
             // with the SAME sim + default_cfg as a networked player (so bots move at player speed). No
             // local sim_step, no bot-only config: the bot is now just a player with a local input source.
@@ -1212,6 +1307,7 @@ fn broadcast_bots(w: world::World) -> i64 {
         let mut rl_up = 0.0
         if w.actors[b2].rl > 0.0 { rl_up = 1.0 }
         net_set_bot_meta(b2, 20, rl_up)                   // reload flag: client plays the reload anim (clip 22)
+        net_set_bot_meta(b2, 22, (w.actors[b2].wpn) as f64)
         b2 = b2 + 1
     }
     0
@@ -1252,11 +1348,7 @@ fn server_main() -> i64 {
         w.esx[bi] = anchx[bi]
         w.esz[bi] = anchz[bi]
         w.actors[bi].hdl = phys3d_add_character(anchx[bi], 0.9, anchz[bi], 0.6, 0.3)
-        w.actors[bi].hp = 100.0
-        w.actors[bi].mag[0] = 30
-        w.actors[bi].mag[1] = 1
-        w.actors[bi].res[0] = 60
-        w.actors[bi].res[1] = 2
+        respawn_actor(w, bi)
         w.brains[bi].aim = 0.05
         // Do NOT pre-fill bot_state here. It's allocated + HANDED TO THE NETCODE (net_set_bot_state,
         // sharing this body's handle) lazily on the first bots_tick, seeded from the anchor position
@@ -1304,6 +1396,7 @@ fn server_main() -> i64 {
                                  // query for this tick's character moves; integrates last tick's impulses)
             sync_clients(w)
             bots_tick(w, 0.016)
+            weapons_tick(w, 0.016)
             combat_tick(w, 0.016)
             client_shots_tick(w)
             client_projectiles_tick(w)

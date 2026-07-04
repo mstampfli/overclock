@@ -5,6 +5,141 @@
 // passes its OWN array (the server its World.actors, the client its local actors).
 // Shared CODE, separate DATA - that is what stops client/server drift.
 
+fn rifle_dmg() -> f64 { 17.0 }
+fn deagle_body_dmg() -> f64 { 40.0 }
+fn deagle_leg_dmg() -> f64 { 25.0 }
+fn deagle_head_dmg() -> f64 { 120.0 }
+fn melee_dmg() -> f64 { 75.0 }
+fn melee_range() -> f64 { 2.8 }
+fn melee_cooldown() -> f64 { 0.7 }
+fn shield_cell_value() -> f64 { 25.0 }
+fn blast_dmg() -> f64 { 150.0 }
+fn blast_radius() -> f64 { 5.0 }
+fn blast_kb_radius() -> f64 { 8.0 }
+fn blast_player_kb() -> f64 { 14.0 }
+fn rocket_intensity() -> f64 { 1.1 }
+fn grenade_intensity() -> f64 { 1.0 }
+fn proj_speed() -> f64 { 60.0 }
+fn proj_life() -> f64 { 2.2 }
+
+fn weapon_mag_size(wpn: i64) -> i64 {
+    if wpn == 1 { return 1 }
+    if wpn == 2 { return 7 }
+    30
+}
+
+fn weapon_reload_time(wpn: i64) -> f64 {
+    if wpn == 1 { return 3.0 }
+    if wpn == 2 { return 1.2 }
+    1.6
+}
+
+fn weapon_fire_interval(wpn: i64) -> f64 {
+    if wpn == 0 { return 0.11 }
+    0.5
+}
+
+fn weapon_res_max(wpn: i64) -> i64 {
+    if wpn == 1 { return 3 }
+    if wpn == 2 { return 28 }
+    90
+}
+
+fn weapon_res_refill(wpn: i64) -> i64 {
+    if wpn == 1 { return 2 }
+    if wpn == 2 { return 7 }
+    30
+}
+
+fn weapon_default_mag(wpn: i64) -> i64 {
+    weapon_mag_size(wpn)
+}
+
+fn weapon_default_reserve(wpn: i64) -> i64 {
+    if wpn == 1 { return 2 }
+    if wpn == 2 { return 21 }
+    60
+}
+
+fn default_mag() -> [i64; 3] { [30, 1, 7] }
+fn default_reserve() -> [i64; 3] { [60, 2, 21] }
+fn fire_intervals() -> [f64; 3] { [weapon_fire_interval(0), weapon_fire_interval(1), weapon_fire_interval(2)] }
+fn reload_times() -> [f64; 3] { [weapon_reload_time(0), weapon_reload_time(1), weapon_reload_time(2)] }
+fn mag_sizes() -> [i64; 3] { [weapon_mag_size(0), weapon_mag_size(1), weapon_mag_size(2)] }
+fn reserve_caps() -> [i64; 3] { [weapon_res_max(0), weapon_res_max(1), weapon_res_max(2)] }
+fn reserve_refills() -> [i64; 3] { [weapon_res_refill(0), weapon_res_refill(1), weapon_res_refill(2)] }
+
+fn select_weapon(actors: [world::Actor; 9], slot: i64, wpn: i64) -> i64 {
+    if slot >= 0 and slot < 9 and wpn >= 0 and wpn <= 2 and actors[slot].wpn != wpn {
+        actors[slot].wpn = wpn
+        actors[slot].rl = 0.0
+        actors[slot].rlw = wpn
+        actors[slot].fcd = 0.25
+        return 1
+    }
+    0
+}
+
+fn tick_weapon_scaled(actors: [world::Actor; 9], slot: i64, dt: f64, reload_scale: f64) {
+    if actors[slot].rl > 0.0 {
+        actors[slot].rl = actors[slot].rl - dt
+        if actors[slot].rl <= 0.0 {
+            actors[slot].rl = 0.0
+            let rw = actors[slot].rlw
+            let mut take = weapon_mag_size(rw) - actors[slot].mag[rw]
+            if take > actors[slot].res[rw] { take = actors[slot].res[rw] }
+            actors[slot].mag[rw] = actors[slot].mag[rw] + take
+            actors[slot].res[rw] = actors[slot].res[rw] - take
+        }
+    }
+    let awp = actors[slot].wpn
+    if actors[slot].rl <= 0.0 and actors[slot].mag[awp] <= 0 and actors[slot].res[awp] > 0 {
+        actors[slot].rl = weapon_reload_time(awp) * reload_scale
+        actors[slot].rlw = awp
+    }
+    actors[slot].fcd = actors[slot].fcd - dt
+    if actors[slot].fcd < 0.0 { actors[slot].fcd = 0.0 }
+}
+
+fn tick_weapon(actors: [world::Actor; 9], slot: i64, dt: f64) {
+    tick_weapon_scaled(actors, slot, dt, 1.0)
+}
+
+fn consume_shot(actors: [world::Actor; 9], slot: i64, wpn: i64, fire_scale: f64) -> i64 {
+    if slot < 0 or slot >= 9 { return 0 }
+    if wpn < 0 or wpn > 2 { return 0 }
+    if actors[slot].wpn != wpn { select_weapon(actors, slot, wpn) }
+    if actors[slot].hp <= 0.0 or actors[slot].heal > 0.0 { return 0 }
+    if actors[slot].fcd > 0.0 or actors[slot].rl > 0.0 or actors[slot].mag[wpn] <= 0 { return 0 }
+    actors[slot].mag[wpn] = actors[slot].mag[wpn] - 1
+    if actors[slot].mag[wpn] <= 0 and actors[slot].res[wpn] > 0 {
+        actors[slot].rl = weapon_reload_time(wpn)
+        actors[slot].rlw = wpn
+    }
+    actors[slot].fcd = actors[slot].fcd + weapon_fire_interval(wpn) * fire_scale
+    1
+}
+
+fn refill_equipped_ammo(actors: [world::Actor; 9], slot: i64) -> i64 {
+    let wpn = actors[slot].wpn
+    if actors[slot].res[wpn] < weapon_res_max(wpn) {
+        actors[slot].res[wpn] = actors[slot].res[wpn] + weapon_res_refill(wpn)
+        if actors[slot].res[wpn] > weapon_res_max(wpn) { actors[slot].res[wpn] = weapon_res_max(wpn) }
+        return 1
+    }
+    0
+}
+
+fn apply_shield_cell(actors: [world::Actor; 9], slot: i64) -> i64 {
+    if slot >= 0 and slot < 9 and actors[slot].cells > 0 and actors[slot].sh < actors[slot].shmax {
+        actors[slot].cells = actors[slot].cells - 1
+        actors[slot].sh = actors[slot].sh + shield_cell_value()
+        if actors[slot].sh > actors[slot].shmax { actors[slot].sh = actors[slot].shmax }
+        return 1
+    }
+    0
+}
+
 // Apply one hit's damage to actor `vk`: hit-location zoning first (head 2x when the
 // impact is above the capsule centre by +0.6, legs 0.65x below -0.4, torso 1x), then
 // shield-then-health UNLESS `bypass` is set (the katana goes straight to green hp).
@@ -91,8 +226,8 @@ fn in_melee_arc(actors: [world::Actor; 9], mt: i64, ox: f64, oy: f64, oz: f64, f
 fn melee_hit(actors: [world::Actor; 9], brains: [world::Brain; 9], last_hit: [i64; 9], mt: i64, attacker: i64, hx: f64, hz: f64, dmg: f64) {
     apply_hit(actors, mt, dmg, 0.0, 1)
     brains[mt].pop = 0.2
-    brains[mt].kx = hx * 14.0
+    brains[mt].kx = hx * blast_player_kb()
     brains[mt].ky = 6.0
-    brains[mt].kz = hz * 14.0
+    brains[mt].kz = hz * blast_player_kb()
     last_hit[mt] = attacker
 }

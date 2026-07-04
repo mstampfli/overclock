@@ -372,12 +372,12 @@ fn main() {
         aml = aml + 1
     }
     cs.actors = [
-        world::Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
-        world::Actor { hdl: 0 - 1, hp: 100.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [30, 1, 7], res: [60, 2, 21], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[0], 0.9, esz[0], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: combat::default_mag(), res: combat::default_reserve(), rl: 0.0, rlw: 0, fcd: 0.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[1], 0.9, esz[1], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: combat::default_mag(), res: combat::default_reserve(), rl: 0.0, rlw: 0, fcd: 0.9, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[2], 0.9, esz[2], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: combat::default_mag(), res: combat::default_reserve(), rl: 0.0, rlw: 0, fcd: 1.4, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[3], 0.9, esz[3], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: combat::default_mag(), res: combat::default_reserve(), rl: 0.0, rlw: 0, fcd: 0.7, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: phys3d_add_character(esx[4], 0.9, esz[4], 0.6, 0.3), hp: 100.0, sh: 50.0, shmax: 50.0, wpn: 0, mag: combat::default_mag(), res: combat::default_reserve(), rl: 0.0, rlw: 0, fcd: 1.1, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
+        world::Actor { hdl: 0 - 1, hp: 100.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: combat::default_mag(), res: combat::default_reserve(), rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
         world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
         world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 },
         world::Actor { hdl: phys3d_add_character(0.0, 0.0 - 50.0, 0.0, 0.6, 0.3), hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 }
@@ -571,11 +571,11 @@ fn main() {
     // cs.actors[5].wpn config (same for every Actor - player and bots). Per-actor ammo (mag +
     // reserve) and current cs.actors[5].wpn live in the Actor struct (the player's is `me`, below).
     cs.prev_weapon = 0
-    let mag_size_w = [30, 1, 7]    // mag sizes (launcher single-shot rocket; deagle 7-round .50 AE)
-    let fire_w = [0.11, 0.5, 0.5]  // fire interval (rifle fast, launcher slow, deagle = slow hand cannon)
-    let reload_w = [1.6, 3.0, 1.2] // reload time per wpn (launcher slow; deagle a fast pistol reload)
-    let res_max = [90, 3, 28]   // reserve cap (rifle 3x30, launcher 3x1, deagle 4x7)
-    let res_refill = [30, 2, 7] // reserve added per ammo pickup (full mag / 2 rockets / 1 deagle mag)
+    let mag_size_w = combat::mag_sizes()      // mag sizes (launcher single-shot rocket; deagle 7-round .50 AE)
+    let fire_w = combat::fire_intervals()     // fire interval (rifle fast, launcher slow, deagle = slow hand cannon)
+    let reload_w = combat::reload_times()     // reload time per wpn (launcher slow; deagle a fast pistol reload)
+    let res_max = combat::reserve_caps()      // reserve cap (rifle 3x30, launcher 3x1, deagle 4x7)
+    let res_refill = combat::reserve_refills() // reserve added per ammo pickup (full mag / 2 rockets / 1 deagle mag)
     // OVERCLOCK signature mechanic: meter fills from cs.kills + movement style; at full,
     // trigger a powered state (faster fire/move, instant reloads, gold glow). Kills
     // while overclocked EXTEND it with no cap (chain cs.kills = stay overclocked).
@@ -642,8 +642,8 @@ fn main() {
     cs.prjlife = [0.0; 12]
     cs.prjsrc = [0.0; 12]   // who fired it: 0 = player, 1 = a bot (no player credit)
     cs.prjcur = 0
-    let proj_speed = 60.0    // travel speed (lead your target)
-    let proj_life = 2.2      // seconds before it fizzles (~130m range)
+    let proj_speed = combat::proj_speed()    // travel speed (lead your target)
+    let proj_life = combat::proj_life()      // seconds before it fizzles (~130m range)
     // Bullet tracers (so you SEE every shot - yours and others'): a ring of line
     // segments that fade. Bots (and the player) write one per rifle shot.
     let tracer_n = 24
@@ -657,14 +657,14 @@ fn main() {
     cs.trcur = 0
 
     // Combat tuning (data-driven). Player gun is a fast hitscan; bots are slower.
-    let gun_dmg = 17.0           // rifle hits harder now (still fast); explosives are the heavy hits
+    let gun_dmg = combat::rifle_dmg()           // rifle hits harder now (still fast); explosives are the heavy hits
     // Desert Eagle: a high-damage SINGLE-FIRE hand cannon with EXPLICIT per-zone damage (not a
     // multiplier off one base). A headshot (120) burns the full 50 shield + 70 health, leaving a
     // full-pool target at 30 hp (no longer a one-shot kill); the body (40) is ~4 shots through the
     // full 150 pool. The slow 0.5s cadence + 7-round mag balance the punch.
-    let deagle_body = 40.0
-    let deagle_leg = 25.0
-    let deagle_head = 120.0
+    let deagle_body = combat::deagle_body_dmg()
+    let deagle_leg = combat::deagle_leg_dmg()
+    let deagle_head = combat::deagle_head_dmg()
     let deagle_scale = 0.10      // FIRST-PERSON viewmodel size (tune in-game; a pistol reads smaller than the rifle)
     let enemy_hp_max = 100.0
     let enemy_respawn = 3.0
@@ -675,24 +675,24 @@ fn main() {
     let nade_throw = 17.0      // launch speed along the look direction
     let nade_grav = 20.0       // arc gravity (snappier than the player's)
     let nade_fuse = 1.4        // seconds to detonate
-    let nade_radius = 5.0      // blast radius (metres) for DAMAGE
-    let nade_dmg = 180.0       // explosives hit hard; gentle falloff (still ~45% at edge)
+    let nade_radius = combat::blast_radius()      // blast radius (metres) for DAMAGE
+    let nade_dmg = combat::blast_dmg()       // explosives hit hard; gentle falloff (still ~45% at edge)
     let nade_cooldown = 4.0    // throw cooldown
-    let nade_kb_radius = 8.0   // KNOCKBACK reach (wider than damage - it shoves further)
+    let nade_kb_radius = combat::blast_kb_radius()   // KNOCKBACK reach (wider than damage - it shoves further)
     let crate_kb = 6.0         // impulse on dynamic crates (impulse/mass; ~0.5kg crate)
     let bot_kb = 16.0          // knockback velocity on bots (falloff-scaled)
-    let player_kb = 14.0       // knockback velocity on YOU (reduced; falloff-scaled)
+    let player_kb = combat::blast_player_kb()       // knockback velocity on YOU (reduced; falloff-scaled)
     // Melee (V): a katana-reach lunge. Long reach because a short one is impossible to land
     // on a fast-moving target. 125 dmg = a full green bar (100) + half a shield bar (25);
     // shield absorbs first, so a fully-shielded foe survives by a sliver, off-shield = oneshot.
-    let melee_dmg = 75.0        // 75% of green hp, and it BYPASSES shield (straight to hp)
-    let melee_range = 2.8       // katana lunge reach (metres) - short, high-risk
-    let melee_cooldown = 0.7    // seconds between swings (no spam)
+    let melee_dmg = combat::melee_dmg()        // 75% of green hp, and it BYPASSES shield (straight to hp)
+    let melee_range = combat::melee_range()    // katana lunge reach (metres) - short, high-risk
+    let melee_cooldown = combat::melee_cooldown() // seconds between swings (no spam)
     let shot_kb = 2.2          // per-bullet impulse on a hit crate (impulse/mass)
     // Explosion INTENSITY per source (scales damage, radius, knockback + visual): 1.0
     // is the baseline frag. Tweak these to make a source punchier/weaker.
-    let nade_intensity = 1.0
-    let rocket_intensity = 1.1
+    let nade_intensity = combat::grenade_intensity()
+    let rocket_intensity = combat::rocket_intensity()
     let php_max = 100.0          // player health
     let psh_max = 50.0           // player shield (sits over health, regens first)
     let regen_delay = 2.0        // seconds out of damage before regen kicks in
@@ -726,7 +726,7 @@ fn main() {
     // Shields are Apex-style: you carry CELLS (cs.actors[5].cells) and apply them with an action (a
     // channel, cs.actors[5].heal) rather than picking up instant shield. cs.actors[5].heal > 0 = mid-channel.
     let heal_channel = 2.0      // seconds to apply one cell (shorter: shield is counterable now)
-    let cell_shield = 25.0      // shield restored per cell (psh_max 50 = 2 cells)
+    let cell_shield = combat::shield_cell_value()      // shield restored per cell (psh_max 50 = 2 cells)
     let max_cells = 4
 
     // ===== SCREEN STATE MACHINE =====

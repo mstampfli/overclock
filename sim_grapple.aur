@@ -1,14 +1,17 @@
 // Bot grapple-leap (simulate-to-verify): a bot 40m from its enemy, with a wall behind the enemy to
-// anchor on, must grapple-leap to close the gap - raycast toward the target, set the knockback-leap
-// velocity, flag the rope, and physically traverse east. Only the grapple sets gat + a large kx, so
-// seeing both proves the grapple fired (a plain run never sets kx). Then it must actually move far.
+// anchor on, must grapple-leap to close the gap - raycast toward the target, feed the shared sim_step
+// grapple slots, flag the rope, and physically traverse east. A plain run never sets gat, so seeing
+// the rope plus traversal proves the shared grapple path fired.
 fn main() {
     phys3d_init(0.0, 0.0 - 16.0, 0.0)
     phys3d_add_box(0.0, 0.0 - 0.5, 0.0, 60.0, 0.5, 60.0, 0)   // floor
     phys3d_add_box(47.0, 3.0, 0.0, 1.0, 4.0, 10.0, 0)         // wall behind the far target = grapple anchor
     net_host(45134)
+    net_dedicated()
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
     let mut w = world::new_world()
     w.round.bots = 2
+    net_set_bot_count(w.round.bots)
     // bot 0: the grappler at origin, full hp/ammo so it has no pickup goal (seeking == 0)
     w.actors[0].hdl = phys3d_add_character(0.0, 0.9, 0.0, 0.6, 0.3)
     w.actors[0].hp = 100.0
@@ -21,20 +24,17 @@ fn main() {
     w.actors[1].res[0] = 60
     let startx = phys3d_x(w.actors[0].hdl)
     let mut max_gat = 0.0
-    let mut max_kx = 0.0
     let mut t = 0
     while t < 120 {
-        server::bots_tick(w, 0.016)
         phys3d_step(0.016)
+        server::bots_tick(w, 0.016)
+        net_update(0.016)
         if w.actors[0].gat > max_gat { max_gat = w.actors[0].gat }
-        if w.brains[0].kx > max_kx { max_kx = w.brains[0].kx }
         t = t + 1
     }
     let endx = phys3d_x(w.actors[0].hdl)
-    // The grapple now feeds its leap into the sim's blast channel (input 14-16) then CLEARS kx, so
-    // detect it via the rope flag (only the grapple sets gat) + the real eastward traversal below.
     let grappled = (max_gat > 0.0) as i64
     let traversed = (endx > startx + 8.0) as i64
-    println("max_gat=" + str((max_gat * 100.0) as i64) + "/100 max_kx=" + str((max_kx * 10.0) as i64) + "/10 startx=" + str((startx * 10.0) as i64) + "/10 endx=" + str((endx * 10.0) as i64) + "/10")
+    println("max_gat=" + str((max_gat * 100.0) as i64) + "/100 startx=" + str((startx * 10.0) as i64) + "/10 endx=" + str((endx * 10.0) as i64) + "/10")
     println("RESULT bot-grapple-leaps=" + str((grappled == 1 and traversed == 1) as i64) + " (expect 1)")
 }
