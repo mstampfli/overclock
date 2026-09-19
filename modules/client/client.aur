@@ -388,6 +388,20 @@ fn reload_snd(env: ClientEnv, wpn: i64) -> i64 {
     return env.snd_reload
 }
 
+// HUMAN players present (self + remote humans), EXCLUDING bots. Bots are networked players with ids
+// >= BOT_ID_BASE (1000), so net_player_count() counts them too - which made "am I solo?" checks
+// (the practice pause-freeze) never fire when bots were in the match. Count only ids < 1000.
+fn human_count() -> i64 {
+    let mut n = 0
+    let mut i = 0
+    let c = net_player_count()
+    while i < c {
+        if net_player_id_at(i) < 1000 { n = n + 1 }
+        i = i + 1
+    }
+    return n
+}
+
 fn settings_panel(cs: ClientState, env: ClientEnv, mx: i64, my: i64, clicked: i64) -> i64 {
     let cx = cs.fbw / 2
     let wht = 255 * 65536 + 255 * 256 + 255
@@ -714,6 +728,15 @@ fn run_menu(cs: ClientState, env: ClientEnv) {
                             cs.settings[20] = cs.uname_len as f64
                             let mut us = 0
                             while us < cs.uname_len { cs.settings[21 + us] = cs.uname_codes[us] as f64; us = us + 1 }
+                            // Sync the LIVE input settings too: a click-START save that never went through
+                            // the settings panel must still write real sensitivity + keybinds, not the
+                            // zeros that would brick aim/movement on the next launch.
+                            cs.settings[0] = cs.sens
+                            cs.settings[1] = cs.vol as f64
+                            cs.settings[18] = cs.disp_mode as f64
+                            cs.settings[19] = cs.music_vol as f64
+                            let mut bk = 0
+                            while bk < env.act_n { cs.settings[2 + bk] = cs.bind_code[bk]; bk = bk + 1 }
                             save_settings(cs.settings)
                             cs.do_reset = true
                             cs.screen = env.s_game
@@ -879,7 +902,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         // SOLO PAUSE: freeze the client sim too (the server freezes in parallel, signalled via meta 21
         // below). A tiny epsilon (not exactly 0) keeps any /dt division safe; net_send_input/net_update
         // still run so you stay connected to the frozen server. A real match never freezes.
-        if paused and net_player_count() <= 1 { dt = 0.000000001 }
+        if paused and human_count() <= 1 { dt = 0.000000001 }
         if paused and was_paused == false { grab_mouse(0); input_suppress(1); r3d_blur(8.0) }
         if paused == false and was_paused { grab_mouse(1); input_suppress(0); r3d_blur(0.0) }
         was_paused = paused
@@ -2149,8 +2172,11 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         // on the host's id-0 meta (10 = timer, 11 = over); a GUEST mirrors those so the match
         // clock / end / reset are identical everywhere instead of each machine drifting its own.
         if cs.net_mode == 2 {
-            let g_over = net_player_meta(0, 11) > 0.5
-            cs.round_timer = net_player_meta(0, 10)
+            // Round state rides BOT 0's meta (net id 1000), NOT id 0 - a dedicated server has no id-0
+            // player, so reading pid 0 always returned 0 and the client never saw the round end (no
+            // win/lose screen, no reset). Read bot 0 (1000), where round_tick actually writes 10/11.
+            let g_over = net_player_meta(1000, 11) > 0.5
+            cs.round_timer = net_player_meta(1000, 10)
             // Host RESET edge (over -> playing): clear local round display + respawn (hp reset
             // flows through the normal respawn handshake).
             if cs.round_over and g_over == false {
@@ -2233,7 +2259,14 @@ fn run_game(cs: ClientState, env: ClientEnv) {
         while wki < env.nactors {
             if wki != env.pl_i {
                 let mut okk = cs.akills[wki]
-                if cs.net_started { okk = net_player_meta(cs.apid[wki], 6) as i64 }
+                if cs.net_started {
+                    // Bot slots carry a STABLE net id 1000+slot; their apid clears while dead/respawning,
+                    // so read their score by that id (mirrors the scoreboard) or a leading bot's kills
+                    // read as 0 and wrongly handed you the win.
+                    let mut wpid = cs.apid[wki]
+                    if wki < env.bot_n { wpid = 1000 + wki }
+                    okk = net_player_meta(wpid, 6) as i64
+                }
                 if okk > max_ok { max_ok = okk }
             }
             wki = wki + 1
@@ -3187,6 +3220,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     // Player + networked cs.actors: read the replicated, host-authoritative score.
                     let mut spid = cs.apid[sbi]
                     if sbi == env.pl_i { spid = net_my_id() }
+                    // Bot slots (0..bot_n-1) have a STABLE net id 1000+slot; read their score by it so a
+                    // dead/respawning bot (whose per-frame apid clears) still shows real K/D, not blank.
+                    if sbi < env.bot_n { spid = 1000 + sbi }
                     sbk[sbi] = net_player_meta(spid, 6) as i64
                     sbd[sbi] = net_player_meta(spid, 7) as i64
                 } else {
@@ -3205,7 +3241,9 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                 let mut act = 0
                 if si == env.pl_i { act = 1 }
                 if cs.apid[si] != 9999 { act = 1 }
-                if si < active_bots { act = 1 }
+                // Every bot in the match stays on the board even while dead/respawning (active_bots is 0
+                // here - the client owns no local bots; the real bot slots are the lobby's bot_count).
+                if si < env.bot_n and si < cs.bot_count { act = 1 }
                 if act == 1 { order[ocount] = si; ocount = ocount + 1 }
                 si = si + 1
             }
@@ -3372,7 +3410,7 @@ fn run_game(cs: ClientState, env: ClientEnv) {
                     qy = qy + 1
                 }
                 draw_text(cx - text_width("PAUSED", 46) / 2, ply + 18, "PAUSED", 46, col_gold)
-                if net_player_count() > 1 { draw_text(cx - text_width("online - match still live", 16) / 2, ply + 68, "online - match still live", 16, col_white) } else { draw_text(cx - text_width("practice - world frozen", 16) / 2, ply + 68, "practice - world frozen", 16, col_white) }
+                if human_count() > 1 { draw_text(cx - text_width("online - match still live", 16) / 2, ply + 68, "online - match still live", 16, col_white) } else { draw_text(cx - text_width("practice - world frozen", 16) / 2, ply + 68, "practice - world frozen", 16, col_white) }
                 if clienthud::menu_btn(cx - 110, ply + 102, 220, 42, pmx, pmy) == 1 { if pclick == 1 { paused = false; pause_set = false; grab_mouse(1); input_suppress(0); r3d_blur(0.0); was_paused = false } }
                 clienthud::draw_centered("RESUME", cx - 110, ply + 102, 220, 42, 24, col_white)
                 if clienthud::menu_btn(cx - 110, ply + 152, 220, 42, pmx, pmy) == 1 { if pclick == 1 { pause_set = true } }

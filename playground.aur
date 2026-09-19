@@ -442,14 +442,20 @@ fn main() {
     // 20..36 cs.username, 40..46 live crosshair, 56..97 six crosshair presets (7 each), 98 active preset.
     cs.settings = [0.0; 100]
     if load_settings(cs.settings) > 2 {
-        cs.sens = cs.settings[0]
-        cs.vol = (cs.settings[1]) as i64
+        // Only ACCEPT a saved value when it's valid; otherwise keep the default set above. A zeroed or
+        // truncated settings file (e.g. a first-run save that never synced sens/binds) would otherwise
+        // set sensitivity to 0 (can't aim) and bind every movement action to key 0 (can't move) while
+        // the mouse/menus still worked - i.e. the whole game reads as frozen. Never trust junk on load.
+        if cs.settings[0] > 0.0001 { cs.sens = cs.settings[0] }
+        if cs.settings[1] > 0.0 { cs.vol = (cs.settings[1]) as i64 }
         if cs.settings[19] > 0.0 { cs.music_vol = (cs.settings[19]) as i64 }
         let mut li = 0
-        while li < act_n { cs.bind_code[li] = cs.settings[2 + li]; li = li + 1 }
-        // Saves from before melee existed have no code for it (reads as 0 = ArrowLeft);
-        // restore the default so the new action isn't silently bound to a junk key.
-        if cs.bind_code[act_melee] < 1.0 { cs.bind_code[act_melee] = 19.0 }
+        while li < act_n {
+            // A real key code is >= 1 (0 = unbound junk). Keep the default for any action a bad/old
+            // save left at 0, so movement can never brick from a stale settings file.
+            if cs.settings[2 + li] >= 1.0 { cs.bind_code[li] = cs.settings[2 + li] }
+            li = li + 1
+        }
         cs.disp_mode = (cs.settings[18]) as i64
         cs.uname_len = cs.settings[20] as i64
         if cs.uname_len > 16 { cs.uname_len = 16 }
