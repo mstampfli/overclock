@@ -1,0 +1,43 @@
+// Replicate the FP recoil overlay state machine (client.aur ~1843 shot site + 2649-2669 overlay)
+// EXACTLY and count how many times clip 23 is "played" for N shots. If plays == shots, the logic is
+// one-per-shot and the reported +1 lives in the animation RENDERER; if plays == shots+1, the logic
+// has the off-by-one. Per-frame order mirrors the game: fire (sim) -> decay -> overlay (render).
+fn run(interval: i64, nshots: i64) -> i64 {
+    let dt = 0.016
+    let mut fp_shot = 0.0
+    let mut fp_rpulse = 0
+    let mut fp_ushoot = 0 - 1
+    let mut plays = 0
+    let mut shots_fired = 0
+    let total = nshots * interval + 40
+    let mut f = 0
+    while f < total {
+        // SHOT (sim part): fire on this frame if it's the next shot's cadence tick
+        if shots_fired < nshots and f == shots_fired * interval {
+            fp_shot = 0.30
+            fp_rpulse = 1
+            shots_fired = shots_fired + 1
+        }
+        // decay (render part, 2649)
+        fp_shot = fp_shot - dt
+        if fp_shot < 0.0 { fp_shot = 0.0 }
+        // overlay (2660-2669), no reload/katana
+        if fp_shot > 0.0 {
+            if fp_rpulse == 1 or fp_ushoot != 23 { plays = plays + 1; fp_ushoot = 23 }
+            fp_rpulse = 0
+        } else {
+            fp_ushoot = 0 - 1
+        }
+        f = f + 1
+    }
+    return plays
+}
+
+fn main() {
+    // Deagle: 1 shot. Rifle: 10 shots. Test both a FAST cadence (interval < 0.30s window) and a SLOW
+    // one (interval > window, so fp_shot fully decays between shots).
+    println("deagle 1 shot            -> plays=" + str(run(6, 1)) + "  (expect 1)")
+    println("rifle 10 shots fast(i=6) -> plays=" + str(run(6, 10)) + "  (expect 10)")
+    println("rifle 10 shots slow(i=25)-> plays=" + str(run(25, 10)) + "  (expect 10)")
+    println("rifle 10 shots med(i=19) -> plays=" + str(run(19, 10)) + "  (expect 10)")
+}

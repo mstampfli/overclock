@@ -1,0 +1,61 @@
+// Bot NOCLIP regression oracle. Spin up the real dedicated server with 4 bots, join as a still
+// client, and over a long run assert NO bot ever sinks below the arena floor (y < -5). Before the
+// floor-clip recovery in sim::sim_step, an idle/again-grounded character could lose its ground
+// contact, accumulate gravity, and clip through the solid floor - falling to the kill-plane then
+// teleporting to spawn. On screen that reads as the bot going invisible (underground) while still
+// alive and shooting, or noclipping out of the map. This guards that it stays on the floor.
+fn main() {
+    net_cfg_set(0, 4.0)    // four bots
+    net_cfg_set(1, 99.0)   // high kill target so the round never ends mid-test
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+
+    let idle = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]
+    let mut t = 0
+    while t < 80 { net_send_input(idle); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(6) }
+
+    let mut noclip_frames = 0
+    let mut deepest = 0.0
+    let mut yaw_nan = 0        // frames any bot's broadcast yaw is NaN (yaw != yaw)
+    let mut yaw_wild = 0       // frames any bot's yaw is absurd (|yaw| > 100 -> garbage)
+    let mut pitch_nan = 0      // frames any bot's broadcast pitch (state 8, drives aim overlay) is NaN
+    let mut spd_nan = 0        // frames any bot's position produced a non-finite speed proxy
+    let mut frames = 0
+    t = 0
+    while t < 1500 {
+        net_send_input(idle)
+        net_update(0.016)
+        let mut anybelow = 0
+        let mut b = 0
+        while b < 4 {
+            let bid = 1000 + b
+            let by = net_player_y(bid)
+            if by < deepest { deepest = by }
+            if by < (0.0 - 5.0) { anybelow = 1 }
+            let yw = net_player_yaw(bid)
+            if yw != yw { yaw_nan = yaw_nan + 1 }
+            let mut ayw = yw
+            if ayw < 0.0 { ayw = 0.0 - ayw }
+            if ayw > 100.0 { yaw_wild = yaw_wild + 1 }
+            let pt = net_player_state(bid, 8)
+            if pt != pt { pitch_nan = pitch_nan + 1 }
+            let vx = net_player_state(bid, 4)
+            let vz = net_player_state(bid, 6)
+            if vx != vx or vz != vz { spd_nan = spd_nan + 1 }
+            b = b + 1
+        }
+        if anybelow == 1 { noclip_frames = noclip_frames + 1 }
+        frames = frames + 1
+        net_kills_clear(); net_shots_clear()
+        t = t + 1
+        sleep_ms(6)
+    }
+    println("frames=" + str(frames) + " noclip-frames=" + str(noclip_frames) + " deepest-y*100=" + str((deepest * 100.0) as i64))
+    println("yaw-NaN frames=" + str(yaw_nan) + "  yaw-wild frames=" + str(yaw_wild) + "  pitch-NaN frames=" + str(pitch_nan) + "  vel-NaN frames=" + str(spd_nan))
+    println("RESULT bots-stay-on-floor=" + str((noclip_frames == 0) as i64) + "  transform-clean=" + str(((yaw_nan + yaw_wild + pitch_nan + spd_nan) == 0) as i64))
+}

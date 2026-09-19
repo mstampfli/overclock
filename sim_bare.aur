@@ -1,0 +1,32 @@
+// Match the REAL game's client setup as closely as possible (no arena::build_colliders on the client -
+// the game builds its own inline geometry instead) and just OBSERVE where bot 1000 ends up from the
+// first tick. If it sits at the origin here, the trigger is the client-side setup difference, not
+// respawn. idle input (valid dt + spawn slots), no firing.
+fn main() {
+    net_cfg_set(0, 3.0)
+    net_cfg_set(1, 15.0)     // real-game kill target
+    net_cfg_set(2, 120.0)    // real-game round length (game sets cfg slot 2; sim_botvis did not)
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()   // NOW build the client floor - does the origin bug vanish?
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+    let idle = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]
+    let mut closest = 100000.0
+    let mut t = 0
+    while t < 400 {
+        net_send_input(idle)
+        net_update(0.016)
+        let bx = net_player_x(1000)
+        let bz = net_player_z(1000)
+        let d = sqrt(bx * bx + bz * bz)
+        if d < closest { closest = d }
+        net_kills_clear(); net_shots_clear()
+        t = t + 1
+        sleep_ms(8)
+    }
+    println("bot1000 final = (" + str((net_player_x(1000)*100.0) as i64) + "," + str((net_player_y(1000)*100.0) as i64) + "," + str((net_player_z(1000)*100.0) as i64) + ")*100  closest-to-origin*100 = " + str((closest*100.0) as i64))
+    println("RESULT bot-at-origin=" + str((closest < 3.0) as i64) + " (1 = reproduced the bug)")
+}

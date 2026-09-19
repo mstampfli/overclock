@@ -1,0 +1,74 @@
+// Ground-truth two things before touching code:
+//  (1) PAUSE FREEZE: does net_player_count() include BOTS? The client freeze at "paused and
+//      net_player_count() <= 1" only fires if the count excludes bots. If bots inflate it, solo
+//      pause never freezes the client -> death loop. Print the count + every net id + a human-only
+//      count (id < 1000).
+//  (2) END SCREEN: fire at bots to reach a low kill target and confirm the round-over flag the
+//      client reads (net_player_meta(1000,11)) actually flips to 1 on the KILL-TARGET path.
+fn main() {
+    net_cfg_set(0, 3.0)      // 3 bots
+    net_cfg_set(1, 3.0)      // kill target 3 (reachable)
+    net_cfg_set(2, 60.0)     // 60s round (long, so the kill target ends it, not the timer)
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+    let zero = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]
+    let mut t = 0
+    while t < 40 { net_send_input(zero); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(10) }
+
+    let pc = net_player_count()
+    println("net_player_count = " + str(pc))
+    let mut i = 0
+    while i < pc { println("  id_at[" + str(i) + "] = " + str(net_player_id_at(i))); i = i + 1 }
+    let mut hc = 0
+    i = 0
+    while i < pc { if net_player_id_at(i) < 1000 { hc = hc + 1 } i = i + 1 }
+    println("human_count(id<1000) = " + str(hc) + "  (expect 1 = solo-with-bots)")
+
+    let myid = net_my_id()
+    let mut reported_over = 0
+    t = 0
+    while t < 4000 {
+        net_send_input(zero)
+        let ex = net_local_x()
+        let ey = net_local_y() + 0.7
+        let ez = net_local_z()
+        let mut bestd = 100000.0
+        let mut tx = 0.0
+        let mut ty = 0.0
+        let mut tz = 0.0
+        let mut found = 0
+        let mut bi = 0
+        while bi < 3 {
+            let bid = 1000 + bi
+            if net_player_meta(bid, 0) > 0.0 {
+                let bx = net_player_x(bid)
+                let bz = net_player_z(bid)
+                let d = sqrt((bx - ex) * (bx - ex) + (bz - ez) * (bz - ez))
+                if d < bestd { bestd = d; tx = bx; ty = net_player_y(bid) + 0.5; tz = bz; found = 1 }
+            }
+            bi = bi + 1
+        }
+        if found == 1 {
+            let dx = tx - ex
+            let dy = ty - ey
+            let dz = tz - ez
+            let dl = sqrt(dx * dx + dy * dy + dz * dz)
+            if dl > 0.1 { net_fire(ex, ey, ez, dx / dl, dy / dl, dz / dl, 0) }
+        }
+        net_update(0.016)
+        let over = net_player_meta(1000, 11)
+        if over > 0.5 and reported_over == 0 {
+            println("ROUND OVER seen at t=" + str(t) + "  pid1000.meta11=" + str((over * 10.0) as i64) + "  timer=" + str((net_player_meta(1000, 10) * 10.0) as i64))
+            reported_over = 1
+        }
+        net_kills_clear(); net_shots_clear()
+        t = t + 1
+        sleep_ms(6)
+    }
+    println("END reported_over=" + str(reported_over) + "  (1 = end-screen data DID reach the client)")
+}

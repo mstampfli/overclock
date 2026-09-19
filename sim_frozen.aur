@@ -1,0 +1,30 @@
+// Repro: do bots teleport to the world origin (0,0,0) when the host's pause meta (slot 21) freezes
+// the server? Warm up normally (bots should reach their anchors), then hold meta 21 = 1 (paused),
+// then release. Print bot 1000's position at each phase. If it goes to ~0,0,0 during/after pause,
+// the server-freeze path is skipping the bot body handoff (netcode sims a separate origin body).
+fn main() {
+    net_cfg_set(0, 3.0)
+    net_cfg_set(1, 99.0)
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+    let idle = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]
+
+    // FREEZE FROM FRAME 0: the host is "paused" (meta 21 = 1) before the first server tick, so
+    // bots_tick (the lazy body handoff) never runs while the netcode is already stepping the bots.
+    let mut t = 0
+    while t < 70 { net_set_meta(21, 1.0); net_send_input(idle); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(8) }
+    println("FROZEN-FROM-START b0 = (" + str((net_player_x(1000)*100.0) as i64) + "," + str((net_player_y(1000)*100.0) as i64) + "," + str((net_player_z(1000)*100.0) as i64) + ")*100")
+
+    t = 0
+    while t < 120 { net_set_meta(21, 1.0); net_send_input(idle); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(8) }
+    println("PAUSED   b0 = (" + str((net_player_x(1000)*100.0) as i64) + "," + str((net_player_y(1000)*100.0) as i64) + "," + str((net_player_z(1000)*100.0) as i64) + ")*100")
+
+    t = 0
+    while t < 120 { net_set_meta(21, 0.0); net_send_input(idle); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(8) }
+    println("RESUMED  b0 = (" + str((net_player_x(1000)*100.0) as i64) + "," + str((net_player_y(1000)*100.0) as i64) + "," + str((net_player_z(1000)*100.0) as i64) + ")*100")
+}

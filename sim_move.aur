@@ -1,0 +1,32 @@
+// Player MOVEMENT oracle: spin up the real dedicated server (no bots), join as a client, feed a
+// steady FORWARD input, and verify the local (predicted) player actually travels. Reproduces
+// "can't move" headlessly so a movement regression is caught without the game window.
+fn main() {
+    net_cfg_set(0, 0.0)    // no bots - isolate the player
+    net_cfg_set(1, 99.0)
+    net_serve(|| { server::server_main() })
+    sleep_ms(250)
+    phys3d_init(0.0, 0.0 - 16.0, 0.0)
+    arena::build_colliders()
+    net_join("127.0.0.1", 45123)
+    net_sim(|state, input| { sim::sim_step(state, input, sim::default_cfg()); 0 }, 21, 20)
+    net_spawn_at(0.0, 0.9, 45.0)
+
+    let idle = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]
+    let fwd  = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.016, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 45.0]
+    let mut t = 0
+    while t < 80 { net_send_input(idle); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(6) }
+
+    let sx = net_local_x()
+    let sy = net_local_y()
+    let sz = net_local_z()
+    t = 0
+    while t < 120 { net_send_input(fwd); net_update(0.016); net_kills_clear(); net_shots_clear(); t = t + 1; sleep_ms(6) }
+    let dx = net_local_x() - sx
+    let dz = net_local_z() - sz
+    let moved = sqrt(dx * dx + dz * dz)
+    println("start (x,y,z)*100 = (" + str((sx*100.0) as i64) + "," + str((sy*100.0) as i64) + "," + str((sz*100.0) as i64) + ")")
+    println("end   (x,y,z)*100 = (" + str((net_local_x()*100.0) as i64) + "," + str((net_local_y()*100.0) as i64) + "," + str((net_local_z()*100.0) as i64) + ")")
+    println("player moved *100 = " + str((moved*100.0) as i64) + " on 120 frames of FORWARD input")
+    println("RESULT player-moves=" + str((moved > 2.0) as i64) + " (expect 1)")
+}
