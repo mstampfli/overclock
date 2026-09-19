@@ -1,8 +1,7 @@
 // Headless client-server proof in the real arena: the client charges the bots and takes authoritative
-// damage; when hurt OR killed it signals a RESPAWN (++ meta 3) and the host must restore its hp (the
-// respawn handshake). We accept death here because the bots are lethal enough to one-shot the charging
-// client with a rocket (the launcher fires at range) - the handshake restores from death and from a
-// wound identically. Death CREDIT (a kill -> net_push_kill) is verified separately by sim_clientfire.
+// damage. A respawn request while merely wounded must NOT restore hp; the server's unified respawn path
+// only restores actors after death_done is armed by an actual death. Death credit is verified separately
+// by sim_clientfire; the full dead->respawn restore is covered by sim_survivability.
 fn main() {
     net_serve(|| { server::server_main() })
     sleep_ms(250)
@@ -15,7 +14,7 @@ fn main() {
     let mut min_hp = 1000.0
     let mut resp_signaled = 0
     let mut resp_tick = 0
-    let mut hp_after_resp = 0.0
+    let mut max_hp_after_signal = 0.0
     t = 0
     while t < 900 {
         let ex = net_local_x()
@@ -38,10 +37,11 @@ fn main() {
         net_kills_clear(); net_shots_clear()
         let hp = net_player_meta(myid, 0)
         if hp < min_hp { min_hp = hp }
-        if hp < 70.0 and resp_signaled == 0 { net_set_meta(3, 1.0); resp_signaled = 1; resp_tick = t }
-        if resp_signaled == 1 and t > resp_tick + 8 { if hp > hp_after_resp { hp_after_resp = hp } }
+        if hp < 90.0 and resp_signaled == 0 { net_set_meta(3, 1.0); resp_signaled = 1; resp_tick = t }
+        if resp_signaled == 1 and t > resp_tick + 8 { if hp > max_hp_after_signal { max_hp_after_signal = hp } }
         t = t + 1; sleep_ms(10)
     }
-    println("min_hp=" + str((min_hp*10.0) as i64) + "/10  respawn_signaled=" + str(resp_signaled) + "  hp_after_respawn=" + str((hp_after_resp*10.0) as i64) + "/10")
-    println("RESULT took-damage=" + str((min_hp < 99.9) as i64) + " respawn-restores-hp=" + str((hp_after_resp > 90.0) as i64) + " (expect 1 1)")
+    let wounded_respawn_ignored = (resp_signaled == 1 and max_hp_after_signal < 90.0) as i64
+    println("min_hp=" + str((min_hp*10.0) as i64) + "/10  respawn_signaled=" + str(resp_signaled) + "  max_hp_after_signal=" + str((max_hp_after_signal*10.0) as i64) + "/10")
+    println("RESULT took-damage=" + str((min_hp < 99.9) as i64) + " wounded-respawn-ignored=" + str(wounded_respawn_ignored) + " (expect 1 1)")
 }

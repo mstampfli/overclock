@@ -24,7 +24,7 @@ fn main() {
     server::pickups_tick(w, 0.016)
     let healed = (w.actors[0].hp > 99.9) as i64
     let shielded = (w.actors[1].cells == 1) as i64
-    let ammoed = (w.actors[2].res[0] == 40 and w.actors[2].res[1] == 2) as i64
+    let ammoed = (w.actors[2].res[0] == 40 and w.actors[2].res[1] == 0) as i64
     let on_cd = (w.pkcd[1] > 0.0 and w.pkcd[5] > 0.0 and w.pkcd[3] > 0.0) as i64
     // available spots broadcast over fx - the 3 just-claimed ones are now hidden (8 of 11 left)
     server::broadcast_fx(w)

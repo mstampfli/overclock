@@ -7,7 +7,7 @@
 // thing here: health, a shield (depletes before health), per-weapon mag + reserve,
 // reload, shield cells, and the same weapon config (gun_dmg / fire_w / mag_size_w /
 // reload_w / res_*). The player is `me`; the bots are `actors[]`. Both run the same combat.
-struct Actor {
+pub struct Actor {
     hdl: i64,        // phys3d collider handle
     hp: f64,
     sh: f64,         // shield (absorbs damage before health)
@@ -30,7 +30,7 @@ struct Actor {
 // is the player's mover and the mouse is the player's aim). One Brain per bot, parallel
 // to actors[]. This is where smarter AI (state machine, target memory, pathfinding, aim
 // lead, reaction delay) would live; today it is just the mover + aim spread.
-struct Brain {
+pub struct Brain {
     aim: f64,        // AIM STRENGTH - shot spread in radians (their skill; lower = sharper)
     resp: f64,       // respawn timer
     vy: f64,         // vertical velocity (AI gravity / jump)
@@ -39,7 +39,7 @@ struct Brain {
     jcd: f64,        // jump cooldown
     kx: f64,
     ky: f64,
-    kz: f64,         // blast knockback velocity (decays) - also reused for a grapple-leap
+    kz: f64,         // client-side local bot prediction impulse (server uses World.bot_i*)
     pop: f64,        // hit-flinch scale pop (draw)
     gcd: f64,        // grapple cooldown (a bot grapple-leaps to close big gaps, like a player)
     getrifle: f64,   // 1 = heading for ammo, so equip the rifle to top it up (not the launcher)
@@ -48,7 +48,7 @@ struct Brain {
 }
 
 // Authoritative FFA round state: reach the kill target before the timer runs out.
-struct Round {
+pub struct Round {
     kills: i64,      // the host player's own kills (per-slot kills live in World.akills)
     deaths: i64,
     timer: f64,      // seconds left in the round
@@ -67,9 +67,9 @@ struct Round {
 // Render-only state (sparks, tracers, boom visuals, camera, HUD, models) is NOT here - it stays
 // client-side. This is the heart of the host==guest restructure: own it on the server thread,
 // send it the same way to everyone, and the host becomes just another client of its own server.
-struct World {
-    actors: [Actor; 9],
-    brains: [Brain; 9],
+pub struct World {
+    actors: [world::Actor; 9],
+    brains: [world::Brain; 9],
     round: Round,
     // Kill bookkeeping (parallel to actors): who last hit each actor + the killer-reward context;
     // a per-frame sweep then runs every death's consequences exactly once.
@@ -130,12 +130,19 @@ struct World {
     cresp_seen: [i64; 9],
     cheal_seen: [i64; 9],
     cmelee_seen: [i64; 9],
+    cfire_seen: [i64; 9],
+    shot0_ok: [i64; 9],
+    shot1_ok: [i64; 9],
+    shot2_ok: [i64; 9],
     ammo_evt: [i64; 9],
     // Bot-AI clock (drives aim wobble / fire windows).
     etime: f64,
     // Per-bot sim state blobs + a shared input scratch (allocated by server_main via f32_blob; 0 =
     // unset). Bots run the SAME sim::sim_step as players from these - one mover for every actor.
     bot_state: [i64; 9],
+    bot_ix: [f64; 9],
+    bot_iy: [f64; 9],
+    bot_iz: [f64; 9],
     bot_input: i64
 }
 
@@ -145,8 +152,8 @@ struct World {
 // Every actor starts empty (hdl -1, hp 0) and every client slot is free (apid/cpid_h 9999).
 fn new_world() -> World {
     World {
-        actors: [ Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
-        brains: [ Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0, stuckt: 0.0 } ; 9 ],
+        actors: [ world::Actor { hdl: 0 - 1, hp: 0.0, sh: 0.0, shmax: 50.0, wpn: 0, mag: [0, 0, 0], res: [0, 0, 0], rl: 0.0, rlw: 0, fcd: 0.0, cells: 0, heal: 0.0, gax: 0.0, gay: 0.0, gaz: 0.0, gat: 0.0 } ; 9 ],
+        brains: [ world::Brain { aim: 0.0, resp: 0.0, vy: 0.0, px0: 0.0, pz0: 0.0, jcd: 0.0, kx: 0.0, ky: 0.0, kz: 0.0, pop: 0.0, gcd: 0.0, getrifle: 0.0, face: 0.0, stuckt: 0.0 } ; 9 ],
         round: Round { kills: 0, deaths: 0, timer: 120.0, over: 0, over_t: 0.0, won: 0, target: 15, len: 120.0, bots: 5 },
         last_hit: [0 - 1; 9], death_done: [0; 9], death_x: [0.0; 9], death_y: [0.0; 9], death_z: [0.0; 9], kr_oc: [0.0; 9], kr_mark: [0.0; 9], akills: [0; 9], adeaths: [0; 9],
         pkcd: [0.0; 11],
@@ -158,7 +165,7 @@ fn new_world() -> World {
         prjx: [0.0; 12], prjy: [0.0; 12], prjz: [0.0; 12], prjvx: [0.0; 12], prjvy: [0.0; 12], prjvz: [0.0; 12], prjlife: [0.0; 12], prjsrc: [0.0; 12], prjcur: 0,
         grx: 0.0, gry: 0.0, grz: 0.0, grvx: 0.0, grvy: 0.0, grvz: 0.0, nfuse: 0.0, nade_live: 0, nade_cd: 0.0, nade_src: 0 - 1,
         crates: [0 - 1; 12], esx: [0.0; 5], esz: [0.0; 5],
-        apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9], cmelee_seen: [0; 9], ammo_evt: [0; 9],
-        etime: 0.0, bot_state: [0; 9], bot_input: 0
+        apid: [9999; 9], cpid_h: [9999; 9], cresp_seen: [0; 9], cheal_seen: [0; 9], cmelee_seen: [0; 9], cfire_seen: [0; 9], shot0_ok: [0; 9], shot1_ok: [0; 9], shot2_ok: [0; 9], ammo_evt: [0; 9],
+        etime: 0.0, bot_state: [0; 9], bot_ix: [0.0; 9], bot_iy: [0.0; 9], bot_iz: [0.0; 9], bot_input: 0
     }
 }
