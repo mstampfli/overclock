@@ -786,6 +786,32 @@ fn sim_step(state: i64, input: i64, cfg: [f64; 21]) {
     if landed {
         if vy < 0.0 { f32_store(state, 5, 0.0) }
     }
+    // FLOOR-CLIP RECOVERY (shared by EVERY actor - bots and players run this same sim_step). The
+    // arena floor top is y=0 and nothing is legitimately below it, so a character whose centre has
+    // sunk under the floor clipped through it: once below, the down-only ground ray can no longer
+    // see the floor ABOVE it, `landed` stays false, gravity keeps accumulating vy, and it falls all
+    // the way to the kill-plane (-25) then teleports to spawn - read on screen as the actor going
+    // invisible (underground) while still alive/shooting, or noclipping out of the map. Catch it the
+    // instant it dips below the floor: cast DOWN from high above its x,z to find the real surface
+    // (floor / ramp / roof it belongs on) and lift it back onto that surface in place, clearing the
+    // downward velocity. Gated to a clipped-through state (below the floor AND not grounded AND the
+    // found surface is ABOVE us), so it never touches a legitimate jump or fall.
+    if landed == false and f32_load(state, 1) < 0.0 - 0.5 {
+        let rcx = f32_load(state, 0)
+        let rcz = f32_load(state, 2)
+        let rcg = phys3d_raycast_world(player, rcx, 50.0, rcz, 0.0, 0.0 - 1.0, 0.0, 120.0)
+        if rcg >= 0 {
+            let surf = phys3d_hit_y()
+            if surf > f32_load(state, 1) {
+                phys3d_set_pos(player, rcx, surf + 0.9, rcz)
+                f32_store(state, 0, phys3d_x(player))
+                f32_store(state, 1, phys3d_y(player))
+                f32_store(state, 2, phys3d_z(player))
+                f32_store(state, 5, 0.0)
+                f32_store(state, 7, 1.0)
+            }
+        }
+    }
     // CEILING: if we were moving UP meaningfully but rose far LESS than we should have, we
     // hit the roof/ceiling. Kill the upward velocity so we drop right away instead of hanging
     // against it, and flag it (slot 30) so a grapple reeling us into the ceiling releases.
