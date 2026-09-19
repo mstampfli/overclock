@@ -1350,17 +1350,25 @@ fn server_main() -> i64 {
         w.actors[bi].hdl = phys3d_add_character(anchx[bi], 0.9, anchz[bi], 0.6, 0.3)
         respawn_actor(w, bi)
         w.brains[bi].aim = 0.05
-        // Do NOT pre-fill bot_state here. It's allocated + HANDED TO THE NETCODE (net_set_bot_state,
-        // sharing this body's handle) lazily on the first bots_tick, seeded from the anchor position
-        // the body was just created at. Pre-filling it made bot_state non-zero, which SKIPPED that
-        // lazy handoff - so the netcode simmed a separate body and the server's view of the bot stayed
-        // frozen at its anchor (bots shot from spawn / walked one stuck direction).
+        // bot_state is left 0 here (no session/SClients exist until net_host below); it is allocated +
+        // HANDED TO THE NETCODE in the server loop (ensure_bot_bodies), which runs EVERY tick regardless
+        // of the freeze so the netcode always steps the bot's REAL anchored body, never a separate
+        // uninitialised one at the origin. Pre-filling bot_state here (without a real handoff) is the bug
+        // that piled every bot invisibly at (0,0,0).
         bi = bi + 1
     }
     arena::build_crates(w.crates)   // 12 loose dynamic crates (authoritative)
     net_host(45123)                // the game's port (binds 0.0.0.0 so remote clients can join)
     net_dedicated()
     net_max_clients(3)             // admit up to max_remote human clients
+    // NEVER interest-cull inside this arena. The floor is 200x200m (half-extent 100), so its diagonal
+    // is ~283m - far beyond the 80m default cull radius. A culled actor stops being snapshot, its
+    // client-side remote entry times out (~90 ticks), and net_player_meta then falls back to the
+    // Player::spawn() default (hp 0) - the client reads that as the actor DYING and plays its death
+    // anim, then REVIVING when it re-enters range. That is the "bots die twice / over and over" bug,
+    // and it hits distant remote humans identically. A radius past the arena diagonal keeps every
+    // actor always-relevant (this game has <=13 actors in a small arena, so culling saves nothing).
+    net_interest(500.0)
     net_spawn_at(0.0, 0.9, 45.0)   // the real arena spawn (matches the game)
     net_spawn_input_slot(17)       // input[17..19] = respawn point -> SERVER overwrites it (authoritative)
     net_impulse_input_slot(14)     // input[14..16] = blast knockback -> SERVER originates it (a client
@@ -1382,6 +1390,13 @@ fn server_main() -> i64 {
         if active < 0 { active = 0 }
         if active > lobby_bots { active = lobby_bots }
         w.round.bots = active
+        // Create the bot netcode SClients HERE, before bots_tick feeds their input + hands off their
+        // real body handle. Previously net_set_bot_count only ran inside broadcast_bots (AFTER bots_tick),
+        // so on the opening ticks bots_tick's net_set_bot_state/net_set_bot_input hit clients that did not
+        // exist yet - the netcode then simmed a SEPARATE uninitialised body at the origin (broadcast as
+        // 0,0,0) while each bot's real body sat frozen at its spawn anchor. That is the "invisible bots
+        // piled at the map centre, shooting from nowhere" bug.
+        net_set_bot_count(w.round.bots)
         // SOLO PAUSE: when you're the only player AND you've opened the pause menu (broadcast on meta
         // slot 21), freeze the whole authoritative world by skipping every sim tick - so practice
         // ACTUALLY pauses. A real match (another human present) never freezes. The network is still
@@ -1409,6 +1424,24 @@ fn server_main() -> i64 {
             round_tick(w, 0.016)
         }
         broadcast_bots(w)
+        // Ensure every bot's REAL anchored body is handed to the netcode. Runs UNCONDITIONALLY (outside
+        // the freeze gate), so even if the opening frames are frozen (host pause meta) the netcode steps
+        // the bot's real body instead of a separate uninitialised one at the origin (which piled every
+        // bot invisibly at 0,0,0). One-time per bot; must be AFTER broadcast_bots, whose net_set_bot_count
+        // creates the SClients this hands state to.
+        let mut hb = 0
+        while hb < w.round.bots {
+            if w.bot_state[hb] == 0 {
+                w.bot_state[hb] = f32_blob(32)
+                f32_store(w.bot_state[hb], 0, phys3d_x(w.actors[hb].hdl))
+                f32_store(w.bot_state[hb], 1, phys3d_y(w.actors[hb].hdl))
+                f32_store(w.bot_state[hb], 2, phys3d_z(w.actors[hb].hdl))
+                f32_store(w.bot_state[hb], 21, (w.actors[hb].hdl + 1) as f64)
+                net_set_bot_state(hb, w.bot_state[hb])
+                net_set_bot_alive(hb, 1)
+            }
+            hb = hb + 1
+        }
         broadcast_fx(w)
         broadcast_objects(w)
         let mut ndt = 0.016
